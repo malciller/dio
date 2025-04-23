@@ -1,0 +1,12 @@
+# --- dune & opam build artefacts ---
+/_build/
+/.opam/
+
+# --- editor / OS cruft ---
+*.swp
+*.swo
+*~
+.DS_Store
+
+# --- env / secrets ---
+.env*
