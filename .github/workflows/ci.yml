@@ -11,17 +11,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ----- OCaml tool-chain -------------------------------------------------
+      # OCaml tool-chain + dune cache
       - uses: ocaml/setup-ocaml@v2
         with:
-          ocaml-compiler: '4.14.2'      # ⇐ same switch you use locally
-          dune-cache: true              # re-uses _build between steps
+          ocaml-compiler: '4.14.2'
+          dune-cache: true
 
-      # ----- Install project dependencies ------------------------------------
-      - name: Install deps
+      # --- Install system packages & opam deps ------------------------------
+      - name: Install Linux depexts
+        run: opam depext -iy --with-test .
+
+      - name: Install project deps
         run: opam install . --deps-only --with-test -y
 
-      # ----- Build and run test suite ----------------------------------------
+      # --- Build & test ------------------------------------------------------
       - name: Build
         run: dune build @all
 
