@@ -4,6 +4,7 @@ on: [push, pull_request]
 jobs:
   build-test:
     runs-on: ubuntu-22.04
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,4 +24,7 @@ jobs:
         run: opam install . --deps-only --with-test -y
 
       - name: Build
-        run: dune build @all
+        run: opam exec -- dune build @all
+
+      # - name: Run tests
+      #   run: opam exec -- dune runtest
