@@ -1,3 +1,0 @@
-requires = "num.core"
-description = "Add-on for num inside toploops"
-archive(byte,toploop) = "num_top.cma"

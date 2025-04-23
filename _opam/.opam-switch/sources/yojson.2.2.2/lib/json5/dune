@@ -1,6 +1,0 @@
-(library
- (name yojson_five)
- (public_name yojson-five)
- (libraries yojson sedlex)
- (preprocess
-  (pps sedlex.ppx)))

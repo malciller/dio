@@ -1,4 +1,0 @@
-(library
- (name caqti_type_calendar)
- (public_name caqti-type-calendar)
- (libraries caqti calendar))

@@ -1,7 +1,0 @@
-version = "2.0.1"
-description = ""
-requires = "caqti caqti.platform caqti.platform.unix sqlite3"
-archive(byte) = "caqti_driver_sqlite3.cma"
-archive(native) = "caqti_driver_sqlite3.cmxa"
-plugin(byte) = "caqti_driver_sqlite3.cma"
-plugin(native) = "caqti_driver_sqlite3.cmxs"

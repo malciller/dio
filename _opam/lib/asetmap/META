@@ -1,7 +1,0 @@
-description = "Alternative, compatible, standard library Sets and Maps"
-version = "0.8.1"
-requires = ""
-archive(byte) = "asetmap.cma"
-archive(native) = "asetmap.cmxa"
-plugin(byte) = "asetmap.cma"
-plugin(native) = "asetmap.cmxs"

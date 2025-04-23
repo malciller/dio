@@ -1,6 +1,0 @@
-OPAM_SWITCH_PREFIX	=	/Users/malciller/dev/Dio/dio/_opam	:	target	Prefix\ of\ the\ current\ opam\ switch
-CAML_LD_LIBRARY_PATH	=	/Users/malciller/dev/Dio/dio/_opam/lib/stublibs	:	target	Updated\ by\ package\ ocaml-base-compiler
-CAML_LD_LIBRARY_PATH	=	/Users/malciller/dev/Dio/dio/_opam/lib/ocaml/stublibs:/Users/malciller/dev/Dio/dio/_opam/lib/ocaml	:	target	Updated\ by\ package\ ocaml
-CAML_LD_LIBRARY_PATH	+=	/Users/malciller/dev/Dio/dio/_opam/lib/stublibs	:	target	Updated\ by\ package\ ocaml
-OCAML_TOPLEVEL_PATH	=	/Users/malciller/dev/Dio/dio/_opam/lib/toplevel	Updated\ by\ package\ ocaml
-PATH	=+=	/Users/malciller/dev/Dio/dio/_opam/bin	:	target	Binary\ dir\ for\ opam\ switch\ /Users/malciller/dev/Dio/dio

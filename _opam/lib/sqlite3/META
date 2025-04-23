@@ -1,7 +1,0 @@
-version = "5.3.1"
-description = ""
-requires = ""
-archive(byte) = "sqlite3.cma"
-archive(native) = "sqlite3.cmxa"
-plugin(byte) = "sqlite3.cma"
-plugin(native) = "sqlite3.cmxs"

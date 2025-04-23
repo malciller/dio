@@ -1,7 +1,0 @@
-version = "v1.0.2"
-description = ""
-requires = "str zarith"
-archive(byte) = "decimal.cma"
-archive(native) = "decimal.cmxa"
-plugin(byte) = "decimal.cma"
-plugin(native) = "decimal.cmxs"

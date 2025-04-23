@@ -1,8 +1,0 @@
-opam-version: "2.0"
-added: [
-  "bin/dio" {"F:S396968T1745425527.68"}
-  "lib/dio" {"D"}
-  "lib/dio/META" {"F:S0T1745425527.68"}
-  "lib/dio/dune-package" {"F:S114T1745425527.68"}
-  "lib/dio/opam" {"F:S747T1745425527.68"}
-]

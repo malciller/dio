@@ -1,7 +1,0 @@
-opam-version: "2.0"
-lib: [
-  "_build/install/default/lib/dio/META"
-  "_build/install/default/lib/dio/dune-package"
-  "_build/install/default/lib/dio/opam"
-]
-bin: "_build/install/default/bin/dio"

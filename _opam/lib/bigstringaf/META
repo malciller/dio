@@ -1,8 +1,0 @@
-version = "0.10.0"
-description = ""
-requires = ""
-archive(byte) = "bigstringaf.cma"
-archive(native) = "bigstringaf.cmxa"
-plugin(byte) = "bigstringaf.cma"
-plugin(native) = "bigstringaf.cmxs"
-jsoo_runtime = "runtime.js"

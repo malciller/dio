@@ -1,8 +1,0 @@
-(library
- (name testlib_async)
- (libraries
-    alcotest
-    async_kernel
-    caqti_async
-    core_kernel
-    testlib))

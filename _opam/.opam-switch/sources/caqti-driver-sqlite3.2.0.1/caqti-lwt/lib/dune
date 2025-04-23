@@ -1,4 +1,0 @@
-(library
- (name caqti_lwt)
- (public_name caqti-lwt)
- (libraries logs.lwt lwt caqti.platform))

@@ -1,1 +1,0 @@
-[@@@deprecated "Please switch to using Uri.Re instead of Uri_re. Use Uri.Uri_re instead."] include Uri__Uri_re
