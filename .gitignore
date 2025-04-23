@@ -1,6 +1,6 @@
 # --- dune & opam build artefacts ---
 /_build/
-/.opam/
+/_opam/
 
 # --- editor / OS cruft ---
 *.swp
