@@ -6,28 +6,33 @@ on:
 
 jobs:
   build-test:
-    runs-on: ubuntu-22.04 
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
 
+      # --- prime APT & install base tools the OCaml action needs ----------
+      - name: Prep system deps for OCaml action
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+               bubblewrap darcs g++-multilib gcc-multilib mercurial \
+               musl-tools rsync
+
+      # --- OCaml tool-chain ------------------------------------------------
       - uses: ocaml/setup-ocaml@v2
         with:
           ocaml-compiler: '4.14.2'
-          dune-cache: true
+          dune-cache:     true
 
-      # --- system packages & opam deps ----
-      - name: apt-get update (non-interactive)
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-
-      - name: Install Linux depexts
+      # --- project dependencies -------------------------------------------
+      - name: opam depext
         run: opam depext -iy --with-test .
 
-      - name: Install project deps
+      - name: opam install deps
         run: opam install . --deps-only --with-test -y
 
-      # --- build & tests -------------------
+      # --- build & test ----------------------------------------------------
       - name: Build
         run: dune build @all
 
