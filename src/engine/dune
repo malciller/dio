@@ -2,5 +2,5 @@
  (name engine)
  (public_name dio.engine)
  (modules supervisor feed strategy router engine)
- (libraries dio.types dio.ringbuffer lwt yojson cohttp-lwt-unix cmdliner)
+ (libraries dio.types dio.ringbuffer lwt yojson cohttp-lwt-unix cmdliner dio.exchange.kraken)
  (preprocess (pps lwt_ppx)))

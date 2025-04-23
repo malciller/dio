@@ -1,10 +1,11 @@
 (* src/engine/feed.ml *)
 open Lwt.Infix  (* for >>= *)
+open Types (* To access Event.tick type for on_tick *)
 
-let start _cfg ~on_tick:_on_tick =
-  (* Connect to market stream, subscribe, then push Core.event.tick to on_tick *)
-  let rec loop () =
-    (* TODO: await next raw event, normalize and call on_tick *)
-    Lwt_unix.sleep 1.0 >>= loop
-  in
-  loop ()
+(* Import the Kraken feed module *)
+module Kraken_feed = Kraken.Ws_feed
+
+let start cfg ~on_tick:(on_tick : Event.tick -> unit Lwt.t) =
+  (* Connect to market stream (Kraken WS feed) *)
+  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.feed") "Starting Kraken WebSocket feed..." >>= fun () ->
+  Kraken_feed.start cfg ~on_tick

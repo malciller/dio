@@ -1,4 +1,4 @@
-(* src/exchange/kraken/rest_token.ml *)
+(* src/exchange/kraken/token.ml *)
 open Lwt.Infix
 open Cohttp_lwt_unix
 open Yojson.Safe

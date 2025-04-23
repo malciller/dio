@@ -2,6 +2,7 @@
  (name kraken)
  (public_name dio.exchange.kraken)
  (modules common token ws_feed ws_exec)
+ (preprocess (pps ppx_deriving_yojson))
  (libraries
   dio.types
   lwt
