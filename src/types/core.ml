@@ -8,17 +8,19 @@ type order_tag = [`Grid | `Manual | `Rebalance] [@@deriving yojson]
 
 type order_cmd =
   | Add of {
-      client_id : string ;
-      symbol    : symbol ;
-      side      : side ;
-      price     : Price.t ;
-      qty       : Qty.t ;
-      tif       : tif ;
-      tags      : order_tag list ;
+      dst        : Event.exchange;      (* NEW – which exchange to send to *)
+      client_id  : string;
+      symbol     : symbol;
+      side       : side;
+      price      : Price.t;
+      qty        : Qty.t;
+      tif        : tif;
+      tags       : order_tag list;
     }
-  | Amend of { order_id : string ; new_price : Price.t option ; new_qty : Qty.t option }
-  | Cancel of { order_id : string }
-[@@deriving yojson]
+  | Amend of { dst : Event.exchange; order_id : string; new_price : Price.t option; new_qty : Qty.t option }
+  | Cancel of { dst : Event.exchange; order_id : string }
+[@@deriving yojson { exn = true }]
+
 
 type order_state = Open | Filled | Canceled | Rejected [@@deriving yojson]
 

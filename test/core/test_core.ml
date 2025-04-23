@@ -18,7 +18,8 @@ let qty   = P.Qty.  of_string_exn ~scale:8
 (* Sample values ----------------------------------------------------- *)
 let add_cmd =
   Core.Add
-    { client_id = "cli-123"
+    { dst        = "Binance"
+    ; client_id = "cli-123"
     ; symbol    = "ETH/USD"
     ; side      = Buy
     ; price     = price "3200.55"

@@ -1,6 +1,7 @@
-(library
- (name types)
- (public_name dio.types)
- (modules primitives core config)
- (preprocess (pps ppx_deriving_yojson))   ; ← add this line
- (libraries decimal yojson))
+
+ (library
+  (name types)
+  (public_name dio.types)
+ (modules primitives core config event)
+  (preprocess (pps ppx_deriving_yojson))
+  (libraries decimal yojson))
