@@ -11,20 +11,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # OCaml tool-chain + dune cache
       - uses: ocaml/setup-ocaml@v2
         with:
           ocaml-compiler: '4.14.2'
           dune-cache: true
 
-      # --- Install system packages & opam deps ------------------------------
+      # --- system packages & opam deps ----
+      - name: apt-get update (non-interactive)
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+
       - name: Install Linux depexts
         run: opam depext -iy --with-test .
 
       - name: Install project deps
         run: opam install . --deps-only --with-test -y
 
-      # --- Build & test ------------------------------------------------------
+      # --- build & tests -------------------
       - name: Build
         run: dune build @all
 
