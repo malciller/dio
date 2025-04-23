@@ -1,0 +1,3 @@
+(library
+ (name ringbuffer)
+ (public_name dio.ringbuffer))
