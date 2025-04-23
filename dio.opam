@@ -2,24 +2,24 @@
 opam-version: "2.0"
 synopsis: "Dio – trading engine"
 maintainer: ["malciller@gmail.com"]
-authors: ["Cal Milller"]
+authors: ["Cal Miller"]
 license: "MIT"
 homepage: "https://github.com/malciller/dio"
 bug-reports: "https://github.com/malciller/dio/issues"
 depends: [
-  "ocaml" {>= "4.14" & < "5.0"} 
   "dune" {>= "3.13"}
+  "decimal"
   "lwt"
   "lwt_ppx"
   "yojson"
   "ppx_deriving_yojson"
-  "decimal"
   "caqti"
   "caqti-driver-sqlite3"
   "websocket-lwt"
+  "cohttp-lwt-unix"
   "cmdliner"
-  "alcotest"
   "prometheus"
+  "alcotest"
   "odoc" {with-doc}
 ]
 build: [

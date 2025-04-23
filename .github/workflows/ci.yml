@@ -37,5 +37,5 @@ jobs:
       - name: Build
         run: opam exec -- dune build @all
 
-      # - name: Run tests
-      #   run: opam exec -- dune runtest
+      - name: Run tests
+        run: opam exec -- dune runtest
