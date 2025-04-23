@@ -1,4 +1,5 @@
 (executable
  (name dio)          
  (public_name dio)  
- (libraries dio))    
+ (libraries dio dio.exchange.kraken lwt dotenv)
+ (preprocess (pps lwt_ppx)))

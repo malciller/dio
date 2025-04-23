@@ -16,7 +16,8 @@
   lwt lwt_ppx
   yojson ppx_deriving_yojson
   caqti caqti-driver-sqlite3
-  websocket-lwt cohttp-lwt-unix
+  websocket-lwt-unix cohttp-lwt-unix
   cmdliner
   prometheus
-  alcotest))
+  alcotest
+  dotenv))

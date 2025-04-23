@@ -15,11 +15,12 @@ depends: [
   "ppx_deriving_yojson"
   "caqti"
   "caqti-driver-sqlite3"
-  "websocket-lwt"
+  "websocket-lwt-unix"
   "cohttp-lwt-unix"
   "cmdliner"
   "prometheus"
   "alcotest"
+  "dotenv"
   "odoc" {with-doc}
 ]
 build: [

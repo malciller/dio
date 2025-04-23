@@ -1,0 +1,6 @@
+(library
+ (name engine)
+ (public_name dio.engine)
+ (modules supervisor feed strategy router engine)
+ (libraries dio.types dio.ringbuffer lwt yojson cohttp-lwt-unix cmdliner)
+ (preprocess (pps lwt_ppx)))

@@ -1,0 +1,16 @@
+(library
+ (name kraken)
+ (public_name dio.exchange.kraken)
+ (modules common token ws_feed ws_exec)
+ (libraries
+  dio.types
+  lwt
+  lwt.unix
+  websocket-lwt-unix
+  cohttp-lwt-unix
+  yojson
+  uri
+  logs
+  digestif
+  base64
+  dotenv))
