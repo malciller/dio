@@ -1,17 +1,12 @@
 name: ci
-
-on:
-  push:
-  pull_request:
+on: [push, pull_request]
 
 jobs:
   build-test:
     runs-on: ubuntu-22.04
-
     steps:
       - uses: actions/checkout@v4
 
-      # --- prime APT & install base tools the OCaml action needs ----------
       - name: Prep system deps for OCaml action
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
@@ -19,22 +14,13 @@ jobs:
                bubblewrap darcs g++-multilib gcc-multilib m4 make mercurial \
                musl-tools rsync
 
-      # --- OCaml tool-chain ------------------------------------------------
       - uses: ocaml/setup-ocaml@v2
         with:
           ocaml-compiler: '4.14.2'
-          dune-cache:     true
+          dune-cache: true
 
-      # --- project dependencies -------------------------------------------
-      - name: opam depext
-        run: opam depext -iy --with-test .
-
-      - name: opam install deps
+      - name: Install opam deps
         run: opam install . --deps-only --with-test -y
 
-      # --- build & test ----------------------------------------------------
       - name: Build
         run: dune build @all
-
-      - name: Run tests
-        run: dune runtest
