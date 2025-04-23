@@ -1,0 +1,44 @@
+sudo: required
+language: generic
+
+env:
+  - COMPILER=4.10.0
+  - COMPILER=4.09.0
+  - COMPILER=4.08.1
+  - COMPILER=4.07.1
+  - COMPILER=4.06.1
+  - COMPILER=4.05.0
+  - COMPILER=4.04.2
+  - COMPILER=4.03.0
+  - COMPILER=4.02.3
+
+before_install:
+  - '[ "$TRAVIS_EVENT_TYPE" != cron ] || rm -rf ~/.opam'
+
+install:
+  - wget https://github.com/ocaml/opam/releases/download/2.0.6/opam-2.0.6-x86_64-linux
+  - sudo mv opam-2.0.6-x86_64-linux /usr/local/bin/opam
+  - sudo chmod a+x /usr/local/bin/opam
+
+  - opam init -ya --compiler=$COMPILER --disable-sandboxing --disable-shell-hook
+  - eval `opam config env`
+  - opam --version
+  - ocaml -version
+
+  - opam install --yes --deps-only .
+
+script:
+  - dune build
+  - opam lint
+
+before_cache:
+  - opam clean
+
+cache:
+  directories:
+    - $HOME/.opam
+
+notifications:
+  email:
+    on_success: always
+    on_failure: always

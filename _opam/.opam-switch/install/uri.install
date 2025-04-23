@@ -1,0 +1,96 @@
+opam-version: "2.0"
+lib: [
+  "_build/install/default/lib/uri/.wrapped_compat/Uri_re.ml"
+    {".wrapped_compat/Uri_re.ml"}
+  "_build/install/default/lib/uri/META"
+  "_build/install/default/lib/uri/dune-package"
+  "_build/install/default/lib/uri/opam"
+  "_build/install/default/lib/uri/services/uri_services.a"
+    {"services/uri_services.a"}
+  "_build/install/default/lib/uri/services/uri_services.cma"
+    {"services/uri_services.cma"}
+  "_build/install/default/lib/uri/services/uri_services.cmi"
+    {"services/uri_services.cmi"}
+  "_build/install/default/lib/uri/services/uri_services.cmt"
+    {"services/uri_services.cmt"}
+  "_build/install/default/lib/uri/services/uri_services.cmti"
+    {"services/uri_services.cmti"}
+  "_build/install/default/lib/uri/services/uri_services.cmx"
+    {"services/uri_services.cmx"}
+  "_build/install/default/lib/uri/services/uri_services.cmxa"
+    {"services/uri_services.cmxa"}
+  "_build/install/default/lib/uri/services/uri_services.ml"
+    {"services/uri_services.ml"}
+  "_build/install/default/lib/uri/services/uri_services.mli"
+    {"services/uri_services.mli"}
+  "_build/install/default/lib/uri/services_full/uri_services_full.a"
+    {"services_full/uri_services_full.a"}
+  "_build/install/default/lib/uri/services_full/uri_services_full.cma"
+    {"services_full/uri_services_full.cma"}
+  "_build/install/default/lib/uri/services_full/uri_services_full.cmi"
+    {"services_full/uri_services_full.cmi"}
+  "_build/install/default/lib/uri/services_full/uri_services_full.cmt"
+    {"services_full/uri_services_full.cmt"}
+  "_build/install/default/lib/uri/services_full/uri_services_full.cmti"
+    {"services_full/uri_services_full.cmti"}
+  "_build/install/default/lib/uri/services_full/uri_services_full.cmx"
+    {"services_full/uri_services_full.cmx"}
+  "_build/install/default/lib/uri/services_full/uri_services_full.cmxa"
+    {"services_full/uri_services_full.cmxa"}
+  "_build/install/default/lib/uri/services_full/uri_services_full.ml"
+    {"services_full/uri_services_full.ml"}
+  "_build/install/default/lib/uri/services_full/uri_services_full.mli"
+    {"services_full/uri_services_full.mli"}
+  "_build/install/default/lib/uri/sexp/uri_sexp.a" {"sexp/uri_sexp.a"}
+  "_build/install/default/lib/uri/sexp/uri_sexp.cma" {"sexp/uri_sexp.cma"}
+  "_build/install/default/lib/uri/sexp/uri_sexp.cmi" {"sexp/uri_sexp.cmi"}
+  "_build/install/default/lib/uri/sexp/uri_sexp.cmt" {"sexp/uri_sexp.cmt"}
+  "_build/install/default/lib/uri/sexp/uri_sexp.cmti" {"sexp/uri_sexp.cmti"}
+  "_build/install/default/lib/uri/sexp/uri_sexp.cmx" {"sexp/uri_sexp.cmx"}
+  "_build/install/default/lib/uri/sexp/uri_sexp.cmxa" {"sexp/uri_sexp.cmxa"}
+  "_build/install/default/lib/uri/sexp/uri_sexp.ml" {"sexp/uri_sexp.ml"}
+  "_build/install/default/lib/uri/sexp/uri_sexp.mli" {"sexp/uri_sexp.mli"}
+  "_build/install/default/lib/uri/top/uri_top.a" {"top/uri_top.a"}
+  "_build/install/default/lib/uri/top/uri_top.cma" {"top/uri_top.cma"}
+  "_build/install/default/lib/uri/top/uri_top.cmi" {"top/uri_top.cmi"}
+  "_build/install/default/lib/uri/top/uri_top.cmt" {"top/uri_top.cmt"}
+  "_build/install/default/lib/uri/top/uri_top.cmx" {"top/uri_top.cmx"}
+  "_build/install/default/lib/uri/top/uri_top.cmxa" {"top/uri_top.cmxa"}
+  "_build/install/default/lib/uri/top/uri_top.ml" {"top/uri_top.ml"}
+  "_build/install/default/lib/uri/uri.a"
+  "_build/install/default/lib/uri/uri.cma"
+  "_build/install/default/lib/uri/uri.cmi"
+  "_build/install/default/lib/uri/uri.cmt"
+  "_build/install/default/lib/uri/uri.cmti"
+  "_build/install/default/lib/uri/uri.cmx"
+  "_build/install/default/lib/uri/uri.cmxa"
+  "_build/install/default/lib/uri/uri.ml"
+  "_build/install/default/lib/uri/uri.mli"
+  "_build/install/default/lib/uri/uri__.cmi"
+  "_build/install/default/lib/uri/uri__.cmt"
+  "_build/install/default/lib/uri/uri__.cmx"
+  "_build/install/default/lib/uri/uri__.ml"
+  "_build/install/default/lib/uri/uri__Uri_re.cmi"
+  "_build/install/default/lib/uri/uri__Uri_re.cmt"
+  "_build/install/default/lib/uri/uri__Uri_re.cmti"
+  "_build/install/default/lib/uri/uri__Uri_re.cmx"
+  "_build/install/default/lib/uri/uri_re.cmi"
+  "_build/install/default/lib/uri/uri_re.cmt"
+  "_build/install/default/lib/uri/uri_re.cmx"
+  "_build/install/default/lib/uri/uri_re.ml"
+  "_build/install/default/lib/uri/uri_re.mli"
+]
+doc: [
+  "_build/install/default/doc/uri/CHANGES.md"
+  "_build/install/default/doc/uri/LICENSE.md"
+  "_build/install/default/doc/uri/README.md"
+]
+libexec: [
+  "_build/install/default/lib/uri/services/uri_services.cmxs"
+    {"services/uri_services.cmxs"}
+  "_build/install/default/lib/uri/services_full/uri_services_full.cmxs"
+    {"services_full/uri_services_full.cmxs"}
+  "_build/install/default/lib/uri/sexp/uri_sexp.cmxs" {"sexp/uri_sexp.cmxs"}
+  "_build/install/default/lib/uri/top/uri_top.cmxs" {"top/uri_top.cmxs"}
+  "_build/install/default/lib/uri/uri.cmxs"
+]

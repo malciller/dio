@@ -1,0 +1,7 @@
+version = "1.2"
+description = ""
+requires = "asetmap astring lwt re"
+archive(byte) = "prometheus.cma"
+archive(native) = "prometheus.cmxa"
+plugin(byte) = "prometheus.cma"
+plugin(native) = "prometheus.cmxs"

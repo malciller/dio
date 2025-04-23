@@ -1,0 +1,52 @@
+(lang dune 3.18)
+(name ssl)
+(version 0.7.0)
+(sections (lib .) (libexec .) (doc ../../doc/ssl) (stublibs ../stublibs))
+(files
+ (lib
+  (META
+   dune-package
+   libssl_stubs.a
+   opam
+   ssl.a
+   ssl.cma
+   ssl.cmi
+   ssl.cmt
+   ssl.cmti
+   ssl.cmx
+   ssl.cmxa
+   ssl.ml
+   ssl.mli
+   ssl_threads.cmi
+   ssl_threads.cmt
+   ssl_threads.cmti
+   ssl_threads.cmx
+   ssl_threads.ml
+   ssl_threads.mli))
+ (libexec (ssl.cmxs))
+ (doc (CHANGES.md README.md))
+ (stublibs (dllssl_stubs.so)))
+(library
+ (name ssl)
+ (kind normal)
+ (archives (byte ssl.cma) (native ssl.cmxa))
+ (plugins (byte ssl.cma) (native ssl.cmxs))
+ (foreign_objects ssl_stubs.o)
+ (foreign_archives (archives (for all) (files libssl_stubs.a)))
+ (foreign_dll_files ../stublibs/dllssl_stubs.so)
+ (native_archives ssl.a)
+ (requires unix)
+ (modes byte native)
+ (modules
+  (unwrapped
+   (module
+    (obj_name ssl)
+    (visibility public)
+    (source (path Ssl) (intf (path ssl.mli)) (impl (path ssl.ml))))
+   (module
+    (obj_name ssl_threads)
+    (visibility public)
+    (source
+     (path Ssl_threads)
+     (intf (path ssl_threads.mli))
+     (impl (path ssl_threads.ml)))))))

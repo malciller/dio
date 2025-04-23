@@ -1,0 +1,179 @@
+(lang dune 3.18)
+(name uri)
+(version 2.2.1)
+(sections (lib .) (libexec .) (doc ../../doc/uri))
+(files
+ (lib
+  (.wrapped_compat/Uri_re.ml
+   META
+   dune-package
+   opam
+   services/uri_services.a
+   services/uri_services.cma
+   services/uri_services.cmi
+   services/uri_services.cmt
+   services/uri_services.cmti
+   services/uri_services.cmx
+   services/uri_services.cmxa
+   services/uri_services.ml
+   services/uri_services.mli
+   services_full/uri_services_full.a
+   services_full/uri_services_full.cma
+   services_full/uri_services_full.cmi
+   services_full/uri_services_full.cmt
+   services_full/uri_services_full.cmti
+   services_full/uri_services_full.cmx
+   services_full/uri_services_full.cmxa
+   services_full/uri_services_full.ml
+   services_full/uri_services_full.mli
+   sexp/uri_sexp.a
+   sexp/uri_sexp.cma
+   sexp/uri_sexp.cmi
+   sexp/uri_sexp.cmt
+   sexp/uri_sexp.cmti
+   sexp/uri_sexp.cmx
+   sexp/uri_sexp.cmxa
+   sexp/uri_sexp.ml
+   sexp/uri_sexp.mli
+   top/uri_top.a
+   top/uri_top.cma
+   top/uri_top.cmi
+   top/uri_top.cmt
+   top/uri_top.cmx
+   top/uri_top.cmxa
+   top/uri_top.ml
+   uri.a
+   uri.cma
+   uri.cmi
+   uri.cmt
+   uri.cmti
+   uri.cmx
+   uri.cmxa
+   uri.ml
+   uri.mli
+   uri__.cmi
+   uri__.cmt
+   uri__.cmx
+   uri__.ml
+   uri__Uri_re.cmi
+   uri__Uri_re.cmt
+   uri__Uri_re.cmti
+   uri__Uri_re.cmx
+   uri_re.cmi
+   uri_re.cmt
+   uri_re.cmx
+   uri_re.ml
+   uri_re.mli))
+ (libexec
+  (services/uri_services.cmxs
+   services_full/uri_services_full.cmxs
+   sexp/uri_sexp.cmxs
+   top/uri_top.cmxs
+   uri.cmxs))
+ (doc (CHANGES.md LICENSE.md README.md)))
+(library
+ (name uri)
+ (kind normal)
+ (archives (byte uri.cma) (native uri.cmxa))
+ (plugins (byte uri.cma) (native uri.cmxs))
+ (native_archives uri.a)
+ (requires re.posix stringext)
+ (main_module_name Uri)
+ (modes byte native)
+ (modules
+  (wrapped
+   (group
+    (alias
+     (obj_name uri__)
+     (visibility public)
+     (kind alias)
+     (source (path Uri__) (impl (path uri__.ml-gen))))
+    (name Uri)
+    (modules
+     (module
+      (obj_name uri)
+      (visibility public)
+      (source (path Uri) (intf (path uri.mli)) (impl (path uri.ml))))
+     (module
+      (obj_name uri__Uri_re)
+      (visibility public)
+      (source (path Uri_re) (intf (path uri_re.mli)) (impl (path uri_re.ml))))))
+   (wrapped_compat
+    ((obj_name uri_re)
+     (visibility public)
+     (kind wrapped_compat)
+     (source (path Uri_re) (impl (path .wrapped_compat/Uri_re.ml-gen)))))
+   (wrapped (transition "Please switch to using Uri.Re instead of Uri_re")))))
+(library
+ (name uri.services)
+ (kind normal)
+ (archives
+  (byte services/uri_services.cma)
+  (native services/uri_services.cmxa))
+ (plugins
+  (byte services/uri_services.cma)
+  (native services/uri_services.cmxs))
+ (native_archives services/uri_services.a)
+ (requires uri)
+ (main_module_name Uri_services)
+ (modes byte native)
+ (modules
+  (singleton
+   (obj_name uri_services)
+   (visibility public)
+   (source
+    (path Uri_services)
+    (intf (path services/uri_services.mli))
+    (impl (path services/uri_services.ml))))))
+(library
+ (name uri.services_full)
+ (kind normal)
+ (archives
+  (byte services_full/uri_services_full.cma)
+  (native services_full/uri_services_full.cmxa))
+ (plugins
+  (byte services_full/uri_services_full.cma)
+  (native services_full/uri_services_full.cmxs))
+ (native_archives services_full/uri_services_full.a)
+ (requires uri)
+ (main_module_name Uri_services_full)
+ (modes byte native)
+ (modules
+  (singleton
+   (obj_name uri_services_full)
+   (visibility public)
+   (source
+    (path Uri_services_full)
+    (intf (path services_full/uri_services_full.mli))
+    (impl (path services_full/uri_services_full.ml))))))
+(library
+ (name uri.sexp)
+ (kind normal)
+ (archives (byte sexp/uri_sexp.cma) (native sexp/uri_sexp.cmxa))
+ (plugins (byte sexp/uri_sexp.cma) (native sexp/uri_sexp.cmxs))
+ (native_archives sexp/uri_sexp.a)
+ (requires sexplib0 uri ppx_sexp_conv.runtime-lib)
+ (main_module_name Uri_sexp)
+ (modes byte native)
+ (modules
+  (singleton
+   (obj_name uri_sexp)
+   (visibility public)
+   (source
+    (path Uri_sexp)
+    (intf (path sexp/uri_sexp.mli))
+    (impl (path sexp/uri_sexp.ml))))))
+(library
+ (name uri.top)
+ (kind normal)
+ (archives (byte top/uri_top.cma) (native top/uri_top.cmxa))
+ (plugins (byte top/uri_top.cma) (native top/uri_top.cmxs))
+ (native_archives top/uri_top.a)
+ (requires uri compiler-libs)
+ (main_module_name Uri_top)
+ (modes byte native)
+ (modules
+  (singleton
+   (obj_name uri_top)
+   (visibility public)
+   (source (path Uri_top) (impl (path top/uri_top.ml))))))

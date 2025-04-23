@@ -1,0 +1,105 @@
+(lang dune 3.18)
+(name conduit-lwt-unix)
+(version 1.5.0)
+(sections (lib .) (libexec .) (doc ../../doc/conduit-lwt-unix))
+(files
+ (lib
+  (META
+   conduit_lwt_launchd.cmi
+   conduit_lwt_launchd.cmt
+   conduit_lwt_launchd.cmx
+   conduit_lwt_launchd.ml
+   conduit_lwt_server.cmi
+   conduit_lwt_server.cmt
+   conduit_lwt_server.cmti
+   conduit_lwt_server.cmx
+   conduit_lwt_server.ml
+   conduit_lwt_server.mli
+   conduit_lwt_tls.cmi
+   conduit_lwt_tls.cmt
+   conduit_lwt_tls.cmti
+   conduit_lwt_tls.cmx
+   conduit_lwt_tls.ml
+   conduit_lwt_tls.mli
+   conduit_lwt_unix.a
+   conduit_lwt_unix.cma
+   conduit_lwt_unix.cmi
+   conduit_lwt_unix.cmt
+   conduit_lwt_unix.cmti
+   conduit_lwt_unix.cmx
+   conduit_lwt_unix.cmxa
+   conduit_lwt_unix.ml
+   conduit_lwt_unix.mli
+   conduit_lwt_unix_ssl.cmi
+   conduit_lwt_unix_ssl.cmt
+   conduit_lwt_unix_ssl.cmti
+   conduit_lwt_unix_ssl.cmx
+   conduit_lwt_unix_ssl.ml
+   conduit_lwt_unix_ssl.mli
+   dune-package
+   opam
+   resolver_lwt_unix.cmi
+   resolver_lwt_unix.cmt
+   resolver_lwt_unix.cmti
+   resolver_lwt_unix.cmx
+   resolver_lwt_unix.ml
+   resolver_lwt_unix.mli))
+ (libexec (conduit_lwt_unix.cmxs))
+ (doc (CHANGES.md LICENSE.md README.md)))
+(library
+ (name conduit-lwt-unix)
+ (kind normal)
+ (archives (byte conduit_lwt_unix.cma) (native conduit_lwt_unix.cmxa))
+ (plugins (byte conduit_lwt_unix.cma) (native conduit_lwt_unix.cmxs))
+ (native_archives conduit_lwt_unix.a)
+ (requires
+  conduit-lwt
+  lwt.unix
+  uri.services
+  ipaddr-sexp
+  ipaddr.unix
+  logs
+  lwt_ssl
+  ppx_sexp_conv.runtime-lib)
+ (modes byte native)
+ (modules
+  (unwrapped
+   (module
+    (obj_name conduit_lwt_launchd)
+    (visibility public)
+    (source (path Conduit_lwt_launchd) (impl (path conduit_lwt_launchd.ml))))
+   (module
+    (obj_name conduit_lwt_server)
+    (visibility public)
+    (source
+     (path Conduit_lwt_server)
+     (intf (path conduit_lwt_server.mli))
+     (impl (path conduit_lwt_server.ml))))
+   (module
+    (obj_name conduit_lwt_tls)
+    (visibility public)
+    (source
+     (path Conduit_lwt_tls)
+     (intf (path conduit_lwt_tls.mli))
+     (impl (path conduit_lwt_tls.ml))))
+   (module
+    (obj_name conduit_lwt_unix)
+    (visibility public)
+    (source
+     (path Conduit_lwt_unix)
+     (intf (path conduit_lwt_unix.mli))
+     (impl (path conduit_lwt_unix.ml))))
+   (module
+    (obj_name conduit_lwt_unix_ssl)
+    (visibility public)
+    (source
+     (path Conduit_lwt_unix_ssl)
+     (intf (path conduit_lwt_unix_ssl.mli))
+     (impl (path conduit_lwt_unix_ssl.ml))))
+   (module
+    (obj_name resolver_lwt_unix)
+    (visibility public)
+    (source
+     (path Resolver_lwt_unix)
+     (intf (path resolver_lwt_unix.mli))
+     (impl (path resolver_lwt_unix.ml)))))))

@@ -1,0 +1,4 @@
+(executable
+ (name dio)          
+ (public_name dio)  
+ (libraries dio))    

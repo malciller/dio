@@ -1,0 +1,17 @@
+version = "2.12"
+description = ""
+requires = "astring base64 cohttp ocplib-endian"
+archive(byte) = "websocket.cma"
+archive(native) = "websocket.cmxa"
+plugin(byte) = "websocket.cma"
+plugin(native) = "websocket.cmxs"
+
+package "lwt" (
+  description = "Deprecated. Use websocket-lwt directly"
+  requires = "websocket-lwt"
+)
+
+package "async" (
+  description = "Deprecated. Use websocket-async directly"
+  requires = "websocket-async"
+)

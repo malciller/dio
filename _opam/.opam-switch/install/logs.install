@@ -1,0 +1,59 @@
+opam-version: "2.0"
+lib: [
+  "_build/opam" {"opam"}
+  "_build/pkg/META" {"META"}
+  "_build/src/cli/logs_cli.a" {"cli/logs_cli.a"}
+  "_build/src/cli/logs_cli.cma" {"cli/logs_cli.cma"}
+  "_build/src/cli/logs_cli.cmi" {"cli/logs_cli.cmi"}
+  "?_build/src/cli/logs_cli.cmti" {"cli/logs_cli.cmti"}
+  "_build/src/cli/logs_cli.cmx" {"cli/logs_cli.cmx"}
+  "_build/src/cli/logs_cli.cmxa" {"cli/logs_cli.cmxa"}
+  "_build/src/cli/logs_cli.cmxs" {"cli/logs_cli.cmxs"}
+  "_build/src/cli/logs_cli.mli" {"cli/logs_cli.mli"}
+  "_build/src/fmt/logs_fmt.a" {"fmt/logs_fmt.a"}
+  "_build/src/fmt/logs_fmt.cma" {"fmt/logs_fmt.cma"}
+  "_build/src/fmt/logs_fmt.cmi" {"fmt/logs_fmt.cmi"}
+  "?_build/src/fmt/logs_fmt.cmti" {"fmt/logs_fmt.cmti"}
+  "_build/src/fmt/logs_fmt.cmx" {"fmt/logs_fmt.cmx"}
+  "_build/src/fmt/logs_fmt.cmxa" {"fmt/logs_fmt.cmxa"}
+  "_build/src/fmt/logs_fmt.cmxs" {"fmt/logs_fmt.cmxs"}
+  "_build/src/fmt/logs_fmt.mli" {"fmt/logs_fmt.mli"}
+  "_build/src/fmt/logs_fmt_top_init.ml" {"fmt/logs_fmt_top_init.ml"}
+  "_build/src/logs.a" {"logs.a"}
+  "_build/src/logs.cma" {"logs.cma"}
+  "_build/src/logs.cmi" {"logs.cmi"}
+  "?_build/src/logs.cmti" {"logs.cmti"}
+  "_build/src/logs.cmx" {"logs.cmx"}
+  "_build/src/logs.cmxa" {"logs.cmxa"}
+  "_build/src/logs.cmxs" {"logs.cmxs"}
+  "_build/src/logs.mli" {"logs.mli"}
+  "_build/src/lwt/logs_lwt.a" {"lwt/logs_lwt.a"}
+  "_build/src/lwt/logs_lwt.cma" {"lwt/logs_lwt.cma"}
+  "_build/src/lwt/logs_lwt.cmi" {"lwt/logs_lwt.cmi"}
+  "?_build/src/lwt/logs_lwt.cmti" {"lwt/logs_lwt.cmti"}
+  "_build/src/lwt/logs_lwt.cmx" {"lwt/logs_lwt.cmx"}
+  "_build/src/lwt/logs_lwt.cmxa" {"lwt/logs_lwt.cmxa"}
+  "_build/src/lwt/logs_lwt.cmxs" {"lwt/logs_lwt.cmxs"}
+  "_build/src/lwt/logs_lwt.mli" {"lwt/logs_lwt.mli"}
+  "_build/src/threaded/logs_threaded.a" {"threaded/logs_threaded.a"}
+  "_build/src/threaded/logs_threaded.cma" {"threaded/logs_threaded.cma"}
+  "_build/src/threaded/logs_threaded.cmi" {"threaded/logs_threaded.cmi"}
+  "?_build/src/threaded/logs_threaded.cmti" {"threaded/logs_threaded.cmti"}
+  "_build/src/threaded/logs_threaded.cmx" {"threaded/logs_threaded.cmx"}
+  "_build/src/threaded/logs_threaded.cmxa" {"threaded/logs_threaded.cmxa"}
+  "_build/src/threaded/logs_threaded.cmxs" {"threaded/logs_threaded.cmxs"}
+  "_build/src/threaded/logs_threaded.mli" {"threaded/logs_threaded.mli"}
+  "_build/src/top/logs_top.a" {"top/logs_top.a"}
+  "_build/src/top/logs_top.cma" {"top/logs_top.cma"}
+  "_build/src/top/logs_top.cmx" {"top/logs_top.cmx"}
+  "_build/src/top/logs_top.cmxa" {"top/logs_top.cmxa"}
+  "_build/src/top/logs_top.cmxs" {"top/logs_top.cmxs"}
+  "_build/src/top/logs_top_init.ml" {"logs_top_init.ml"}
+  "_build/src/top/logs_top_init.ml" {"top/logs_top_init_ml"}
+]
+doc: [
+  "_build/CHANGES.md" {"CHANGES.md"}
+  "_build/LICENSE.md" {"LICENSE.md"}
+  "_build/README.md" {"README.md"}
+  "_build/doc/index.mld" {"odoc-pages/index.mld"}
+]

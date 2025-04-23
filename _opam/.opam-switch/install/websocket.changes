@@ -1,0 +1,29 @@
+opam-version: "2.0"
+added: [
+  "doc/websocket" {"D"}
+  "doc/websocket/CHANGES" {"F:S3873T1745425524.62"}
+  "doc/websocket/LICENSE.md" {"F:S736T1745425524.62"}
+  "doc/websocket/README.md" {"F:S966T1745425524.62"}
+  "lib/websocket" {"D"}
+  "lib/websocket/META" {"F:S430T1745425524.62"}
+  "lib/websocket/dune-package" {"F:S28T1745425524.62"}
+  "lib/websocket/opam" {"F:S1322T1745425524.62"}
+  "lib/websocket/sha1.ml" {"F:S5572T1745425524.62"}
+  "lib/websocket/websocket.a" {"F:S52088T1745425524.62"}
+  "lib/websocket/websocket.cma" {"F:S78737T1745425524.62"}
+  "lib/websocket/websocket.cmi" {"F:S8159T1745425524.62"}
+  "lib/websocket/websocket.cmt" {"F:S110821T1745425524.62"}
+  "lib/websocket/websocket.cmti" {"F:S26533T1745425524.62"}
+  "lib/websocket/websocket.cmx" {"F:S8656T1745425524.62"}
+  "lib/websocket/websocket.cmxa" {"F:S6133T1745425524.62"}
+  "lib/websocket/websocket.cmxs" {"F:S97552T1745425524.62"}
+  "lib/websocket/websocket.ml" {"F:S8618T1745425524.62"}
+  "lib/websocket/websocket.mli" {"F:S1380T1745425524.62"}
+  "lib/websocket/websocket__.cmi" {"F:S216T1745425524.62"}
+  "lib/websocket/websocket__.cmt" {"F:S2573T1745425524.62"}
+  "lib/websocket/websocket__.cmx" {"F:S121T1745425524.62"}
+  "lib/websocket/websocket__.ml" {"F:S88T1745425524.62"}
+  "lib/websocket/websocket__Sha1.cmi" {"F:S642T1745425524.62"}
+  "lib/websocket/websocket__Sha1.cmt" {"F:S64149T1745425524.62"}
+  "lib/websocket/websocket__Sha1.cmx" {"F:S678T1745425524.62"}
+]

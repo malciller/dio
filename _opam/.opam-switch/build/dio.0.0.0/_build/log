@@ -1,0 +1,28 @@
+# dune build -p dio -j 13
+# OCAMLPARAM: unset
+# Shared cache: enabled-except-user-rules
+# Shared cache location: /Users/malciller/.cache/dune/db
+# Workspace root:
+# /Users/malciller/dev/Dio/dio/_opam/.opam-switch/build/dio.0.0.0
+# Dune context:
+#  { name = "default"
+#  ; kind = "default"
+#  ; profile = Release
+#  ; merlin = true
+#  ; fdo_target_exe = None
+#  ; build_dir = In_build_dir "default"
+#  ; instrument_with = []
+#  }
+$ /Users/malciller/dev/Dio/dio/_opam/bin/ocamlc.opt -config > /var/folders/z9/9cr2csgs0l5bg4qz3thq26kc0000gn/T/dune_ac8525_output
+# Promoting "_build/default/dio.opam" to "dio.opam"
+$ (cd _build/default && /Users/malciller/dev/Dio/dio/_opam/bin/ocamldep.opt -modules -impl bin/main.ml) > _build/default/bin/.main.eobjs/dune__exe__Main.impl.d
+$ (cd _build/default && /Users/malciller/dev/Dio/dio/_opam/bin/ocamldep.opt -modules -intf bin/main.mli) > _build/default/bin/.main.eobjs/dune__exe__Main.intf.d
+$ (cd _build/default && /Users/malciller/dev/Dio/dio/_opam/bin/ocamlc.opt -w -40 -w -49 -nopervasives -nostdlib -g -bin-annot -I bin/.main.eobjs/byte -no-alias-deps -o bin/.main.eobjs/byte/dune__exe.cmo -c -impl bin/.main.eobjs/dune__exe.ml-gen)
+$ (cd _build/default && /Users/malciller/dev/Dio/dio/_opam/bin/ocamlc.opt -w -40 -g -bin-annot -I lib/.dio.objs/byte -no-alias-deps -o lib/.dio.objs/byte/dio.cmo -c -impl lib/dio.ml)
+$ (cd _build/default && /Users/malciller/dev/Dio/dio/_opam/bin/ocamlc.opt -w -40 -g -bin-annot -I bin/.main.eobjs/byte -I lib/.dio.objs/byte -no-alias-deps -open Dune__exe -o bin/.main.eobjs/byte/dune__exe__Main.cmi -c -intf bin/main.mli)
+$ (cd _build/default && /Users/malciller/dev/Dio/dio/_opam/bin/ocamlopt.opt -w -40 -w -49 -nopervasives -nostdlib -g -I bin/.main.eobjs/byte -I bin/.main.eobjs/native -intf-suffix .ml-gen -no-alias-deps -o bin/.main.eobjs/native/dune__exe.cmx -c -impl bin/.main.eobjs/dune__exe.ml-gen)
+$ (cd _build/default && /Users/malciller/dev/Dio/dio/_opam/bin/ocamlopt.opt -w -40 -g -I lib/.dio.objs/byte -I lib/.dio.objs/native -intf-suffix .ml -no-alias-deps -o lib/.dio.objs/native/dio.cmx -c -impl lib/dio.ml)
+$ (cd _build/default && /Users/malciller/dev/Dio/dio/_opam/bin/ocamlopt.opt -w -40 -g -a -o lib/dio.cmxa lib/.dio.objs/native/dio.cmx)
+$ (cd _build/default && /Users/malciller/dev/Dio/dio/_opam/bin/ocamlopt.opt -w -40 -g -I bin/.main.eobjs/byte -I bin/.main.eobjs/native -I lib/.dio.objs/byte -I lib/.dio.objs/native -intf-suffix .ml -no-alias-deps -open Dune__exe -o bin/.main.eobjs/native/dune__exe__Main.cmx -c -impl bin/main.ml)
+$ (cd _build/default && /Users/malciller/dev/Dio/dio/_opam/bin/ocamlopt.opt -w -40 -g -o bin/main.exe lib/dio.cmxa bin/.main.eobjs/native/dune__exe.cmx bin/.main.eobjs/native/dune__exe__Main.cmx)
+# Promoting "_build/default/dio.install" to "dio.install"

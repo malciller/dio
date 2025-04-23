@@ -1,0 +1,240 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+  merge_group:
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+        # Please keep the list in sync with the minimal version of OCaml in
+        # dune-project, dune.opam.template and bootstrap.ml
+        #
+        # We don't run tests on all versions of the Windows environment and on
+        # 4.02.x and 4.07.x in other environments
+        ocaml-compiler:
+          - 5.1.x
+        include:
+          # OCaml trunk:
+          - ocaml-compiler: ocaml-variants.5.4.0+trunk
+            os: ubuntu-latest
+            skip_test: true
+          # OCaml 4:
+          - ocaml-compiler: 4.14.x
+            os: ubuntu-latest
+            skip_test: true
+          - ocaml-compiler: 4.14.x
+            os: macos-latest
+            skip_test: true
+          # macOS x86_64 (Intel)
+          - ocaml-compiler: 5.1.x
+            os: macos-13
+            skip_test: true
+          # MSVC (left behind until we upgrade to 5.2.0)
+          - ocaml-compiler: ocaml-base-compiler.4.14.2,system-msvc
+            os: windows-latest
+          # mingw
+          - ocaml-compiler: ocaml-base-compiler.5.1.1,system-mingw
+            os: windows-latest
+          - ocaml-compiler: 4.08.x
+            os: ubuntu-latest
+            skip_test: true
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Use OCaml ${{ matrix.ocaml-compiler }}
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
+
+      # git user needs to be configured for the following tests:
+      # otherlibs/build-info/test/run.t
+      # test/blackbox-tests/test-cases/dune-project-meta/run.t
+      # test/blackbox-tests/test-cases/subst/run.t
+      # test/expect-tests/vcs_tests.ml
+      - name: Set git user
+        run: |
+          git config --global user.name github-actions[bot]
+          git config --global user.email github-actions[bot]@users.noreply.github.com
+
+      # Install ocamlfind-secondary and ocaml-secondary-compiler, if needed
+      - run: opam install ./dune.opam --deps-only --with-test
+
+      - name: Install system deps on macOS
+        run: brew install coreutils pkg-config file
+        if: ${{ matrix.os == 'macos-latest' }}
+
+      # dune doesn't have any additional dependencies so we can build it right
+      # away this makes it possible to see build errors as soon as possible
+      - run: opam exec -- make release
+
+      - name: Install deps
+        run: |
+          opam install . --deps-only --with-test
+          opam exec -- make dev-deps
+        if: ${{ matrix.skip_test == false }}
+
+      - name: Run test suite on Unix
+        run: opam exec -- make test
+        if: ${{ matrix.os != 'windows-latest' && matrix.skip_test == false }}
+
+      - name: Run test suite on Win32
+        run: opam exec -- make test-windows
+        if: ${{ matrix.os == 'windows-latest' && matrix.skip_test == false }}
+
+      - name: Build configurator
+        run: opam install ./dune-configurator.opam
+        if: ${{ matrix.configurator == true }}
+
+  nix:
+    name: Nix
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v22
+      - run: nix build
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v18
+      - run: nix develop .#fmt -c make fmt
+
+  doc:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v18
+      - run: nix develop .#doc -c make doc
+        env:
+          LC_ALL: C
+
+  coq:
+    name: Coq 8.16.1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v22
+      - run: nix develop .#coq -c make test-coq
+        env:
+          # We disable the Dune cache when running the tests
+          DUNE_CACHE: disabled
+
+  wasm:
+    name: Wasm_of_ocaml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: latest
+
+      - name: Set-up Binaryen
+        uses: Aandreba/setup-binaryen@v1.0.0
+        with:
+          token: ${{ github.token }}
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          path: dune
+
+      - name: Use OCaml 4.14.x
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 4.14.x
+
+      - name: Install faked binaryen-bin package
+        # It's faster to use a cached version
+        run: opam install --fake binaryen-bin
+
+      - name: Update Dune
+        working-directory: ./dune
+        run: opam pin add -n dune . --with-version 3.17.0
+
+      - name: Install Wasm_of_ocaml
+        run: |
+           opam install wasm_of_ocaml-compiler
+
+      - name: Set Git User
+        run: |
+          git config --global user.name github-actions[bot]
+          git config --global user.email github-actions[bot]@users.noreply.github.com
+      - name: Run Tests
+        working-directory: ./dune
+        run: opam exec -- make test-wasm
+        env:
+          # We disable the Dune cache when running the tests
+          DUNE_CACHE: disabled
+
+  monorepo_benchmark_test:
+    name: Build monorepo benchmark docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - uses: whoan/docker-build-with-cache-action@v6
+        with:
+          image_name: monorepobenchmark
+          dockerfile: bench/monorepo/bench.Dockerfile
+          push_image_and_stages: on:push
+          username: ocamldune
+          password: "${{ secrets.DOCKER_HUB_PASSWORD }}"
+
+  create-local-opam-switch:
+    name: Create local opam switch
+    strategy:
+      fail-fast: true
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+        ocaml-compiler:
+          - 5
+          - 4.14
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Use OCaml ${{ matrix.ocaml-compiler }}
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
+      - uses: actions/checkout@v4
+      - run: opam switch create . -y
+
+  build-microbench:
+    name: Build microbenchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v22
+      - run: nix develop .#microbench -c make dune build bench/micro

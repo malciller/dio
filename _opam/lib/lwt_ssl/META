@@ -1,0 +1,7 @@
+version = "1.2.0"
+description = "SSL support for Lwt"
+requires = "lwt.unix ssl"
+archive(byte) = "lwt_ssl.cma"
+archive(native) = "lwt_ssl.cmxa"
+plugin(byte) = "lwt_ssl.cma"
+plugin(native) = "lwt_ssl.cmxs"

@@ -1,0 +1,21 @@
+opam-version: "2.0"
+added: [
+  "doc/base64" {"D"}
+  "doc/base64/CHANGES.md" {"F:S1127T1745425509.18"}
+  "doc/base64/LICENSE.md" {"F:S800T1745425509.18"}
+  "doc/base64/README.md" {"F:S700T1745425509.18"}
+  "lib/base64" {"D"}
+  "lib/base64/META" {"F:S173T1745425509.18"}
+  "lib/base64/b64.cmi" {"F:S837T1745425509.18"}
+  "lib/base64/b64.cmt" {"F:S45068T1745425509.18"}
+  "lib/base64/b64.cmti" {"F:S8018T1745425509.18"}
+  "lib/base64/b64.cmx" {"F:S1275T1745425509.18"}
+  "lib/base64/b64.ml" {"F:S3502T1745425509.18"}
+  "lib/base64/b64.mli" {"F:S2132T1745425509.18"}
+  "lib/base64/base64.a" {"F:S9896T1745425509.18"}
+  "lib/base64/base64.cma" {"F:S15924T1745425509.18"}
+  "lib/base64/base64.cmxa" {"F:S442T1745425509.18"}
+  "lib/base64/base64.cmxs" {"F:S52552T1745425509.18"}
+  "lib/base64/dune-package" {"F:S662T1745425509.18"}
+  "lib/base64/opam" {"F:S898T1745425509.18"}
+]

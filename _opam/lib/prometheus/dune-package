@@ -1,0 +1,37 @@
+(lang dune 3.18)
+(name prometheus)
+(version 1.2)
+(sections (lib .) (libexec .) (doc ../../doc/prometheus))
+(files
+ (lib
+  (META
+   dune-package
+   opam
+   prometheus.a
+   prometheus.cma
+   prometheus.cmi
+   prometheus.cmt
+   prometheus.cmti
+   prometheus.cmx
+   prometheus.cmxa
+   prometheus.ml
+   prometheus.mli))
+ (libexec (prometheus.cmxs))
+ (doc (CHANGES.md LICENSE.md README.md)))
+(library
+ (name prometheus)
+ (kind normal)
+ (archives (byte prometheus.cma) (native prometheus.cmxa))
+ (plugins (byte prometheus.cma) (native prometheus.cmxs))
+ (native_archives prometheus.a)
+ (requires lwt astring asetmap re)
+ (main_module_name Prometheus)
+ (modes byte native)
+ (modules
+  (singleton
+   (obj_name prometheus)
+   (visibility public)
+   (source
+    (path Prometheus)
+    (intf (path prometheus.mli))
+    (impl (path prometheus.ml))))))

@@ -1,0 +1,29 @@
+opam-version: "2.0"
+name: "dio"
+version: "0.0.0"
+synopsis: "Trading engine"
+maintainer: "malciller@gmail.com"
+authors: "Cal Miller"
+license: "MIT"
+homepage: "https://github.com/malciller/dio"
+bug-reports: "https://github.com/malciller/dio/issues"
+depends: [
+  "ocaml" {>= "4.14" & < "5.0"}
+  "dune" {>= "3.13"}
+  "lwt"
+  "lwt_ppx"
+  "yojson"
+  "ppx_deriving_yojson"
+  "decimal"
+  "caqti"
+  "caqti-driver-sqlite3"
+  "websocket-lwt"
+  "cmdliner"
+  "alcotest"
+  "prometheus"
+]
+build: ["dune" "build" "-p" name "-j" jobs]
+dev-repo: "git+https://github.com/malciller/dio.git"
+url {
+  src: "file:///Users/malciller/dev/Dio/dio"
+}

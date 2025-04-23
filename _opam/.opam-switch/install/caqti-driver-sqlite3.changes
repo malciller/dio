@@ -1,0 +1,30 @@
+opam-version: "2.0"
+added: [
+  "doc/caqti-driver-sqlite3" {"D"}
+  "doc/caqti-driver-sqlite3/CHANGES.md" {"F:S19494T1745425524.06"}
+  "doc/caqti-driver-sqlite3/README.md" {"F:S6073T1745425524.06"}
+  "lib/caqti-driver-sqlite3" {"D"}
+  "lib/caqti-driver-sqlite3/META" {"F:S272T1745425524.06"}
+  "lib/caqti-driver-sqlite3/caqti_driver_sqlite3.a"
+    {"F:S102544T1745425524.06"}
+  "lib/caqti-driver-sqlite3/caqti_driver_sqlite3.cma"
+    {"F:S158569T1745425524.06"}
+  "lib/caqti-driver-sqlite3/caqti_driver_sqlite3.cmi"
+    {"F:S1390T1745425524.06"}
+  "lib/caqti-driver-sqlite3/caqti_driver_sqlite3.cmt"
+    {"F:S365288T1745425524.06"}
+  "lib/caqti-driver-sqlite3/caqti_driver_sqlite3.cmti"
+    {"F:S9372T1745425524.06"}
+  "lib/caqti-driver-sqlite3/caqti_driver_sqlite3.cmx"
+    {"F:S8974T1745425524.06"}
+  "lib/caqti-driver-sqlite3/caqti_driver_sqlite3.cmxa"
+    {"F:S2815T1745425524.06"}
+  "lib/caqti-driver-sqlite3/caqti_driver_sqlite3.cmxs"
+    {"F:S127816T1745425524.06"}
+  "lib/caqti-driver-sqlite3/caqti_driver_sqlite3.ml"
+    {"F:S22487T1745425524.06"}
+  "lib/caqti-driver-sqlite3/caqti_driver_sqlite3.mli"
+    {"F:S1953T1745425524.06"}
+  "lib/caqti-driver-sqlite3/dune-package" {"F:S1085T1745425524.06"}
+  "lib/caqti-driver-sqlite3/opam" {"F:S868T1745425524.06"}
+]

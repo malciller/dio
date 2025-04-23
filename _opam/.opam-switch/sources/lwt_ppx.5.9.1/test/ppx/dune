@@ -1,0 +1,8 @@
+(test
+ (name main)
+ (package lwt_ppx)
+ (libraries lwttester)
+ (preprocess
+  (pps lwt_ppx))
+ (flags
+  (:standard -warn-error -22)))

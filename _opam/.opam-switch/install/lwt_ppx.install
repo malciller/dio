@@ -1,0 +1,24 @@
+opam-version: "2.0"
+lib: [
+  "_build/install/default/lib/lwt_ppx/META"
+  "_build/install/default/lib/lwt_ppx/dune-package"
+  "_build/install/default/lib/lwt_ppx/opam"
+  "_build/install/default/lib/lwt_ppx/ppx_lwt.a"
+  "_build/install/default/lib/lwt_ppx/ppx_lwt.cma"
+  "_build/install/default/lib/lwt_ppx/ppx_lwt.cmi"
+  "_build/install/default/lib/lwt_ppx/ppx_lwt.cmt"
+  "_build/install/default/lib/lwt_ppx/ppx_lwt.cmti"
+  "_build/install/default/lib/lwt_ppx/ppx_lwt.cmx"
+  "_build/install/default/lib/lwt_ppx/ppx_lwt.cmxa"
+  "_build/install/default/lib/lwt_ppx/ppx_lwt.ml"
+  "_build/install/default/lib/lwt_ppx/ppx_lwt.mli"
+]
+doc: [
+  "_build/install/default/doc/lwt_ppx/CHANGES"
+  "_build/install/default/doc/lwt_ppx/LICENSE.md"
+  "_build/install/default/doc/lwt_ppx/README.md"
+]
+libexec: [
+  "_build/install/default/lib/lwt_ppx/ppx.exe"
+  "_build/install/default/lib/lwt_ppx/ppx_lwt.cmxs"
+]

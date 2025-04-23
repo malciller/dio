@@ -1,0 +1,47 @@
+version = "2.2.1"
+description = ""
+requires = "re.posix stringext"
+archive(byte) = "uri.cma"
+archive(native) = "uri.cmxa"
+plugin(byte) = "uri.cma"
+plugin(native) = "uri.cmxs"
+package "services" (
+  directory = "services"
+  version = "2.2.1"
+  description = ""
+  requires = "uri"
+  archive(byte) = "uri_services.cma"
+  archive(native) = "uri_services.cmxa"
+  plugin(byte) = "uri_services.cma"
+  plugin(native) = "uri_services.cmxs"
+)
+package "services_full" (
+  directory = "services_full"
+  version = "2.2.1"
+  description = ""
+  requires = "uri"
+  archive(byte) = "uri_services_full.cma"
+  archive(native) = "uri_services_full.cmxa"
+  plugin(byte) = "uri_services_full.cma"
+  plugin(native) = "uri_services_full.cmxs"
+)
+package "sexp" (
+  directory = "sexp"
+  version = "2.2.1"
+  description = ""
+  requires = "ppx_sexp_conv.runtime-lib sexplib0 uri"
+  archive(byte) = "uri_sexp.cma"
+  archive(native) = "uri_sexp.cmxa"
+  plugin(byte) = "uri_sexp.cma"
+  plugin(native) = "uri_sexp.cmxs"
+)
+package "top" (
+  directory = "top"
+  version = "2.2.1"
+  description = ""
+  requires = "compiler-libs uri"
+  archive(byte) = "uri_top.cma"
+  archive(native) = "uri_top.cmxa"
+  plugin(byte) = "uri_top.cma"
+  plugin(native) = "uri_top.cmxs"
+)

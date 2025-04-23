@@ -1,0 +1,65 @@
+opam-version: "2.0"
+lib: [
+  "src/META.num" {"META"}
+  "src/nums.cma"
+  "src/libnums.a"
+  "src/big_int.cmi"
+  "src/nat.cmi"
+  "src/num.cmi"
+  "src/ratio.cmi"
+  "src/arith_status.cmi"
+  "src/big_int.mli"
+  "src/nat.mli"
+  "src/num.mli"
+  "src/ratio.mli"
+  "src/arith_status.mli"
+  "src/big_int.cmti"
+  "src/nat.cmti"
+  "src/num.cmti"
+  "src/ratio.cmti"
+  "src/arith_status.cmti"
+  "src/nums.cmxa"
+  "src/nums.a"
+  "src/int_misc.cmx"
+  "src/nat.cmx"
+  "src/big_int.cmx"
+  "src/arith_flags.cmx"
+  "src/ratio.cmx"
+  "src/num.cmx"
+  "src/arith_status.cmx"
+]
+stublibs: "src/dllnums.so"
+libexec: "src/nums.cmxs"
+lib_root: [
+  "src/META.top" {"num-top/META"}
+  "src/num_top.cma" {"num-top/num_top.cma"}
+  "src/num_top_printers.cmi" {"num-top/num_top_printers.cmi"}
+  "src/num_top.cmi" {"num-top/num_top.cmi"}
+  "src/nums.cma" {"ocaml/nums.cma"}
+  "src/libnums.a" {"ocaml/libnums.a"}
+  "src/big_int.cmi" {"ocaml/big_int.cmi"}
+  "src/nat.cmi" {"ocaml/nat.cmi"}
+  "src/num.cmi" {"ocaml/num.cmi"}
+  "src/ratio.cmi" {"ocaml/ratio.cmi"}
+  "src/arith_status.cmi" {"ocaml/arith_status.cmi"}
+  "src/big_int.mli" {"ocaml/big_int.mli"}
+  "src/nat.mli" {"ocaml/nat.mli"}
+  "src/num.mli" {"ocaml/num.mli"}
+  "src/ratio.mli" {"ocaml/ratio.mli"}
+  "src/arith_status.mli" {"ocaml/arith_status.mli"}
+  "src/big_int.cmti" {"ocaml/big_int.cmti"}
+  "src/nat.cmti" {"ocaml/nat.cmti"}
+  "src/num.cmti" {"ocaml/num.cmti"}
+  "src/ratio.cmti" {"ocaml/ratio.cmti"}
+  "src/arith_status.cmti" {"ocaml/arith_status.cmti"}
+  "src/nums.cmxa" {"ocaml/nums.cmxa"}
+  "src/nums.a" {"ocaml/nums.a"}
+  "src/int_misc.cmx" {"ocaml/int_misc.cmx"}
+  "src/nat.cmx" {"ocaml/nat.cmx"}
+  "src/big_int.cmx" {"ocaml/big_int.cmx"}
+  "src/arith_flags.cmx" {"ocaml/arith_flags.cmx"}
+  "src/ratio.cmx" {"ocaml/ratio.cmx"}
+  "src/num.cmx" {"ocaml/num.cmx"}
+  "src/arith_status.cmx" {"ocaml/arith_status.cmx"}
+]
+libexec_root: "src/nums.cmxs" {"ocaml/nums.cmxs"}

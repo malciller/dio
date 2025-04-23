@@ -1,0 +1,9 @@
+(library
+ (name caqti_eio)
+ (public_name caqti-eio)
+ (enabled_if (>= %{ocaml_version} "5.0"))
+ (libraries
+    caqti
+    caqti.platform
+    eio
+    logs))

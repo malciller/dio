@@ -1,0 +1,28 @@
+opam-version: "2.0"
+lib: [
+  "_build/install/default/lib/ssl/META"
+  "_build/install/default/lib/ssl/dune-package"
+  "_build/install/default/lib/ssl/libssl_stubs.a"
+  "_build/install/default/lib/ssl/opam"
+  "_build/install/default/lib/ssl/ssl.a"
+  "_build/install/default/lib/ssl/ssl.cma"
+  "_build/install/default/lib/ssl/ssl.cmi"
+  "_build/install/default/lib/ssl/ssl.cmt"
+  "_build/install/default/lib/ssl/ssl.cmti"
+  "_build/install/default/lib/ssl/ssl.cmx"
+  "_build/install/default/lib/ssl/ssl.cmxa"
+  "_build/install/default/lib/ssl/ssl.ml"
+  "_build/install/default/lib/ssl/ssl.mli"
+  "_build/install/default/lib/ssl/ssl_threads.cmi"
+  "_build/install/default/lib/ssl/ssl_threads.cmt"
+  "_build/install/default/lib/ssl/ssl_threads.cmti"
+  "_build/install/default/lib/ssl/ssl_threads.cmx"
+  "_build/install/default/lib/ssl/ssl_threads.ml"
+  "_build/install/default/lib/ssl/ssl_threads.mli"
+]
+stublibs: "_build/install/default/lib/stublibs/dllssl_stubs.so"
+doc: [
+  "_build/install/default/doc/ssl/CHANGES.md"
+  "_build/install/default/doc/ssl/README.md"
+]
+libexec: "_build/install/default/lib/ssl/ssl.cmxs"

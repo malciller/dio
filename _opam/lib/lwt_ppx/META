@@ -1,0 +1,15 @@
+version = "5.9.1"
+description = "Lwt PPX syntax extension"
+requires(ppx_driver) = "ppxlib ppxlib.ast"
+archive(ppx_driver,byte) = "ppx_lwt.cma"
+archive(ppx_driver,native) = "ppx_lwt.cmxa"
+plugin(ppx_driver,byte) = "ppx_lwt.cma"
+plugin(ppx_driver,native) = "ppx_lwt.cmxs"
+# This is what dune uses to find out the runtime dependencies of
+# a preprocessor
+ppx_runtime_deps = "lwt"
+# This line makes things transparent for people mixing preprocessors
+# and normal dependencies
+requires(-ppx_driver) = "lwt"
+ppx(-ppx_driver,-custom_ppx) = "./ppx.exe --as-ppx"
+library_kind = "ppx_rewriter"

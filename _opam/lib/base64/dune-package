@@ -1,0 +1,33 @@
+(lang dune 3.18)
+(name base64)
+(version 2.3.0)
+(sections (lib .) (libexec .) (doc ../../doc/base64))
+(files
+ (lib
+  (META
+   b64.cmi
+   b64.cmt
+   b64.cmti
+   b64.cmx
+   b64.ml
+   b64.mli
+   base64.a
+   base64.cma
+   base64.cmxa
+   dune-package
+   opam))
+ (libexec (base64.cmxs))
+ (doc (CHANGES.md LICENSE.md README.md)))
+(library
+ (name base64)
+ (kind normal)
+ (archives (byte base64.cma) (native base64.cmxa))
+ (plugins (byte base64.cma) (native base64.cmxs))
+ (native_archives base64.a)
+ (requires bytes)
+ (modes byte native)
+ (modules
+  (singleton
+   (obj_name b64)
+   (visibility public)
+   (source (path B64) (intf (path b64.mli)) (impl (path b64.ml))))))

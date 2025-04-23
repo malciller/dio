@@ -1,0 +1,138 @@
+opam-version: "2.0"
+added: [
+  "doc/sexplib" {"D"}
+  "doc/sexplib/CHANGES.md" {"F:S15626T1745425518.75"}
+  "doc/sexplib/CHANGES.txt" {"F:S10267T1745425518.75"}
+  "doc/sexplib/LICENSE-Tywith.txt" {"F:S1544T1745425518.75"}
+  "doc/sexplib/LICENSE.md" {"F:S1117T1745425518.75"}
+  "doc/sexplib/README.org" {"F:S4747T1745425518.75"}
+  "lib/sexplib" {"D"}
+  "lib/sexplib/META" {"F:S714T1745425518.73"}
+  "lib/sexplib/conv.ml" {"F:S5017T1745425518.73"}
+  "lib/sexplib/conv.mli" {"F:S3664T1745425518.73"}
+  "lib/sexplib/conv_error.ml" {"F:S33T1745425518.73"}
+  "lib/sexplib/dune-package" {"F:S7379T1745425518.73"}
+  "lib/sexplib/exn_magic.ml" {"F:S8109T1745425518.73"}
+  "lib/sexplib/exn_magic.mli" {"F:S2589T1745425518.73"}
+  "lib/sexplib/lexer.ml" {"F:S31182T1745425518.73"}
+  "lib/sexplib/lexer.mli" {"F:S140T1745425518.73"}
+  "lib/sexplib/num" {"D"}
+  "lib/sexplib/num/sexplib_num.a" {"F:S19928T1745425518.73"}
+  "lib/sexplib/num/sexplib_num.cma" {"F:S61201T1745425518.73"}
+  "lib/sexplib/num/sexplib_num.cmi" {"F:S341T1745425518.73"}
+  "lib/sexplib/num/sexplib_num.cmt" {"F:S3100T1745425518.73"}
+  "lib/sexplib/num/sexplib_num.cmx" {"F:S155T1745425518.73"}
+  "lib/sexplib/num/sexplib_num.cmxa" {"F:S5315T1745425518.73"}
+  "lib/sexplib/num/sexplib_num.cmxs" {"F:S55280T1745425518.74"}
+  "lib/sexplib/num/sexplib_num.ml" {"F:S193T1745425518.73"}
+  "lib/sexplib/num/sexplib_num__Sexplib_num_conv.cmi"
+    {"F:S3367T1745425518.73"}
+  "lib/sexplib/num/sexplib_num__Sexplib_num_conv.cmt"
+    {"F:S19004T1745425518.73"}
+  "lib/sexplib/num/sexplib_num__Sexplib_num_conv.cmti"
+    {"F:S12374T1745425518.73"}
+  "lib/sexplib/num/sexplib_num__Sexplib_num_conv.cmx"
+    {"F:S4224T1745425518.73"}
+  "lib/sexplib/num/sexplib_num__Std.cmi" {"F:S36373T1745425518.73"}
+  "lib/sexplib/num/sexplib_num__Std.cmt" {"F:S109585T1745425518.73"}
+  "lib/sexplib/num/sexplib_num__Std.cmx" {"F:S18955T1745425518.73"}
+  "lib/sexplib/num/sexplib_num_conv.ml" {"F:S1241T1745425518.73"}
+  "lib/sexplib/num/sexplib_num_conv.mli" {"F:S1079T1745425518.73"}
+  "lib/sexplib/num/std.ml" {"F:S587T1745425518.73"}
+  "lib/sexplib/opam" {"F:S897T1745425518.73"}
+  "lib/sexplib/parser.ml" {"F:S13901T1745425518.73"}
+  "lib/sexplib/parser.mli" {"F:S372T1745425518.73"}
+  "lib/sexplib/parser_with_layout.ml" {"F:S15775T1745425518.73"}
+  "lib/sexplib/parser_with_layout.mli" {"F:S655T1745425518.73"}
+  "lib/sexplib/path.ml" {"F:S5438T1745425518.73"}
+  "lib/sexplib/path.mli" {"F:S4356T1745425518.73"}
+  "lib/sexplib/pre_sexp.ml" {"F:S27103T1745425518.73"}
+  "lib/sexplib/sexp.ml" {"F:S55T1745425518.73"}
+  "lib/sexplib/sexp.mli" {"F:S80T1745425518.73"}
+  "lib/sexplib/sexp_intf.ml" {"F:S25884T1745425518.73"}
+  "lib/sexplib/sexp_with_layout.ml" {"F:S6024T1745425518.73"}
+  "lib/sexplib/sexplib.a" {"F:S331072T1745425518.73"}
+  "lib/sexplib/sexplib.cma" {"F:S571547T1745425518.73"}
+  "lib/sexplib/sexplib.cmi" {"F:S1421T1745425518.74"}
+  "lib/sexplib/sexplib.cmt" {"F:S8586T1745425518.74"}
+  "lib/sexplib/sexplib.cmx" {"F:S416T1745425518.74"}
+  "lib/sexplib/sexplib.cmxa" {"F:S25676T1745425518.74"}
+  "lib/sexplib/sexplib.cmxs" {"F:S332096T1745425518.74"}
+  "lib/sexplib/sexplib.ml" {"F:S1113T1745425518.74"}
+  "lib/sexplib/sexplib__Conv.cmi" {"F:S15813T1745425518.74"}
+  "lib/sexplib/sexplib__Conv.cmt" {"F:S79762T1745425518.74"}
+  "lib/sexplib/sexplib__Conv.cmti" {"F:S52493T1745425518.74"}
+  "lib/sexplib/sexplib__Conv.cmx" {"F:S13075T1745425518.74"}
+  "lib/sexplib/sexplib__Conv_error.cmi" {"F:S4717T1745425518.74"}
+  "lib/sexplib/sexplib__Conv_error.cmt" {"F:S15065T1745425518.74"}
+  "lib/sexplib/sexplib__Conv_error.cmx" {"F:S7680T1745425518.74"}
+  "lib/sexplib/sexplib__Exn_magic.cmi" {"F:S9719T1745425518.74"}
+  "lib/sexplib/sexplib__Exn_magic.cmt" {"F:S96812T1745425518.74"}
+  "lib/sexplib/sexplib__Exn_magic.cmti" {"F:S34613T1745425518.74"}
+  "lib/sexplib/sexplib__Exn_magic.cmx" {"F:S3175T1745425518.74"}
+  "lib/sexplib/sexplib__Lexer.cmi" {"F:S1206T1745425518.74"}
+  "lib/sexplib/sexplib__Lexer.cmt" {"F:S127452T1745425518.74"}
+  "lib/sexplib/sexplib__Lexer.cmti" {"F:S4929T1745425518.74"}
+  "lib/sexplib/sexplib__Lexer.cmx" {"F:S2003T1745425518.74"}
+  "lib/sexplib/sexplib__Parser.cmi" {"F:S1714T1745425518.74"}
+  "lib/sexplib/sexplib__Parser.cmt" {"F:S54975T1745425518.74"}
+  "lib/sexplib/sexplib__Parser.cmti" {"F:S7266T1745425518.74"}
+  "lib/sexplib/sexplib__Parser.cmx" {"F:S3851T1745425518.74"}
+  "lib/sexplib/sexplib__Parser_with_layout.cmi" {"F:S2402T1745425518.74"}
+  "lib/sexplib/sexplib__Parser_with_layout.cmt" {"F:S70424T1745425518.74"}
+  "lib/sexplib/sexplib__Parser_with_layout.cmti" {"F:S9455T1745425518.74"}
+  "lib/sexplib/sexplib__Parser_with_layout.cmx" {"F:S5742T1745425518.74"}
+  "lib/sexplib/sexplib__Path.cmi" {"F:S4274T1745425518.74"}
+  "lib/sexplib/sexplib__Path.cmt" {"F:S73844T1745425518.74"}
+  "lib/sexplib/sexplib__Path.cmti" {"F:S22805T1745425518.74"}
+  "lib/sexplib/sexplib__Path.cmx" {"F:S3685T1745425518.74"}
+  "lib/sexplib/sexplib__Pre_sexp.cmi" {"F:S32237T1745425518.74"}
+  "lib/sexplib/sexplib__Pre_sexp.cmt" {"F:S349032T1745425518.74"}
+  "lib/sexplib/sexplib__Pre_sexp.cmx" {"F:S21650T1745425518.74"}
+  "lib/sexplib/sexplib__Sexp.cmi" {"F:S24501T1745425518.74"}
+  "lib/sexplib/sexplib__Sexp.cmt" {"F:S64455T1745425518.74"}
+  "lib/sexplib/sexplib__Sexp.cmti" {"F:S52926T1745425518.74"}
+  "lib/sexplib/sexplib__Sexp.cmx" {"F:S23881T1745425518.74"}
+  "lib/sexplib/sexplib__Sexp_intf.cmi" {"F:S24501T1745425518.74"}
+  "lib/sexplib/sexplib__Sexp_intf.cmt" {"F:S138407T1745425518.74"}
+  "lib/sexplib/sexplib__Sexp_intf.cmx" {"F:S2178T1745425518.74"}
+  "lib/sexplib/sexplib__Sexp_with_layout.cmi" {"F:S8806T1745425518.74"}
+  "lib/sexplib/sexplib__Sexp_with_layout.cmt" {"F:S78612T1745425518.74"}
+  "lib/sexplib/sexplib__Sexp_with_layout.cmx" {"F:S5889T1745425518.74"}
+  "lib/sexplib/sexplib__Src_pos.cmi" {"F:S2187T1745425518.74"}
+  "lib/sexplib/sexplib__Src_pos.cmt" {"F:S19778T1745425518.74"}
+  "lib/sexplib/sexplib__Src_pos.cmti" {"F:S10185T1745425518.74"}
+  "lib/sexplib/sexplib__Src_pos.cmx" {"F:S1428T1745425518.74"}
+  "lib/sexplib/sexplib__Std.cmi" {"F:S15639T1745425518.74"}
+  "lib/sexplib/sexplib__Std.cmt" {"F:S54146T1745425518.74"}
+  "lib/sexplib/sexplib__Std.cmx" {"F:S12185T1745425518.74"}
+  "lib/sexplib/sexplib__Type.cmi" {"F:S799T1745425518.74"}
+  "lib/sexplib/sexplib__Type.cmt" {"F:S4199T1745425518.74"}
+  "lib/sexplib/sexplib__Type.cmx" {"F:S556T1745425518.74"}
+  "lib/sexplib/sexplib__Type_with_layout.cmi" {"F:S2899T1745425518.74"}
+  "lib/sexplib/sexplib__Type_with_layout.cmt" {"F:S47860T1745425518.74"}
+  "lib/sexplib/sexplib__Type_with_layout.cmti" {"F:S12540T1745425518.74"}
+  "lib/sexplib/sexplib__Type_with_layout.cmx" {"F:S1808T1745425518.74"}
+  "lib/sexplib/src_pos.ml" {"F:S1075T1745425518.74"}
+  "lib/sexplib/src_pos.mli" {"F:S578T1745425518.74"}
+  "lib/sexplib/std.ml" {"F:S2713T1745425518.74"}
+  "lib/sexplib/type.ml" {"F:S94T1745425518.74"}
+  "lib/sexplib/type_with_layout.ml" {"F:S3822T1745425518.74"}
+  "lib/sexplib/type_with_layout.mli" {"F:S1036T1745425518.74"}
+  "lib/sexplib/unix" {"D"}
+  "lib/sexplib/unix/sexplib_unix.a" {"F:S5928T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix.cma" {"F:S8146T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix.cmi" {"F:S272T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix.cmt" {"F:S2723T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix.cmx" {"F:S138T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix.cmxa" {"F:S2530T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix.cmxs" {"F:S52256T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix.ml" {"F:S133T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix__Sexplib_unix_conv.cmi"
+    {"F:S2489T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix__Sexplib_unix_conv.cmt"
+    {"F:S11661T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix__Sexplib_unix_conv.cmx"
+    {"F:S2418T1745425518.74"}
+  "lib/sexplib/unix/sexplib_unix_conv.ml" {"F:S719T1745425518.74"}
+]

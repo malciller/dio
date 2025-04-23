@@ -1,0 +1,7 @@
+version = "0.7.0"
+description = ""
+requires = "unix"
+archive(byte) = "ssl.cma"
+archive(native) = "ssl.cmxa"
+plugin(byte) = "ssl.cma"
+plugin(native) = "ssl.cmxs"

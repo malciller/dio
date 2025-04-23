@@ -1,0 +1,41 @@
+opam-version: "2.0"
+lib: [
+  "_build/opam" {"opam"}
+  "_build/pkg/META" {"META"}
+  "_build/src/cli/fmt_cli.a" {"cli/fmt_cli.a"}
+  "_build/src/cli/fmt_cli.cma" {"cli/fmt_cli.cma"}
+  "_build/src/cli/fmt_cli.cmi" {"cli/fmt_cli.cmi"}
+  "?_build/src/cli/fmt_cli.cmti" {"cli/fmt_cli.cmti"}
+  "_build/src/cli/fmt_cli.cmx" {"cli/fmt_cli.cmx"}
+  "_build/src/cli/fmt_cli.cmxa" {"cli/fmt_cli.cmxa"}
+  "_build/src/cli/fmt_cli.cmxs" {"cli/fmt_cli.cmxs"}
+  "_build/src/cli/fmt_cli.mli" {"cli/fmt_cli.mli"}
+  "_build/src/fmt.a" {"fmt.a"}
+  "_build/src/fmt.cma" {"fmt.cma"}
+  "_build/src/fmt.cmi" {"fmt.cmi"}
+  "?_build/src/fmt.cmti" {"fmt.cmti"}
+  "_build/src/fmt.cmx" {"fmt.cmx"}
+  "_build/src/fmt.cmxa" {"fmt.cmxa"}
+  "_build/src/fmt.cmxs" {"fmt.cmxs"}
+  "_build/src/fmt.mli" {"fmt.mli"}
+  "_build/src/top/fmt_top.a" {"top/fmt_top.a"}
+  "_build/src/top/fmt_top.cma" {"top/fmt_top.cma"}
+  "_build/src/top/fmt_top.cmx" {"top/fmt_top.cmx"}
+  "_build/src/top/fmt_top.cmxa" {"top/fmt_top.cmxa"}
+  "_build/src/top/fmt_top.cmxs" {"top/fmt_top.cmxs"}
+  "_build/src/top/fmt_tty_top_init.ml" {"top/fmt_tty_top_init.ml"}
+  "_build/src/tty/fmt_tty.a" {"tty/fmt_tty.a"}
+  "_build/src/tty/fmt_tty.cma" {"tty/fmt_tty.cma"}
+  "_build/src/tty/fmt_tty.cmi" {"tty/fmt_tty.cmi"}
+  "?_build/src/tty/fmt_tty.cmti" {"tty/fmt_tty.cmti"}
+  "_build/src/tty/fmt_tty.cmx" {"tty/fmt_tty.cmx"}
+  "_build/src/tty/fmt_tty.cmxa" {"tty/fmt_tty.cmxa"}
+  "_build/src/tty/fmt_tty.cmxs" {"tty/fmt_tty.cmxs"}
+  "_build/src/tty/fmt_tty.mli" {"tty/fmt_tty.mli"}
+]
+doc: [
+  "_build/CHANGES.md" {"CHANGES.md"}
+  "_build/LICENSE.md" {"LICENSE.md"}
+  "_build/README.md" {"README.md"}
+  "_build/doc/index.mld" {"odoc-pages/index.mld"}
+]

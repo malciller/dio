@@ -1,0 +1,62 @@
+name: Build
+on:
+  pull_request:
+    branches:
+    - master
+  push:
+    branches:
+      - master
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        setup:
+          - {ocaml-version: '4.03', runtest: false}
+          - {ocaml-version: '4.09', runtest: true}
+          - {ocaml-version: '4.14', runtest: true}
+          - {ocaml-version: '5.0', runtest: true}
+    steps:
+    - uses: actions/checkout@v2
+    - uses: ocaml/setup-ocaml@v2
+      with:
+        ocaml-compiler:  ${{ matrix.setup.ocaml-version }}
+    - name: Setup opam
+      run: opam pin add -n .
+    - name: Install dependencies
+      run: opam depext -yt mad
+    - name: Build
+      if: ${{ ! matrix.setup.runtest }}
+      run: opam install .
+    - name: Build and test
+      if: ${{ matrix.setup.runtest }}
+      run: |
+        opam install -t .
+        eval $(opam env)
+        dune build @github_action_tests
+
+  nix-build:
+    runs-on: ${{ matrix.setup.os }}
+    strategy:
+      matrix:
+        setup:
+          - {ocamlVersion: 4_12, os: ubuntu-latest}
+          - {ocamlVersion: 4_13, os: ubuntu-latest}
+          - {ocamlVersion: 4_14, os: ubuntu-latest}
+          - {ocamlVersion: 5_0, os: ubuntu-latest}
+          - {ocamlVersion: 5_0, os: macos-latest}
+    steps:
+    - uses: actions/checkout@v3
+    - uses: cachix/install-nix-action@v22
+      with:
+        extra_nix_config: |
+          extra-substituters = https://anmonteiro.nix-cache.workers.dev
+          extra-trusted-public-keys = ocaml.nix-cache.com-1:/xI2h2+56rwFfKyyFVbkJSeGqSIYMC/Je+7XXqGKDIY=
+    - name: "Run nix-build"
+      run: nix-build ./nix/ci/test.nix --argstr ocamlVersion ${{ matrix.setup.ocamlVersion }}
+

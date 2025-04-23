@@ -1,0 +1,40 @@
+opam-version: "2.0"
+added: [
+  "doc/mtime" {"D"}
+  "doc/mtime/CHANGES.md" {"F:S5264T1745425502.71"}
+  "doc/mtime/LICENSE.md" {"F:S739T1745425502.71"}
+  "doc/mtime/README.md" {"F:S1246T1745425502.71"}
+  "doc/mtime/min_clock.ml" {"F:S672T1745425502.71"}
+  "doc/mtime/odoc-pages" {"D"}
+  "doc/mtime/odoc-pages/index.mld" {"F:S651T1745425502.71"}
+  "lib/mtime" {"D"}
+  "lib/mtime/META" {"F:S1131T1745425502.7"}
+  "lib/mtime/clock" {"D"}
+  "lib/mtime/clock/libmtime_clock_stubs.a" {"F:S7488T1745425502.7"}
+  "lib/mtime/clock/mtime_clock.a" {"F:S5856T1745425502.7"}
+  "lib/mtime/clock/mtime_clock.cma" {"F:S5153T1745425502.7"}
+  "lib/mtime/clock/mtime_clock.cmi" {"F:S1255T1745425502.7"}
+  "lib/mtime/clock/mtime_clock.cmti" {"F:S14673T1745425502.7"}
+  "lib/mtime/clock/mtime_clock.cmx" {"F:S986T1745425502.7"}
+  "lib/mtime/clock/mtime_clock.cmxa" {"F:S458T1745425502.7"}
+  "lib/mtime/clock/mtime_clock.cmxs" {"F:S52992T1745425502.7"}
+  "lib/mtime/clock/mtime_clock.mli" {"F:S4319T1745425502.7"}
+  "lib/mtime/clock/runtime.js" {"F:S3171T1745425502.7"}
+  "lib/mtime/mtime.a" {"F:S30128T1745425502.7"}
+  "lib/mtime/mtime.cma" {"F:S39549T1745425502.7"}
+  "lib/mtime/mtime.cmi" {"F:S4502T1745425502.7"}
+  "lib/mtime/mtime.cmti" {"F:S34298T1745425502.7"}
+  "lib/mtime/mtime.cmx" {"F:S4366T1745425502.71"}
+  "lib/mtime/mtime.cmxa" {"F:S555T1745425502.71"}
+  "lib/mtime/mtime.cmxs" {"F:S58584T1745425502.71"}
+  "lib/mtime/mtime.mli" {"F:S7197T1745425502.71"}
+  "lib/mtime/mtime_top_init.ml" {"F:S318T1745425502.71"}
+  "lib/mtime/opam" {"F:S1231T1745425502.7"}
+  "lib/mtime/top" {"D"}
+  "lib/mtime/top/mtime_top.a" {"F:S2456T1745425502.71"}
+  "lib/mtime/top/mtime_top.cma" {"F:S3291T1745425502.71"}
+  "lib/mtime/top/mtime_top.cmx" {"F:S1333T1745425502.71"}
+  "lib/mtime/top/mtime_top.cmxa" {"F:S1339T1745425502.71"}
+  "lib/mtime/top/mtime_top.cmxs" {"F:S50864T1745425502.71"}
+  "lib/stublibs/dllmtime_clock_stubs.so" {"F:S51112T1745425502.71"}
+]

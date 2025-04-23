@@ -1,0 +1,224 @@
+opam-version: "2.0"
+added: [
+  "doc/caqti" {"D"}
+  "doc/caqti/CHANGES.md" {"F:S19494T1745425523.71"}
+  "doc/caqti/README.md" {"F:S6073T1745425523.71"}
+  "doc/caqti/odoc-pages" {"D"}
+  "doc/caqti/odoc-pages/index.mld" {"F:S1080T1745425523.71"}
+  "doc/caqti/odoc-pages/query_template.mld" {"F:S4279T1745425523.71"}
+  "doc/caqti/odoc-pages/tweaks.mld" {"F:S1569T1745425523.71"}
+  "lib/caqti" {"D"}
+  "lib/caqti/META" {"F:S1221T1745425523.67"}
+  "lib/caqti/blocking" {"D"}
+  "lib/caqti/blocking/caqti_blocking.a" {"F:S26072T1745425523.67"}
+  "lib/caqti/blocking/caqti_blocking.cma" {"F:S78061T1745425523.67"}
+  "lib/caqti/blocking/caqti_blocking.cmi" {"F:S17195T1745425523.67"}
+  "lib/caqti/blocking/caqti_blocking.cmt" {"F:S331317T1745425523.67"}
+  "lib/caqti/blocking/caqti_blocking.cmti" {"F:S45284T1745425523.67"}
+  "lib/caqti/blocking/caqti_blocking.cmx" {"F:S10439T1745425523.67"}
+  "lib/caqti/blocking/caqti_blocking.cmxa" {"F:S2437T1745425523.67"}
+  "lib/caqti/blocking/caqti_blocking.cmxs" {"F:S59440T1745425523.71"}
+  "lib/caqti/blocking/caqti_blocking.ml" {"F:S4691T1745425523.67"}
+  "lib/caqti/blocking/caqti_blocking.mli" {"F:S1951T1745425523.67"}
+  "lib/caqti/caqti.a" {"F:S194208T1745425523.67"}
+  "lib/caqti/caqti.cma" {"F:S321586T1745425523.67"}
+  "lib/caqti/caqti.cmxa" {"F:S7793T1745425523.67"}
+  "lib/caqti/caqti.cmxs" {"F:S191864T1745425523.71"}
+  "lib/caqti/caqti_connect_sig.cmi" {"F:S3673T1745425523.67"}
+  "lib/caqti/caqti_connect_sig.cmt" {"F:S21230T1745425523.67"}
+  "lib/caqti/caqti_connect_sig.cmx" {"F:S858T1745425523.67"}
+  "lib/caqti/caqti_connect_sig.ml" {"F:S4441T1745425523.67"}
+  "lib/caqti/caqti_connection_sig.cmi" {"F:S23776T1745425523.68"}
+  "lib/caqti/caqti_connection_sig.cmt" {"F:S89035T1745425523.68"}
+  "lib/caqti/caqti_connection_sig.cmx" {"F:S901T1745425523.68"}
+  "lib/caqti/caqti_connection_sig.ml" {"F:S10553T1745425523.68"}
+  "lib/caqti/caqti_driver_info.cmi" {"F:S1846T1745425523.68"}
+  "lib/caqti/caqti_driver_info.cmt" {"F:S16403T1745425523.68"}
+  "lib/caqti/caqti_driver_info.cmti" {"F:S15317T1745425523.68"}
+  "lib/caqti/caqti_driver_info.cmx" {"F:S1625T1745425523.68"}
+  "lib/caqti/caqti_driver_info.ml" {"F:S1905T1745425523.68"}
+  "lib/caqti/caqti_driver_info.mli" {"F:S3659T1745425523.68"}
+  "lib/caqti/caqti_error.cmi" {"F:S10032T1745425523.68"}
+  "lib/caqti/caqti_error.cmt" {"F:S101124T1745425523.68"}
+  "lib/caqti/caqti_error.cmti" {"F:S55638T1745425523.68"}
+  "lib/caqti/caqti_error.cmx" {"F:S3462T1745425523.68"}
+  "lib/caqti/caqti_error.ml" {"F:S8659T1745425523.68"}
+  "lib/caqti/caqti_error.mli" {"F:S11004T1745425523.68"}
+  "lib/caqti/caqti_mult.cmi" {"F:S2136T1745425523.68"}
+  "lib/caqti/caqti_mult.cmt" {"F:S17325T1745425523.68"}
+  "lib/caqti/caqti_mult.cmti" {"F:S12037T1745425523.68"}
+  "lib/caqti/caqti_mult.cmx" {"F:S625T1745425523.68"}
+  "lib/caqti/caqti_mult.ml" {"F:S1883T1745425523.68"}
+  "lib/caqti/caqti_mult.mli" {"F:S1430T1745425523.68"}
+  "lib/caqti/caqti_pool_config.cmi" {"F:S1989T1745425523.68"}
+  "lib/caqti/caqti_pool_config.cmt" {"F:S38365T1745425523.68"}
+  "lib/caqti/caqti_pool_config.cmti" {"F:S16047T1745425523.68"}
+  "lib/caqti/caqti_pool_config.cmx" {"F:S3493T1745425523.68"}
+  "lib/caqti/caqti_pool_config.ml" {"F:S3293T1745425523.68"}
+  "lib/caqti/caqti_pool_config.mli" {"F:S3714T1745425523.68"}
+  "lib/caqti/caqti_pool_sig.cmi" {"F:S979T1745425523.68"}
+  "lib/caqti/caqti_pool_sig.cmt" {"F:S8526T1745425523.68"}
+  "lib/caqti/caqti_pool_sig.cmx" {"F:S177T1745425523.68"}
+  "lib/caqti/caqti_pool_sig.ml" {"F:S1602T1745425523.68"}
+  "lib/caqti/caqti_query.cmi" {"F:S3548T1745425523.68"}
+  "lib/caqti/caqti_query.cmt" {"F:S165244T1745425523.68"}
+  "lib/caqti/caqti_query.cmti" {"F:S29746T1745425523.68"}
+  "lib/caqti/caqti_query.cmx" {"F:S3690T1745425523.68"}
+  "lib/caqti/caqti_query.ml" {"F:S14789T1745425523.68"}
+  "lib/caqti/caqti_query.mli" {"F:S7815T1745425523.68"}
+  "lib/caqti/caqti_request.cmi" {"F:S7188T1745425523.68"}
+  "lib/caqti/caqti_request.cmt" {"F:S57609T1745425523.68"}
+  "lib/caqti/caqti_request.cmti" {"F:S55135T1745425523.69"}
+  "lib/caqti/caqti_request.cmx" {"F:S5361T1745425523.69"}
+  "lib/caqti/caqti_request.ml" {"F:S3484T1745425523.69"}
+  "lib/caqti/caqti_request.mli" {"F:S14510T1745425523.69"}
+  "lib/caqti/caqti_response_sig.cmi" {"F:S4139T1745425523.69"}
+  "lib/caqti/caqti_response_sig.cmt" {"F:S22273T1745425523.69"}
+  "lib/caqti/caqti_response_sig.cmx" {"F:S526T1745425523.69"}
+  "lib/caqti/caqti_response_sig.ml" {"F:S3617T1745425523.69"}
+  "lib/caqti/caqti_stream_sig.cmi" {"F:S2244T1745425523.69"}
+  "lib/caqti/caqti_stream_sig.cmt" {"F:S16979T1745425523.69"}
+  "lib/caqti/caqti_stream_sig.cmx" {"F:S179T1745425523.69"}
+  "lib/caqti/caqti_stream_sig.ml" {"F:S3194T1745425523.69"}
+  "lib/caqti/caqti_switch_sig.cmi" {"F:S1239T1745425523.69"}
+  "lib/caqti/caqti_switch_sig.cmt" {"F:S11707T1745425523.69"}
+  "lib/caqti/caqti_switch_sig.cmx" {"F:S179T1745425523.69"}
+  "lib/caqti/caqti_switch_sig.ml" {"F:S2654T1745425523.69"}
+  "lib/caqti/caqti_type.cmi" {"F:S12944T1745425523.69"}
+  "lib/caqti/caqti_type.cmt" {"F:S149342T1745425523.69"}
+  "lib/caqti/caqti_type.cmti" {"F:S44967T1745425523.69"}
+  "lib/caqti/caqti_type.cmx" {"F:S3259T1745425523.69"}
+  "lib/caqti/caqti_type.ml" {"F:S8126T1745425523.69"}
+  "lib/caqti/caqti_type.mli" {"F:S3394T1745425523.69"}
+  "lib/caqti/caqti_type_sig.cmi" {"F:S6116T1745425523.69"}
+  "lib/caqti/caqti_type_sig.cmt" {"F:S42455T1745425523.69"}
+  "lib/caqti/caqti_type_sig.cmx" {"F:S374T1745425523.69"}
+  "lib/caqti/caqti_type_sig.ml" {"F:S8295T1745425523.69"}
+  "lib/caqti/dune-package" {"F:S13111T1745425523.69"}
+  "lib/caqti/opam" {"F:S2052T1745425523.69"}
+  "lib/caqti/platform" {"D"}
+  "lib/caqti/platform/caqti_platform.a" {"F:S176056T1745425523.69"}
+  "lib/caqti/platform/caqti_platform.cma" {"F:S382603T1745425523.69"}
+  "lib/caqti/platform/caqti_platform.cmi" {"F:S1380T1745425523.69"}
+  "lib/caqti/platform/caqti_platform.cmt" {"F:S7875T1745425523.69"}
+  "lib/caqti/platform/caqti_platform.cmx" {"F:S446T1745425523.69"}
+  "lib/caqti/platform/caqti_platform.cmxa" {"F:S10869T1745425523.69"}
+  "lib/caqti/platform/caqti_platform.cmxs" {"F:S179392T1745425523.71"}
+  "lib/caqti/platform/caqti_platform.ml" {"F:S1068T1745425523.69"}
+  "lib/caqti/platform/caqti_platform__Connection_utils.cmi"
+    {"F:S18854T1745425523.69"}
+  "lib/caqti/platform/caqti_platform__Connection_utils.cmt"
+    {"F:S95648T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Connection_utils.cmti"
+    {"F:S46773T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Connection_utils.cmx"
+    {"F:S3409T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Connector.cmi"
+    {"F:S29027T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Connector.cmt"
+    {"F:S291786T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Connector.cmti"
+    {"F:S69346T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Connector.cmx" {"F:S3848T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Conv.cmi" {"F:S1184T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Conv.cmt" {"F:S31472T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Conv.cmti" {"F:S7584T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Conv.cmx" {"F:S1708T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Driver_loader.cmi"
+    {"F:S68368T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Driver_loader.cmt"
+    {"F:S303296T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Driver_loader.cmti"
+    {"F:S153140T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Driver_loader.cmx"
+    {"F:S1814T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Heap.cmi" {"F:S1679T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Heap.cmt" {"F:S20213T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Heap.cmti" {"F:S9795T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Heap.cmx" {"F:S912T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__List_ext.cmi" {"F:S696T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__List_ext.cmt" {"F:S9252T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__List_ext.cmti" {"F:S6234T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__List_ext.cmx" {"F:S357T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Logging.cmi" {"F:S639T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Logging.cmt" {"F:S5386T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Logging.cmti" {"F:S5344T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Logging.cmx" {"F:S476T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Pool.cmi" {"F:S5803T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Pool.cmt" {"F:S102234T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Pool.cmti" {"F:S24088T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Pool.cmx" {"F:S2222T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Request_utils.cmi"
+    {"F:S4418T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Request_utils.cmt"
+    {"F:S101484T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Request_utils.cmti"
+    {"F:S21846T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Request_utils.cmx"
+    {"F:S4684T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Stream.cmi" {"F:S2618T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Stream.cmt" {"F:S32689T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Stream.cmti" {"F:S11724T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Stream.cmx" {"F:S1106T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Switch.cmi" {"F:S1799T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Switch.cmt" {"F:S26112T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Switch.cmti" {"F:S9933T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__Switch.cmx" {"F:S923T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__System_sig.cmi"
+    {"F:S14012T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__System_sig.cmt"
+    {"F:S54382T1745425523.7"}
+  "lib/caqti/platform/caqti_platform__System_sig.cmx" {"F:S642T1745425523.7"}
+  "lib/caqti/platform/connection_utils.ml" {"F:S3893T1745425523.7"}
+  "lib/caqti/platform/connection_utils.mli" {"F:S1731T1745425523.7"}
+  "lib/caqti/platform/connector.ml" {"F:S7296T1745425523.7"}
+  "lib/caqti/platform/connector.mli" {"F:S2080T1745425523.7"}
+  "lib/caqti/platform/conv.ml" {"F:S2270T1745425523.7"}
+  "lib/caqti/platform/conv.mli" {"F:S1160T1745425523.71"}
+  "lib/caqti/platform/driver_loader.ml" {"F:S3047T1745425523.71"}
+  "lib/caqti/platform/driver_loader.mli" {"F:S3290T1745425523.71"}
+  "lib/caqti/platform/heap.ml" {"F:S1929T1745425523.71"}
+  "lib/caqti/platform/heap.mli" {"F:S1297T1745425523.71"}
+  "lib/caqti/platform/list_ext.ml" {"F:S1115T1745425523.71"}
+  "lib/caqti/platform/list_ext.mli" {"F:S1027T1745425523.71"}
+  "lib/caqti/platform/logging.ml" {"F:S957T1745425523.71"}
+  "lib/caqti/platform/logging.mli" {"F:S960T1745425523.71"}
+  "lib/caqti/platform/pool.ml" {"F:S8574T1745425523.71"}
+  "lib/caqti/platform/pool.mli" {"F:S3213T1745425523.71"}
+  "lib/caqti/platform/request_utils.ml" {"F:S7691T1745425523.71"}
+  "lib/caqti/platform/request_utils.mli" {"F:S3343T1745425523.71"}
+  "lib/caqti/platform/stream.ml" {"F:S2626T1745425523.71"}
+  "lib/caqti/platform/stream.mli" {"F:S1250T1745425523.71"}
+  "lib/caqti/platform/switch.ml" {"F:S2552T1745425523.71"}
+  "lib/caqti/platform/switch.mli" {"F:S1150T1745425523.71"}
+  "lib/caqti/platform/system_sig.ml" {"F:S5364T1745425523.71"}
+  "lib/caqti/platform/unix" {"D"}
+  "lib/caqti/platform/unix/caqti_platform_unix.a" {"F:S9888T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix.cma"
+    {"F:S51918T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix.cmi" {"F:S429T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix.cmt" {"F:S3342T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix.cmx" {"F:S184T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix.cmxa"
+    {"F:S2038T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix.cmxs"
+    {"F:S53800T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix.ml" {"F:S237T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix__Driver_loader.cmi"
+    {"F:S37786T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix__Driver_loader.cmt"
+    {"F:S229643T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix__Driver_loader.cmti"
+    {"F:S86648T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix__Driver_loader.cmx"
+    {"F:S2075T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix__System_sig.cmi"
+    {"F:S1515T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix__System_sig.cmt"
+    {"F:S9558T1745425523.71"}
+  "lib/caqti/platform/unix/caqti_platform_unix__System_sig.cmx"
+    {"F:S332T1745425523.71"}
+  "lib/caqti/platform/unix/driver_loader.ml" {"F:S2624T1745425523.71"}
+  "lib/caqti/platform/unix/driver_loader.mli" {"F:S2246T1745425523.71"}
+  "lib/caqti/platform/unix/system_sig.ml" {"F:S1300T1745425523.71"}
+]

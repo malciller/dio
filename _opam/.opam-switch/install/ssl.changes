@@ -1,0 +1,28 @@
+opam-version: "2.0"
+added: [
+  "doc/ssl" {"D"}
+  "doc/ssl/CHANGES.md" {"F:S8831T1745425512.17"}
+  "doc/ssl/README.md" {"F:S3456T1745425512.17"}
+  "lib/ssl" {"D"}
+  "lib/ssl/META" {"F:S160T1745425512.17"}
+  "lib/ssl/dune-package" {"F:S1127T1745425512.17"}
+  "lib/ssl/libssl_stubs.a" {"F:S117416T1745425512.17"}
+  "lib/ssl/opam" {"F:S844T1745425512.17"}
+  "lib/ssl/ssl.a" {"F:S64216T1745425512.17"}
+  "lib/ssl/ssl.cma" {"F:S85006T1745425512.17"}
+  "lib/ssl/ssl.cmi" {"F:S21674T1745425512.17"}
+  "lib/ssl/ssl.cmt" {"F:S177913T1745425512.17"}
+  "lib/ssl/ssl.cmti" {"F:S127041T1745425512.17"}
+  "lib/ssl/ssl.cmx" {"F:S7043T1745425512.17"}
+  "lib/ssl/ssl.cmxa" {"F:S1356T1745425512.17"}
+  "lib/ssl/ssl.cmxs" {"F:S117960T1745425512.17"}
+  "lib/ssl/ssl.ml" {"F:S22590T1745425512.17"}
+  "lib/ssl/ssl.mli" {"F:S28350T1745425512.17"}
+  "lib/ssl/ssl_threads.cmi" {"F:S303T1745425512.17"}
+  "lib/ssl/ssl_threads.cmt" {"F:S4215T1745425512.17"}
+  "lib/ssl/ssl_threads.cmti" {"F:S3953T1745425512.17"}
+  "lib/ssl/ssl_threads.cmx" {"F:S650T1745425512.17"}
+  "lib/ssl/ssl_threads.ml" {"F:S850T1745425512.17"}
+  "lib/ssl/ssl_threads.mli" {"F:S1006T1745425512.17"}
+  "lib/stublibs/dllssl_stubs.so" {"F:S86048T1745425512.17"}
+]

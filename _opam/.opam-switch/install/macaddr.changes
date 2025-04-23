@@ -1,0 +1,30 @@
+opam-version: "2.0"
+added: [
+  "doc/macaddr" {"D"}
+  "doc/macaddr/CHANGES.md" {"F:S12603T1745425509.4"}
+  "doc/macaddr/LICENSE.md" {"F:S833T1745425509.4"}
+  "doc/macaddr/README.md" {"F:S2678T1745425509.4"}
+  "lib/macaddr" {"D"}
+  "lib/macaddr/META" {"F:S434T1745425509.4"}
+  "lib/macaddr/dune-package" {"F:S1348T1745425509.4"}
+  "lib/macaddr/macaddr.a" {"F:S20168T1745425509.4"}
+  "lib/macaddr/macaddr.cma" {"F:S22079T1745425509.4"}
+  "lib/macaddr/macaddr.cmi" {"F:S2122T1745425509.4"}
+  "lib/macaddr/macaddr.cmt" {"F:S55773T1745425509.4"}
+  "lib/macaddr/macaddr.cmti" {"F:S14771T1745425509.4"}
+  "lib/macaddr/macaddr.cmx" {"F:S2772T1745425509.4"}
+  "lib/macaddr/macaddr.cmxa" {"F:S754T1745425509.4"}
+  "lib/macaddr/macaddr.cmxs" {"F:S56160T1745425509.4"}
+  "lib/macaddr/macaddr.ml" {"F:S3804T1745425509.4"}
+  "lib/macaddr/macaddr.mli" {"F:S3095T1745425509.4"}
+  "lib/macaddr/opam" {"F:S1042T1745425509.4"}
+  "lib/macaddr/top" {"D"}
+  "lib/macaddr/top/macaddr_top.a" {"F:S5480T1745425509.4"}
+  "lib/macaddr/top/macaddr_top.cma" {"F:S6528T1745425509.4"}
+  "lib/macaddr/top/macaddr_top.cmi" {"F:S1797T1745425509.4"}
+  "lib/macaddr/top/macaddr_top.cmt" {"F:S14884T1745425509.4"}
+  "lib/macaddr/top/macaddr_top.cmx" {"F:S1964T1745425509.4"}
+  "lib/macaddr/top/macaddr_top.cmxa" {"F:S1448T1745425509.4"}
+  "lib/macaddr/top/macaddr_top.cmxs" {"F:S52560T1745425509.4"}
+  "lib/macaddr/top/macaddr_top.ml" {"F:S588T1745425509.4"}
+]

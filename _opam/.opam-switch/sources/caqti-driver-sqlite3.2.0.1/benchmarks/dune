@@ -1,0 +1,45 @@
+(executable
+ (name benchmark_stream)
+ (modules benchmark_stream)
+ (libraries benchmark caqti caqti.platform lwt lwt.unix))
+
+(library
+ (name benchmark_fetch_many)
+ (modules benchmark_fetch_many)
+ (libraries
+    bechamel
+    bechamel-notty
+    caqti
+    caqti-dynload
+    notty.unix
+    testlib))
+
+(executable
+ (name main_blocking)
+ (modules main_blocking)
+ (libraries
+    benchmark_fetch_many
+    caqti.blocking
+    unix))
+
+(executable
+ (name main_eio_unix)
+ (modules main_eio_unix)
+ (enabled_if (>= %{ocaml_version} "5.0"))
+ (libraries
+    benchmark_fetch_many
+    caqti-eio.unix
+    eio
+    eio_main))
+
+(executable
+ (name main_lwt_unix)
+ (modules main_lwt_unix)
+ (libraries
+    benchmark_fetch_many
+    caqti-lwt
+    caqti-lwt.unix
+    lwt
+    lwt.unix))
+
+; TODO: Can we run async under a benchamel test?

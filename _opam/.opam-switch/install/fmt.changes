@@ -1,0 +1,45 @@
+opam-version: "2.0"
+added: [
+  "doc/fmt" {"D"}
+  "doc/fmt/CHANGES.md" {"F:S5016T1745425502.68"}
+  "doc/fmt/LICENSE.md" {"F:S737T1745425502.68"}
+  "doc/fmt/README.md" {"F:S1067T1745425502.68"}
+  "doc/fmt/odoc-pages" {"D"}
+  "doc/fmt/odoc-pages/index.mld" {"F:S287T1745425502.68"}
+  "lib/fmt" {"D"}
+  "lib/fmt/META" {"F:S1120T1745425502.68"}
+  "lib/fmt/cli" {"D"}
+  "lib/fmt/cli/fmt_cli.a" {"F:S5600T1745425502.68"}
+  "lib/fmt/cli/fmt_cli.cma" {"F:S5215T1745425502.68"}
+  "lib/fmt/cli/fmt_cli.cmi" {"F:S868T1745425502.68"}
+  "lib/fmt/cli/fmt_cli.cmti" {"F:S7338T1745425502.68"}
+  "lib/fmt/cli/fmt_cli.cmx" {"F:S861T1745425502.68"}
+  "lib/fmt/cli/fmt_cli.cmxa" {"F:S607T1745425502.68"}
+  "lib/fmt/cli/fmt_cli.cmxs" {"F:S52752T1745425502.68"}
+  "lib/fmt/cli/fmt_cli.mli" {"F:S2272T1745425502.68"}
+  "lib/fmt/fmt.a" {"F:S184832T1745425502.68"}
+  "lib/fmt/fmt.cma" {"F:S221709T1745425502.68"}
+  "lib/fmt/fmt.cmi" {"F:S21789T1745425502.68"}
+  "lib/fmt/fmt.cmti" {"F:S138345T1745425502.68"}
+  "lib/fmt/fmt.cmx" {"F:S25381T1745425502.68"}
+  "lib/fmt/fmt.cmxa" {"F:S1482T1745425502.68"}
+  "lib/fmt/fmt.cmxs" {"F:S183592T1745425502.68"}
+  "lib/fmt/fmt.mli" {"F:S26919T1745425502.68"}
+  "lib/fmt/opam" {"F:S1358T1745425502.68"}
+  "lib/fmt/top" {"D"}
+  "lib/fmt/top/fmt_top.a" {"F:S2416T1745425502.68"}
+  "lib/fmt/top/fmt_top.cma" {"F:S3283T1745425502.68"}
+  "lib/fmt/top/fmt_top.cmx" {"F:S1331T1745425502.68"}
+  "lib/fmt/top/fmt_top.cmxa" {"F:S1337T1745425502.68"}
+  "lib/fmt/top/fmt_top.cmxs" {"F:S50848T1745425502.68"}
+  "lib/fmt/top/fmt_tty_top_init.ml" {"F:S1262T1745425502.68"}
+  "lib/fmt/tty" {"D"}
+  "lib/fmt/tty/fmt_tty.a" {"F:S7416T1745425502.68"}
+  "lib/fmt/tty/fmt_tty.cma" {"F:S10815T1745425502.68"}
+  "lib/fmt/tty/fmt_tty.cmi" {"F:S1033T1745425502.68"}
+  "lib/fmt/tty/fmt_tty.cmti" {"F:S7987T1745425502.68"}
+  "lib/fmt/tty/fmt_tty.cmx" {"F:S955T1745425502.68"}
+  "lib/fmt/tty/fmt_tty.cmxa" {"F:S849T1745425502.68"}
+  "lib/fmt/tty/fmt_tty.cmxs" {"F:S52672T1745425502.68"}
+  "lib/fmt/tty/fmt_tty.mli" {"F:S2398T1745425502.68"}
+]

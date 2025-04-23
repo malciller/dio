@@ -1,0 +1,43 @@
+opam-version: "2.0"
+added: [
+  "bin/wscat-lwt" {"F:S4760584T1745425527.47"}
+  "doc/websocket-lwt" {"D"}
+  "doc/websocket-lwt/CHANGES" {"F:S3873T1745425527.47"}
+  "doc/websocket-lwt/LICENSE.md" {"F:S736T1745425527.47"}
+  "doc/websocket-lwt/README.md" {"F:S966T1745425527.47"}
+  "lib/websocket-lwt" {"D"}
+  "lib/websocket-lwt/META" {"F:S535T1745425527.47"}
+  "lib/websocket-lwt/cohttp" {"D"}
+  "lib/websocket-lwt/cohttp/websocket_cohttp_lwt.a"
+    {"F:S10744T1745425527.47"}
+  "lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cma"
+    {"F:S19279T1745425527.47"}
+  "lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmi"
+    {"F:S8988T1745425527.47"}
+  "lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmt"
+    {"F:S36057T1745425527.47"}
+  "lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmti"
+    {"F:S24114T1745425527.47"}
+  "lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmx"
+    {"F:S9951T1745425527.47"}
+  "lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmxa"
+    {"F:S7463T1745425527.47"}
+  "lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmxs"
+    {"F:S54712T1745425527.47"}
+  "lib/websocket-lwt/cohttp/websocket_cohttp_lwt.ml"
+    {"F:S2871T1745425527.47"}
+  "lib/websocket-lwt/cohttp/websocket_cohttp_lwt.mli"
+    {"F:S1024T1745425527.47"}
+  "lib/websocket-lwt/dune-package" {"F:S1920T1745425527.47"}
+  "lib/websocket-lwt/opam" {"F:S1363T1745425527.47"}
+  "lib/websocket-lwt/websocket_lwt.a" {"F:S44064T1745425527.47"}
+  "lib/websocket-lwt/websocket_lwt.cma" {"F:S65543T1745425527.47"}
+  "lib/websocket-lwt/websocket_lwt.cmi" {"F:S10592T1745425527.47"}
+  "lib/websocket-lwt/websocket_lwt.cmt" {"F:S131401T1745425527.47"}
+  "lib/websocket-lwt/websocket_lwt.cmti" {"F:S36993T1745425527.47"}
+  "lib/websocket-lwt/websocket_lwt.cmx" {"F:S14824T1745425527.47"}
+  "lib/websocket-lwt/websocket_lwt.cmxa" {"F:S7497T1745425527.47"}
+  "lib/websocket-lwt/websocket_lwt.cmxs" {"F:S99408T1745425527.47"}
+  "lib/websocket-lwt/websocket_lwt.ml" {"F:S9518T1745425527.47"}
+  "lib/websocket-lwt/websocket_lwt.mli" {"F:S4136T1745425527.47"}
+]

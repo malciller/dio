@@ -1,0 +1,46 @@
+version = "2.0.1"
+description = ""
+requires = "angstrom bigstringaf logs mtime ptime uri"
+archive(byte) = "caqti.cma"
+archive(native) = "caqti.cmxa"
+plugin(byte) = "caqti.cma"
+plugin(native) = "caqti.cmxs"
+package "blocking" (
+  directory = "blocking"
+  version = "2.0.1"
+  description = ""
+  requires =
+  "caqti
+   caqti.platform
+   caqti.platform.unix
+   domain-name
+   ipaddr
+   logs
+   threads
+   unix"
+  archive(byte) = "caqti_blocking.cma"
+  archive(native) = "caqti_blocking.cmxa"
+  plugin(byte) = "caqti_blocking.cma"
+  plugin(native) = "caqti_blocking.cmxs"
+)
+package "platform" (
+  directory = "platform"
+  version = "2.0.1"
+  description = ""
+  requires =
+  "caqti domain-name ipaddr lwt-dllist mtime mtime.clock mtime.clock.os"
+  archive(byte) = "caqti_platform.cma"
+  archive(native) = "caqti_platform.cmxa"
+  plugin(byte) = "caqti_platform.cma"
+  plugin(native) = "caqti_platform.cmxs"
+  package "unix" (
+    directory = "unix"
+    version = "2.0.1"
+    description = ""
+    requires = "caqti caqti.platform unix"
+    archive(byte) = "caqti_platform_unix.cma"
+    archive(native) = "caqti_platform_unix.cmxa"
+    plugin(byte) = "caqti_platform_unix.cma"
+    plugin(native) = "caqti_platform_unix.cmxs"
+  )
+)

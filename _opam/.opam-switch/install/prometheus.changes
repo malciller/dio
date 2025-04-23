@@ -1,0 +1,21 @@
+opam-version: "2.0"
+added: [
+  "doc/prometheus" {"D"}
+  "doc/prometheus/CHANGES.md" {"F:S1980T1745425514.58"}
+  "doc/prometheus/LICENSE.md" {"F:S10765T1745425514.58"}
+  "doc/prometheus/README.md" {"F:S2652T1745425514.58"}
+  "lib/prometheus" {"D"}
+  "lib/prometheus/META" {"F:S204T1745425514.58"}
+  "lib/prometheus/dune-package" {"F:S838T1745425514.58"}
+  "lib/prometheus/opam" {"F:S1039T1745425514.58"}
+  "lib/prometheus/prometheus.a" {"F:S55392T1745425514.58"}
+  "lib/prometheus/prometheus.cma" {"F:S92810T1745425514.58"}
+  "lib/prometheus/prometheus.cmi" {"F:S27810T1745425514.58"}
+  "lib/prometheus/prometheus.cmt" {"F:S187545T1745425514.58"}
+  "lib/prometheus/prometheus.cmti" {"F:S89299T1745425514.58"}
+  "lib/prometheus/prometheus.cmx" {"F:S10071T1745425514.58"}
+  "lib/prometheus/prometheus.cmxa" {"F:S1458T1745425514.58"}
+  "lib/prometheus/prometheus.cmxs" {"F:S82560T1745425514.58"}
+  "lib/prometheus/prometheus.ml" {"F:S10662T1745425514.58"}
+  "lib/prometheus/prometheus.mli" {"F:S8131T1745425514.58"}
+]

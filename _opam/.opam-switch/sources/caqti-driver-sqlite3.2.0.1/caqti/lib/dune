@@ -1,0 +1,6 @@
+(library
+ (name caqti)
+ (public_name caqti)
+ (wrapped false)
+ (library_flags (:standard -linkall))
+ (libraries angstrom bigstringaf logs mtime ptime uri))

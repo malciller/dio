@@ -1,0 +1,49 @@
+(lang dune 3.18)
+(name magic-mime)
+(version 1.3.1)
+(sections (lib .) (libexec .) (doc ../../doc/magic-mime))
+(files
+ (lib
+  (META
+   dune-package
+   magic_mime.cmi
+   magic_mime.cmt
+   magic_mime.cmti
+   magic_mime.cmx
+   magic_mime.ml
+   magic_mime.mli
+   magic_mime_library.a
+   magic_mime_library.cma
+   magic_mime_library.cmxa
+   mime_types.cmi
+   mime_types.cmt
+   mime_types.cmti
+   mime_types.cmx
+   mime_types.ml
+   mime_types.mli
+   opam))
+ (libexec (magic_mime_library.cmxs))
+ (doc (CHANGES.md LICENSE.md README.md)))
+(library
+ (name magic-mime)
+ (kind normal)
+ (archives (byte magic_mime_library.cma) (native magic_mime_library.cmxa))
+ (plugins (byte magic_mime_library.cma) (native magic_mime_library.cmxs))
+ (native_archives magic_mime_library.a)
+ (modes byte native)
+ (modules
+  (unwrapped
+   (module
+    (obj_name magic_mime)
+    (visibility public)
+    (source
+     (path Magic_mime)
+     (intf (path magic_mime.mli))
+     (impl (path magic_mime.ml))))
+   (module
+    (obj_name mime_types)
+    (visibility public)
+    (source
+     (path Mime_types)
+     (intf (path mime_types.mli))
+     (impl (path mime_types.ml)))))))

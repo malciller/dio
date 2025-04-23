@@ -1,0 +1,44 @@
+opam-version: "2.0"
+lib: [
+  "_build/install/default/lib/websocket-lwt/META"
+  "_build/install/default/lib/websocket-lwt/cohttp/websocket_cohttp_lwt.a"
+    {"cohttp/websocket_cohttp_lwt.a"}
+  "_build/install/default/lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cma"
+    {"cohttp/websocket_cohttp_lwt.cma"}
+  "_build/install/default/lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmi"
+    {"cohttp/websocket_cohttp_lwt.cmi"}
+  "_build/install/default/lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmt"
+    {"cohttp/websocket_cohttp_lwt.cmt"}
+  "_build/install/default/lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmti"
+    {"cohttp/websocket_cohttp_lwt.cmti"}
+  "_build/install/default/lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmx"
+    {"cohttp/websocket_cohttp_lwt.cmx"}
+  "_build/install/default/lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmxa"
+    {"cohttp/websocket_cohttp_lwt.cmxa"}
+  "_build/install/default/lib/websocket-lwt/cohttp/websocket_cohttp_lwt.ml"
+    {"cohttp/websocket_cohttp_lwt.ml"}
+  "_build/install/default/lib/websocket-lwt/cohttp/websocket_cohttp_lwt.mli"
+    {"cohttp/websocket_cohttp_lwt.mli"}
+  "_build/install/default/lib/websocket-lwt/dune-package"
+  "_build/install/default/lib/websocket-lwt/opam"
+  "_build/install/default/lib/websocket-lwt/websocket_lwt.a"
+  "_build/install/default/lib/websocket-lwt/websocket_lwt.cma"
+  "_build/install/default/lib/websocket-lwt/websocket_lwt.cmi"
+  "_build/install/default/lib/websocket-lwt/websocket_lwt.cmt"
+  "_build/install/default/lib/websocket-lwt/websocket_lwt.cmti"
+  "_build/install/default/lib/websocket-lwt/websocket_lwt.cmx"
+  "_build/install/default/lib/websocket-lwt/websocket_lwt.cmxa"
+  "_build/install/default/lib/websocket-lwt/websocket_lwt.ml"
+  "_build/install/default/lib/websocket-lwt/websocket_lwt.mli"
+]
+bin: "_build/install/default/bin/wscat-lwt"
+doc: [
+  "_build/install/default/doc/websocket-lwt/CHANGES"
+  "_build/install/default/doc/websocket-lwt/LICENSE.md"
+  "_build/install/default/doc/websocket-lwt/README.md"
+]
+libexec: [
+  "_build/install/default/lib/websocket-lwt/cohttp/websocket_cohttp_lwt.cmxs"
+    {"cohttp/websocket_cohttp_lwt.cmxs"}
+  "_build/install/default/lib/websocket-lwt/websocket_lwt.cmxs"
+]

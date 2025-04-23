@@ -1,0 +1,463 @@
+(lang dune 3.18)
+(name caqti)
+(version 2.0.1)
+(sections (lib .) (libexec .) (doc ../../doc/caqti))
+(files
+ (lib
+  (META
+   blocking/caqti_blocking.a
+   blocking/caqti_blocking.cma
+   blocking/caqti_blocking.cmi
+   blocking/caqti_blocking.cmt
+   blocking/caqti_blocking.cmti
+   blocking/caqti_blocking.cmx
+   blocking/caqti_blocking.cmxa
+   blocking/caqti_blocking.ml
+   blocking/caqti_blocking.mli
+   caqti.a
+   caqti.cma
+   caqti.cmxa
+   caqti_connect_sig.cmi
+   caqti_connect_sig.cmt
+   caqti_connect_sig.cmx
+   caqti_connect_sig.ml
+   caqti_connection_sig.cmi
+   caqti_connection_sig.cmt
+   caqti_connection_sig.cmx
+   caqti_connection_sig.ml
+   caqti_driver_info.cmi
+   caqti_driver_info.cmt
+   caqti_driver_info.cmti
+   caqti_driver_info.cmx
+   caqti_driver_info.ml
+   caqti_driver_info.mli
+   caqti_error.cmi
+   caqti_error.cmt
+   caqti_error.cmti
+   caqti_error.cmx
+   caqti_error.ml
+   caqti_error.mli
+   caqti_mult.cmi
+   caqti_mult.cmt
+   caqti_mult.cmti
+   caqti_mult.cmx
+   caqti_mult.ml
+   caqti_mult.mli
+   caqti_pool_config.cmi
+   caqti_pool_config.cmt
+   caqti_pool_config.cmti
+   caqti_pool_config.cmx
+   caqti_pool_config.ml
+   caqti_pool_config.mli
+   caqti_pool_sig.cmi
+   caqti_pool_sig.cmt
+   caqti_pool_sig.cmx
+   caqti_pool_sig.ml
+   caqti_query.cmi
+   caqti_query.cmt
+   caqti_query.cmti
+   caqti_query.cmx
+   caqti_query.ml
+   caqti_query.mli
+   caqti_request.cmi
+   caqti_request.cmt
+   caqti_request.cmti
+   caqti_request.cmx
+   caqti_request.ml
+   caqti_request.mli
+   caqti_response_sig.cmi
+   caqti_response_sig.cmt
+   caqti_response_sig.cmx
+   caqti_response_sig.ml
+   caqti_stream_sig.cmi
+   caqti_stream_sig.cmt
+   caqti_stream_sig.cmx
+   caqti_stream_sig.ml
+   caqti_switch_sig.cmi
+   caqti_switch_sig.cmt
+   caqti_switch_sig.cmx
+   caqti_switch_sig.ml
+   caqti_type.cmi
+   caqti_type.cmt
+   caqti_type.cmti
+   caqti_type.cmx
+   caqti_type.ml
+   caqti_type.mli
+   caqti_type_sig.cmi
+   caqti_type_sig.cmt
+   caqti_type_sig.cmx
+   caqti_type_sig.ml
+   dune-package
+   opam
+   platform/caqti_platform.a
+   platform/caqti_platform.cma
+   platform/caqti_platform.cmi
+   platform/caqti_platform.cmt
+   platform/caqti_platform.cmx
+   platform/caqti_platform.cmxa
+   platform/caqti_platform.ml
+   platform/caqti_platform__Connection_utils.cmi
+   platform/caqti_platform__Connection_utils.cmt
+   platform/caqti_platform__Connection_utils.cmti
+   platform/caqti_platform__Connection_utils.cmx
+   platform/caqti_platform__Connector.cmi
+   platform/caqti_platform__Connector.cmt
+   platform/caqti_platform__Connector.cmti
+   platform/caqti_platform__Connector.cmx
+   platform/caqti_platform__Conv.cmi
+   platform/caqti_platform__Conv.cmt
+   platform/caqti_platform__Conv.cmti
+   platform/caqti_platform__Conv.cmx
+   platform/caqti_platform__Driver_loader.cmi
+   platform/caqti_platform__Driver_loader.cmt
+   platform/caqti_platform__Driver_loader.cmti
+   platform/caqti_platform__Driver_loader.cmx
+   platform/caqti_platform__Heap.cmi
+   platform/caqti_platform__Heap.cmt
+   platform/caqti_platform__Heap.cmti
+   platform/caqti_platform__Heap.cmx
+   platform/caqti_platform__List_ext.cmi
+   platform/caqti_platform__List_ext.cmt
+   platform/caqti_platform__List_ext.cmti
+   platform/caqti_platform__List_ext.cmx
+   platform/caqti_platform__Logging.cmi
+   platform/caqti_platform__Logging.cmt
+   platform/caqti_platform__Logging.cmti
+   platform/caqti_platform__Logging.cmx
+   platform/caqti_platform__Pool.cmi
+   platform/caqti_platform__Pool.cmt
+   platform/caqti_platform__Pool.cmti
+   platform/caqti_platform__Pool.cmx
+   platform/caqti_platform__Request_utils.cmi
+   platform/caqti_platform__Request_utils.cmt
+   platform/caqti_platform__Request_utils.cmti
+   platform/caqti_platform__Request_utils.cmx
+   platform/caqti_platform__Stream.cmi
+   platform/caqti_platform__Stream.cmt
+   platform/caqti_platform__Stream.cmti
+   platform/caqti_platform__Stream.cmx
+   platform/caqti_platform__Switch.cmi
+   platform/caqti_platform__Switch.cmt
+   platform/caqti_platform__Switch.cmti
+   platform/caqti_platform__Switch.cmx
+   platform/caqti_platform__System_sig.cmi
+   platform/caqti_platform__System_sig.cmt
+   platform/caqti_platform__System_sig.cmx
+   platform/connection_utils.ml
+   platform/connection_utils.mli
+   platform/connector.ml
+   platform/connector.mli
+   platform/conv.ml
+   platform/conv.mli
+   platform/driver_loader.ml
+   platform/driver_loader.mli
+   platform/heap.ml
+   platform/heap.mli
+   platform/list_ext.ml
+   platform/list_ext.mli
+   platform/logging.ml
+   platform/logging.mli
+   platform/pool.ml
+   platform/pool.mli
+   platform/request_utils.ml
+   platform/request_utils.mli
+   platform/stream.ml
+   platform/stream.mli
+   platform/switch.ml
+   platform/switch.mli
+   platform/system_sig.ml
+   platform/unix/caqti_platform_unix.a
+   platform/unix/caqti_platform_unix.cma
+   platform/unix/caqti_platform_unix.cmi
+   platform/unix/caqti_platform_unix.cmt
+   platform/unix/caqti_platform_unix.cmx
+   platform/unix/caqti_platform_unix.cmxa
+   platform/unix/caqti_platform_unix.ml
+   platform/unix/caqti_platform_unix__Driver_loader.cmi
+   platform/unix/caqti_platform_unix__Driver_loader.cmt
+   platform/unix/caqti_platform_unix__Driver_loader.cmti
+   platform/unix/caqti_platform_unix__Driver_loader.cmx
+   platform/unix/caqti_platform_unix__System_sig.cmi
+   platform/unix/caqti_platform_unix__System_sig.cmt
+   platform/unix/caqti_platform_unix__System_sig.cmx
+   platform/unix/driver_loader.ml
+   platform/unix/driver_loader.mli
+   platform/unix/system_sig.ml))
+ (libexec
+  (blocking/caqti_blocking.cmxs
+   caqti.cmxs
+   platform/caqti_platform.cmxs
+   platform/unix/caqti_platform_unix.cmxs))
+ (doc
+  (CHANGES.md
+   README.md
+   odoc-pages/index.mld
+   odoc-pages/query_template.mld
+   odoc-pages/tweaks.mld)))
+(library
+ (name caqti)
+ (kind normal)
+ (archives (byte caqti.cma) (native caqti.cmxa))
+ (plugins (byte caqti.cma) (native caqti.cmxs))
+ (native_archives caqti.a)
+ (requires angstrom bigstringaf logs mtime ptime uri)
+ (modes byte native)
+ (modules
+  (unwrapped
+   (module
+    (obj_name caqti_connect_sig)
+    (visibility public)
+    (source (path Caqti_connect_sig) (impl (path caqti_connect_sig.ml))))
+   (module
+    (obj_name caqti_connection_sig)
+    (visibility public)
+    (source (path Caqti_connection_sig) (impl (path caqti_connection_sig.ml))))
+   (module
+    (obj_name caqti_driver_info)
+    (visibility public)
+    (source
+     (path Caqti_driver_info)
+     (intf (path caqti_driver_info.mli))
+     (impl (path caqti_driver_info.ml))))
+   (module
+    (obj_name caqti_error)
+    (visibility public)
+    (source
+     (path Caqti_error)
+     (intf (path caqti_error.mli))
+     (impl (path caqti_error.ml))))
+   (module
+    (obj_name caqti_mult)
+    (visibility public)
+    (source
+     (path Caqti_mult)
+     (intf (path caqti_mult.mli))
+     (impl (path caqti_mult.ml))))
+   (module
+    (obj_name caqti_pool_config)
+    (visibility public)
+    (source
+     (path Caqti_pool_config)
+     (intf (path caqti_pool_config.mli))
+     (impl (path caqti_pool_config.ml))))
+   (module
+    (obj_name caqti_pool_sig)
+    (visibility public)
+    (source (path Caqti_pool_sig) (impl (path caqti_pool_sig.ml))))
+   (module
+    (obj_name caqti_query)
+    (visibility public)
+    (source
+     (path Caqti_query)
+     (intf (path caqti_query.mli))
+     (impl (path caqti_query.ml))))
+   (module
+    (obj_name caqti_request)
+    (visibility public)
+    (source
+     (path Caqti_request)
+     (intf (path caqti_request.mli))
+     (impl (path caqti_request.ml))))
+   (module
+    (obj_name caqti_response_sig)
+    (visibility public)
+    (source (path Caqti_response_sig) (impl (path caqti_response_sig.ml))))
+   (module
+    (obj_name caqti_stream_sig)
+    (visibility public)
+    (source (path Caqti_stream_sig) (impl (path caqti_stream_sig.ml))))
+   (module
+    (obj_name caqti_switch_sig)
+    (visibility public)
+    (source (path Caqti_switch_sig) (impl (path caqti_switch_sig.ml))))
+   (module
+    (obj_name caqti_type)
+    (visibility public)
+    (source
+     (path Caqti_type)
+     (intf (path caqti_type.mli))
+     (impl (path caqti_type.ml))))
+   (module
+    (obj_name caqti_type_sig)
+    (visibility public)
+    (source (path Caqti_type_sig) (impl (path caqti_type_sig.ml)))))))
+(library
+ (name caqti.blocking)
+ (kind normal)
+ (archives
+  (byte blocking/caqti_blocking.cma)
+  (native blocking/caqti_blocking.cmxa))
+ (plugins
+  (byte blocking/caqti_blocking.cma)
+  (native blocking/caqti_blocking.cmxs))
+ (native_archives blocking/caqti_blocking.a)
+ (requires
+  caqti
+  caqti.platform
+  caqti.platform.unix
+  domain-name
+  ipaddr
+  logs
+  threads
+  unix)
+ (main_module_name Caqti_blocking)
+ (modes byte native)
+ (modules
+  (singleton
+   (obj_name caqti_blocking)
+   (visibility public)
+   (source
+    (path Caqti_blocking)
+    (intf (path blocking/caqti_blocking.mli))
+    (impl (path blocking/caqti_blocking.ml))))))
+(library
+ (name caqti.platform)
+ (kind normal)
+ (archives
+  (byte platform/caqti_platform.cma)
+  (native platform/caqti_platform.cmxa))
+ (plugins
+  (byte platform/caqti_platform.cma)
+  (native platform/caqti_platform.cmxs))
+ (native_archives platform/caqti_platform.a)
+ (requires
+  caqti
+  domain-name
+  ipaddr
+  lwt-dllist
+  mtime
+  mtime.clock
+  mtime.clock.os)
+ (main_module_name Caqti_platform)
+ (modes byte native)
+ (modules
+  (wrapped
+   (group
+    (alias
+     (obj_name caqti_platform)
+     (visibility public)
+     (kind alias)
+     (source
+      (path Caqti_platform)
+      (impl (path platform/caqti_platform.ml-gen))))
+    (name Caqti_platform)
+    (modules
+     (module
+      (obj_name caqti_platform__Connection_utils)
+      (visibility public)
+      (source
+       (path Connection_utils)
+       (intf (path platform/connection_utils.mli))
+       (impl (path platform/connection_utils.ml))))
+     (module
+      (obj_name caqti_platform__Connector)
+      (visibility public)
+      (source
+       (path Connector)
+       (intf (path platform/connector.mli))
+       (impl (path platform/connector.ml))))
+     (module
+      (obj_name caqti_platform__Conv)
+      (visibility public)
+      (source
+       (path Conv)
+       (intf (path platform/conv.mli))
+       (impl (path platform/conv.ml))))
+     (module
+      (obj_name caqti_platform__Driver_loader)
+      (visibility public)
+      (source
+       (path Driver_loader)
+       (intf (path platform/driver_loader.mli))
+       (impl (path platform/driver_loader.ml))))
+     (module
+      (obj_name caqti_platform__Heap)
+      (visibility public)
+      (source
+       (path Heap)
+       (intf (path platform/heap.mli))
+       (impl (path platform/heap.ml))))
+     (module
+      (obj_name caqti_platform__List_ext)
+      (visibility public)
+      (source
+       (path List_ext)
+       (intf (path platform/list_ext.mli))
+       (impl (path platform/list_ext.ml))))
+     (module
+      (obj_name caqti_platform__Logging)
+      (visibility public)
+      (source
+       (path Logging)
+       (intf (path platform/logging.mli))
+       (impl (path platform/logging.ml))))
+     (module
+      (obj_name caqti_platform__Pool)
+      (visibility public)
+      (source
+       (path Pool)
+       (intf (path platform/pool.mli))
+       (impl (path platform/pool.ml))))
+     (module
+      (obj_name caqti_platform__Request_utils)
+      (visibility public)
+      (source
+       (path Request_utils)
+       (intf (path platform/request_utils.mli))
+       (impl (path platform/request_utils.ml))))
+     (module
+      (obj_name caqti_platform__Stream)
+      (visibility public)
+      (source
+       (path Stream)
+       (intf (path platform/stream.mli))
+       (impl (path platform/stream.ml))))
+     (module
+      (obj_name caqti_platform__Switch)
+      (visibility public)
+      (source
+       (path Switch)
+       (intf (path platform/switch.mli))
+       (impl (path platform/switch.ml))))
+     (module
+      (obj_name caqti_platform__System_sig)
+      (visibility public)
+      (source (path System_sig) (impl (path platform/system_sig.ml))))))
+   (wrapped true))))
+(library
+ (name caqti.platform.unix)
+ (kind normal)
+ (archives
+  (byte platform/unix/caqti_platform_unix.cma)
+  (native platform/unix/caqti_platform_unix.cmxa))
+ (plugins
+  (byte platform/unix/caqti_platform_unix.cma)
+  (native platform/unix/caqti_platform_unix.cmxs))
+ (native_archives platform/unix/caqti_platform_unix.a)
+ (requires caqti caqti.platform unix)
+ (main_module_name Caqti_platform_unix)
+ (modes byte native)
+ (modules
+  (wrapped
+   (group
+    (alias
+     (obj_name caqti_platform_unix)
+     (visibility public)
+     (kind alias)
+     (source
+      (path Caqti_platform_unix)
+      (impl (path platform/unix/caqti_platform_unix.ml-gen))))
+    (name Caqti_platform_unix)
+    (modules
+     (module
+      (obj_name caqti_platform_unix__Driver_loader)
+      (visibility public)
+      (source
+       (path Driver_loader)
+       (intf (path platform/unix/driver_loader.mli))
+       (impl (path platform/unix/driver_loader.ml))))
+     (module
+      (obj_name caqti_platform_unix__System_sig)
+      (visibility public)
+      (source (path System_sig) (impl (path platform/unix/system_sig.ml))))))
+   (wrapped true))))

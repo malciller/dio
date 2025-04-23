@@ -1,0 +1,88 @@
+(lang dune 3.18)
+(name lwt_log)
+(version dev)
+(sections (lib .) (libexec .) (doc ../../doc/lwt_log))
+(files
+ (lib
+  (META
+   core/lwt_log_core.a
+   core/lwt_log_core.cma
+   core/lwt_log_core.cmi
+   core/lwt_log_core.cmt
+   core/lwt_log_core.cmti
+   core/lwt_log_core.cmx
+   core/lwt_log_core.cmxa
+   core/lwt_log_core.ml
+   core/lwt_log_core.mli
+   core/lwt_log_rules.cmi
+   core/lwt_log_rules.cmt
+   core/lwt_log_rules.cmti
+   core/lwt_log_rules.cmx
+   core/lwt_log_rules.ml
+   core/lwt_log_rules.mli
+   dune-package
+   lwt_daemon.cmi
+   lwt_daemon.cmt
+   lwt_daemon.cmti
+   lwt_daemon.cmx
+   lwt_daemon.ml
+   lwt_daemon.mli
+   lwt_log.a
+   lwt_log.cma
+   lwt_log.cmi
+   lwt_log.cmt
+   lwt_log.cmti
+   lwt_log.cmx
+   lwt_log.cmxa
+   lwt_log.ml
+   lwt_log.mli
+   opam))
+ (libexec (core/lwt_log_core.cmxs lwt_log.cmxs))
+ (doc (CHANGES README.md)))
+(library
+ (name lwt_log)
+ (kind normal)
+ (synopsis "Logger for Lwt (deprecated; use logs library)")
+ (archives (byte lwt_log.cma) (native lwt_log.cmxa))
+ (plugins (byte lwt_log.cma) (native lwt_log.cmxs))
+ (native_archives lwt_log.a)
+ (requires unix lwt lwt.unix lwt_log.core)
+ (modes byte native)
+ (modules
+  (unwrapped
+   (module
+    (obj_name lwt_daemon)
+    (visibility public)
+    (source
+     (path Lwt_daemon)
+     (intf (path lwt_daemon.mli))
+     (impl (path lwt_daemon.ml))))
+   (module
+    (obj_name lwt_log)
+    (visibility public)
+    (source (path Lwt_log) (intf (path lwt_log.mli)) (impl (path lwt_log.ml)))))))
+(library
+ (name lwt_log.core)
+ (kind normal)
+ (synopsis "Logger for Lwt (deprecated; pure-OCaml core)")
+ (archives (byte core/lwt_log_core.cma) (native core/lwt_log_core.cmxa))
+ (plugins (byte core/lwt_log_core.cma) (native core/lwt_log_core.cmxs))
+ (native_archives core/lwt_log_core.a)
+ (requires lwt)
+ (modes byte native)
+ (modules
+  (unwrapped
+   (module
+    (obj_name lwt_log_core)
+    (visibility public)
+    (source
+     (path Lwt_log_core)
+     (intf (path core/lwt_log_core.mli))
+     (impl (path core/lwt_log_core.ml))))
+   (module
+    (obj_name lwt_log_rules)
+    (visibility public)
+    (source
+     (path Lwt_log_rules)
+     (intf (path core/lwt_log_rules.mli))
+     (impl (path core/lwt_log_rules.ml)))))))

@@ -1,0 +1,17 @@
+version = "dev"
+description = "Logger for Lwt (deprecated; use logs library)"
+requires = "lwt lwt.unix lwt_log.core unix"
+archive(byte) = "lwt_log.cma"
+archive(native) = "lwt_log.cmxa"
+plugin(byte) = "lwt_log.cma"
+plugin(native) = "lwt_log.cmxs"
+package "core" (
+  directory = "core"
+  version = "dev"
+  description = "Logger for Lwt (deprecated; pure-OCaml core)"
+  requires = "lwt"
+  archive(byte) = "lwt_log_core.cma"
+  archive(native) = "lwt_log_core.cmxa"
+  plugin(byte) = "lwt_log_core.cma"
+  plugin(native) = "lwt_log_core.cmxs"
+)

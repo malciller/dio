@@ -1,6 +1,0 @@
-# dune init proj dio
-# OCAMLPARAM: unset
-# Shared cache: enabled-except-user-rules
-# Shared cache location: /Users/malciller/.cache/dune/db
-# Workspace root: /Users/malciller/dev/Dio/dio
-# Auto-detected concurrency: 14

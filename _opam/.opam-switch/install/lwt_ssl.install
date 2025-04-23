@@ -1,0 +1,20 @@
+opam-version: "2.0"
+lib: [
+  "_build/install/default/lib/lwt_ssl/META"
+  "_build/install/default/lib/lwt_ssl/dune-package"
+  "_build/install/default/lib/lwt_ssl/lwt_ssl.a"
+  "_build/install/default/lib/lwt_ssl/lwt_ssl.cma"
+  "_build/install/default/lib/lwt_ssl/lwt_ssl.cmi"
+  "_build/install/default/lib/lwt_ssl/lwt_ssl.cmt"
+  "_build/install/default/lib/lwt_ssl/lwt_ssl.cmti"
+  "_build/install/default/lib/lwt_ssl/lwt_ssl.cmx"
+  "_build/install/default/lib/lwt_ssl/lwt_ssl.cmxa"
+  "_build/install/default/lib/lwt_ssl/lwt_ssl.ml"
+  "_build/install/default/lib/lwt_ssl/lwt_ssl.mli"
+  "_build/install/default/lib/lwt_ssl/opam"
+]
+doc: [
+  "_build/install/default/doc/lwt_ssl/CHANGES"
+  "_build/install/default/doc/lwt_ssl/README.md"
+]
+libexec: "_build/install/default/lib/lwt_ssl/lwt_ssl.cmxs"

@@ -1,0 +1,21 @@
+opam-version: "2.0"
+lib: [
+  "_build/install/default/lib/base64/META"
+  "_build/install/default/lib/base64/b64.cmi"
+  "_build/install/default/lib/base64/b64.cmt"
+  "_build/install/default/lib/base64/b64.cmti"
+  "_build/install/default/lib/base64/b64.cmx"
+  "_build/install/default/lib/base64/b64.ml"
+  "_build/install/default/lib/base64/b64.mli"
+  "_build/install/default/lib/base64/base64.a"
+  "_build/install/default/lib/base64/base64.cma"
+  "_build/install/default/lib/base64/base64.cmxa"
+  "_build/install/default/lib/base64/dune-package"
+  "_build/install/default/lib/base64/opam"
+]
+doc: [
+  "_build/install/default/doc/base64/CHANGES.md"
+  "_build/install/default/doc/base64/LICENSE.md"
+  "_build/install/default/doc/base64/README.md"
+]
+libexec: "_build/install/default/lib/base64/base64.cmxs"

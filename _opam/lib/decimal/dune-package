@@ -1,0 +1,59 @@
+(lang dune 3.18)
+(name decimal)
+(version v1.0.2)
+(sections (lib .) (libexec .) (doc ../../doc/decimal))
+(files
+ (lib
+  (META
+   calc.ml
+   decimal.a
+   decimal.cma
+   decimal.cmi
+   decimal.cmt
+   decimal.cmti
+   decimal.cmx
+   decimal.cmxa
+   decimal.ml
+   decimal.mli
+   decimal__.cmi
+   decimal__.cmt
+   decimal__.cmx
+   decimal__.ml
+   decimal__Calc.cmi
+   decimal__Calc.cmt
+   decimal__Calc.cmx
+   dune-package
+   opam))
+ (libexec (decimal.cmxs))
+ (doc (CHANGES LICENSE README.md)))
+(library
+ (name decimal)
+ (kind normal)
+ (archives (byte decimal.cma) (native decimal.cmxa))
+ (plugins (byte decimal.cma) (native decimal.cmxs))
+ (native_archives decimal.a)
+ (requires str zarith)
+ (main_module_name Decimal)
+ (modes byte native)
+ (modules
+  (wrapped
+   (group
+    (alias
+     (obj_name decimal__)
+     (visibility public)
+     (kind alias)
+     (source (path Decimal__) (impl (path decimal__.ml-gen))))
+    (name Decimal)
+    (modules
+     (module
+      (obj_name decimal__Calc)
+      (visibility public)
+      (source (path Calc) (impl (path calc.ml))))
+     (module
+      (obj_name decimal)
+      (visibility public)
+      (source
+       (path Decimal)
+       (intf (path decimal.mli))
+       (impl (path decimal.ml))))))
+   (wrapped true))))
