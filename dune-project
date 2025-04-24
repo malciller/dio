@@ -20,4 +20,5 @@
   cmdliner
   prometheus
   alcotest
-  dotenv))
+  dotenv
+  cstruct))

@@ -21,6 +21,7 @@ depends: [
   "prometheus"
   "alcotest"
   "dotenv"
+  "cstruct"
   "odoc" {with-doc}
 ]
 build: [
