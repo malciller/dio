@@ -7,7 +7,7 @@ module Kraken = Kraken
 
 (* Set up logging *)
 let setup_logging () =
-  Lwt_log.add_rule "*" Lwt_log_core.Info; (* Log Info level and above for all sections *)
+  Lwt_log.add_rule "*" Lwt_log_core.Debug; (* Log Debug level and above for all sections *)
   Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
 
 (* Define the feed start function *)
@@ -17,10 +17,10 @@ let start_feed cfg ~on_tick =
   Kraken.Ws_feed.start cfg ~on_tick
 
 (* Define the execution feed start function *)
-let start_executions ~on_execution =
+let start_executions cfg ~on_execution =
   (* Connect to execution stream (Kraken WS feed) *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.feed") "Starting Kraken execution feed..." >>= fun () ->
-  Kraken.Ws_feed.start_executions ~on_execution
+  Kraken.Ws_feed.start_executions cfg ~on_execution
 
 (* Define the callback function for handling ticks *)
 let on_tick (tick : Event.tick) : unit Lwt.t =
@@ -70,10 +70,43 @@ let main () =
   Lwt_main.run (
     Lwt.catch
       (fun () ->
-        let dummy_cfg = () in 
+        (* Retrieve Auth Token using Kraken.Token.get_token, handle potential errors *)
+        (Lwt.catch 
+          (fun () -> Kraken.Token.get_token () >>= fun token -> Lwt.return_some token)
+          (fun exn -> 
+            Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.auth") 
+              (Printf.sprintf "Failed to retrieve auth token: %s" (Printexc.to_string exn)) >>= fun () ->
+            Lwt.return_none
+          )
+        ) >>= fun auth_token_opt ->
+
+        (* Create Kraken WS Feed Configuration *)
+        let cfg : Kraken.Ws_feed.config = {
+          ws_host = "ws.kraken.com";
+          ws_port = 443;
+          ws_path = "/v2"; (* Base path, connect function handles auth/public specific paths *)
+          symbols = ["BTC/USD"; "ETH/USD"]; (* Hardcoded symbols *)
+          auth_token = auth_token_opt; (* Use token option from caught get_token *)
+        } in
+
+        Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.config") 
+          (Printf.sprintf "Using symbols: %s" (String.concat ", " cfg.symbols)) >>= fun () ->
+
+        let feed_promise = start_feed cfg ~on_tick in
+        let executions_promise = match cfg.auth_token with
+          | Some _ -> 
+              Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.config") 
+                "Auth token found, starting execution feed." >>= fun () ->
+              start_executions cfg ~on_execution
+          | None -> 
+              Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.config") 
+                "Auth token not found or failed to retrieve, skipping execution feed." >>= fun () ->
+              Lwt.return_unit (* Return a resolved promise if no token *)
+        in
+
         Lwt.join [
-          start_feed dummy_cfg ~on_tick;
-          start_executions ~on_execution
+          feed_promise;
+          executions_promise
         ]
       )
       (fun exn ->

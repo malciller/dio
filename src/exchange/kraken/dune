@@ -16,4 +16,5 @@
   base64
   dotenv
   mirage-crypto
-  cstruct))
+  cstruct
+  conduit-lwt-unix))

@@ -41,14 +41,13 @@ let get_token () =
   (* Check HTTP status code first *) 
   let status_code = Cohttp.Response.status resp |> Cohttp.Code.code_of_status in
   if status_code <> 200 then (
-    resp_body |> Cohttp_lwt.Body.to_string >>= fun body_str ->
-    Printf.eprintf "Kraken API HTTP Error %d:\n%s\n%!" status_code body_str;
+    resp_body |> Cohttp_lwt.Body.to_string >>= fun _body_str -> (* Read body but don't print *) 
+    Printf.eprintf "Kraken API HTTP Error %d\n%!" status_code;
     Lwt.fail_with (Printf.sprintf "Kraken API request failed with HTTP status %d" status_code)
   ) else (
     (* Status is 200, proceed to parse body *) 
     resp_body |> Cohttp_lwt.Body.to_string >>= fun body_str ->
     let json = from_string body_str in
-    Printf.printf "Received response: %s\n%!" body_str;  (* Debug print the full response *)
     
     (* Check for API errors in JSON before accessing result *) 
     match Util.member "error" json with
@@ -58,24 +57,22 @@ let get_token () =
           |> List.map to_string 
           |> String.concat "; " 
         in
-        Printf.eprintf "Kraken API Error Response (JSON):\n%s\n%!" body_str;
+        Printf.eprintf "Kraken API Error Response (JSON): %s\n%!" error_msg; (* Print parsed error, not full body *) 
         Lwt.fail_with ("Kraken API error: " ^ error_msg)
     | `Null | `List [] -> (* No error or empty error list, proceed *) 
         (match Util.member "result" json with 
          | `Null -> 
-            Printf.eprintf "Kraken API Unexpected Response (no result):\n%s\n%!" body_str;
+            Printf.eprintf "Kraken API Unexpected Response (no result field)\n%!"; 
             Lwt.fail_with "Kraken API error: Missing 'result' field in response"
          | result_json -> 
             match Util.member "token" result_json with
             | `String token ->
-                Printf.printf "Successfully retrieved Kraken WebSocket token starting with: %s...\n%!" 
-                  (String.sub token 0 (min (String.length token) 5));
                 Lwt.return token
             | _ ->
-                Printf.eprintf "Kraken API Unexpected Token Format:\n%s\n%!" body_str;
+                Printf.eprintf "Kraken API Unexpected Token Format (token field is not a string)\n%!"; 
                 Lwt.fail_with "Kraken API error: Token field is not a string"
         )
     | other_error -> (* Unexpected error format *) 
-        Printf.eprintf "Kraken API Unexpected Error Format:\n%s\n%!" body_str;
+        Printf.eprintf "Kraken API Unexpected Error Format: %s\n%!" (to_string other_error); (* Print parsed error field, not full body *) 
         Lwt.fail_with ("Kraken API error: Unexpected format in 'error' field: " ^ (to_string other_error))
   )
