@@ -15,7 +15,7 @@ let start ~feed
     (cfg : config) =
   (* Coordinator: launch the three main fibers and wait for them *)
   let feed_fut = feed in
-  let strat_fut = strategy.start cfg ~tick_buffer ~cmd_buffer in (* Pass buffers *)
+  let strat_fut = strategy.start cfg ~tick_buffer ~cmd_buffer ~exec_buffer in (* Pass exec_buffer *)
   let router_fut = router.start cfg ~cmd_buffer ~exec_buffer in (* Pass buffers *)
   
   (* Log startup of components *)

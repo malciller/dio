@@ -6,6 +6,7 @@ let setup_logging () =
   Lwt_log.add_rule "*" Lwt_log_core.Error; (* Default to Error level *)
   Lwt_log.add_rule "engine.strategy" Lwt_log_core.Info; (* Allow Info for strategy *) 
   Lwt_log.add_rule "engine.router" Lwt_log_core.Info;   (* Allow Info for router *) 
+  Lwt_log.add_rule "kraken_ws_feed" Lwt_log_core.Debug; (* Allow Debug for ws_feed *) 
   Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
 
 
@@ -49,7 +50,7 @@ let main () =
 
         (* Create strategy and router modules *)
         let strategy : Types.Core.strategy = {
-          (* Signature: start: config -> tick_buffer -> cmd_buffer -> unit Lwt.t *)
+          (* Signature: start: config -> tick_buffer -> cmd_buffer -> exec_buffer -> unit Lwt.t *)
           start = Strategy.start (* Use Strategy.start directly *)
         } in
         let router : Types.Core.router = {

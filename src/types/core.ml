@@ -48,7 +48,7 @@ type config = {
 
 (* Type for strategy component *) 
 type strategy = {
-  start: config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> unit Lwt.t;
+  start: config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
 
 (* Type for router component *) 

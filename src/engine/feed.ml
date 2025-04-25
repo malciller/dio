@@ -10,7 +10,7 @@ module type WS = sig
 
   val start : config -> on_tick:(Event.tick -> unit Lwt.t) -> unit Lwt.t
   val start_executions : config -> on_execution:(market_event list -> unit Lwt.t) -> unit Lwt.t
-  val get_open_buy_orders : unit -> (string, Kraken.Ws_feed.execution_report) Hashtbl.t
+  val get_open_buy_orders : unit -> (string, Kraken.Ws_feed.order) Hashtbl.t
 end
 
 (* 2. Implement the Functor *)
