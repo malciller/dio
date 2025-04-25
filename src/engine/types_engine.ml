@@ -1,0 +1,22 @@
+(* src/engine/types_engine.ml *)
+(* open Feed (* For config = Feed.config *) -- Not needed, type is qualified *)
+open Types (* Needed for Event.tick *)
+open Types.Core (* Needed for order_cmd *)
+
+(* Define the config type based on the Feed module's config *)
+type config = Feed.config
+
+(* Type for streams *)
+type 'a stream = unit -> 'a option
+type tick_stream = Event.tick stream
+type cmd_stream = order_cmd stream
+
+(* Type for strategy component - Takes tick buffer, outputs to cmd buffer *)
+type strategy = {
+  start: config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> unit Lwt.t;
+}
+
+(* Type for router component - Takes cmd buffer and exec buffer *)
+type router = {
+  start: config -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
+} 

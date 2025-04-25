@@ -1,58 +1,11 @@
 open Lwt.Infix
-open Types           (* Access Event.tick *)
-open Types.Primitives (* Access Price.to_string *)
-
-(* Import the Kraken feed module *)
-module Kraken = Kraken
+open Engine
 
 (* Set up logging *)
 let setup_logging () =
   Lwt_log.add_rule "*" Lwt_log_core.Debug; (* Log Debug level and above for all sections *)
   Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
 
-(* Define the feed start function *)
-let start_feed cfg ~on_tick =
-  (* Connect to market stream (Kraken WS feed) *)
-  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.feed") "Starting Kraken WebSocket feed..." >>= fun () ->
-  Kraken.Ws_feed.start cfg ~on_tick
-
-(* Define the execution feed start function *)
-let start_executions cfg ~on_execution =
-  (* Connect to execution stream (Kraken WS feed) *)
-  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.feed") "Starting Kraken execution feed..." >>= fun () ->
-  Kraken.Ws_feed.start_executions cfg ~on_execution
-
-(* Define the callback function for handling ticks *)
-let on_tick (tick : Event.tick) : unit Lwt.t =
-  Printf.printf "Tick [%s] %s: Bid=%s Ask=%s Ts=%Ld\n%!"
-    tick.src
-    tick.symbol
-    (Price.to_string tick.bid)
-    (Price.to_string tick.ask)
-    tick.ts;
-  Lwt.return_unit
-
-(* Define the callback function for handling executions *)
-let on_execution (reports : Kraken.Ws_feed.execution_report list) : unit Lwt.t =
-  Lwt_list.iter_s (fun (report : Kraken.Ws_feed.execution_report) ->
-    let exec_type = report.exec_type in
-    let order_id = report.order_id in
-    let order_status = report.order_status in
-    let symbol = Option.value report.symbol ~default:"unknown" in
-    let side = Option.value report.side ~default:"N/A" in
-
-    (* Extract price and quantity based on exec_type *)
-    let price, qty = match exec_type with
-      | "new" | "pending_new" | "canceled" | "expired" | "restated" | "status" ->
-          (Option.value report.limit_price ~default:0.0, Option.value report.order_qty ~default:0.0)
-      | "trade" ->
-          (Option.value report.last_price ~default:0.0, Option.value report.last_qty ~default:0.0)
-      | _ -> (0.0, 0.0) (* Default for unknown types *)
-    in
-
-    Lwt_io.printf "[EXEC] %s %s: type=%s status=%s side=%s price=%.8f qty=%.8f\n"
-      symbol order_id exec_type order_status side price qty
-  ) reports
 
 let main () =
   (* Initialize Logging FIRST *)
@@ -66,7 +19,7 @@ let main () =
 
   Printf.printf "Starting market and execution feeds...\n%!";
 
-  (* Start both feeds in parallel *)
+  (* Start the engine with all components *)
   Lwt_main.run (
     Lwt.catch
       (fun () ->
@@ -81,7 +34,7 @@ let main () =
         ) >>= fun auth_token_opt ->
 
         (* Create Kraken WS Feed Configuration *)
-        let cfg : Kraken.Ws_feed.config = {
+        let cfg : Types_engine.config = {
           ws_host = "ws.kraken.com";
           ws_port = 443;
           ws_path = "/v2"; (* Base path, connect function handles auth/public specific paths *)
@@ -92,26 +45,22 @@ let main () =
         Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.config") 
           (Printf.sprintf "Using symbols: %s" (String.concat ", " cfg.symbols)) >>= fun () ->
 
-        let feed_promise = start_feed cfg ~on_tick in
-        let executions_promise = match cfg.auth_token with
-          | Some _ -> 
-              Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.config") 
-                "Auth token found, starting execution feed." >>= fun () ->
-              start_executions cfg ~on_execution
-          | None -> 
-              Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.config") 
-                "Auth token not found or failed to retrieve, skipping execution feed." >>= fun () ->
-              Lwt.return_unit (* Return a resolved promise if no token *)
-        in
+        (* Create strategy and router modules *)
+        let strategy : Types_engine.strategy = {
+          (* Signature: start: config -> tick_buffer -> cmd_buffer -> unit Lwt.t *)
+          start = Strategy.start (* Directly use Strategy.start now *)
+        } in
+        let router : Types_engine.router = {
+          (* Signature: start: config -> cmd_buffer -> exec_buffer -> unit Lwt.t *)
+          start = Router.start (* Directly use Router.start now *)
+        } in
 
-        Lwt.join [
-          feed_promise;
-          executions_promise
-        ]
+        (* Start the engine with all components *)
+        Engine.run ~strategy ~router cfg (* No callbacks needed *)
       )
       (fun exn ->
-        (* Log errors from starting the feed *)
-        Printf.eprintf "Error in feed: %s\n%!" (Printexc.to_string exn);
+        (* Log errors from starting the engine *)
+        Printf.eprintf "Error in engine: %s\n%!" (Printexc.to_string exn);
         Lwt.return_unit
       )
   )

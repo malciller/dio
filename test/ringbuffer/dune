@@ -1,3 +1,5 @@
 (test
  (name test_ringbuffer)
- (libraries dio.ringbuffer alcotest))
+ (libraries dio.engine alcotest)
+ (preprocess (pps lwt_ppx))
+ (package dio))

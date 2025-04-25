@@ -1,5 +1,7 @@
 open Lwt.Infix
 open Websocket
+open Types.Core
+
 
 module Json = Yojson.Safe
 
@@ -123,7 +125,82 @@ let float_to_price ~scale f =
   let s = Printf.sprintf "%.*f" scale f in
   Types.Primitives.Price.of_string_exn ~scale s
 
+let float_to_qty ~scale f =
+  let s = Printf.sprintf "%.*f" scale f in
+  Types.Primitives.Qty.of_string_exn ~scale s
+
 let section = Lwt_log_core.Section.make "kraken_ws_feed"
+
+(* Conversion Helpers *)
+let kraken_ts_to_core_ts s =
+  (* Parse ISO 8601 / RFC 3339 timestamp manually since we don't have Ptime *)
+  try
+    (* Format: "2023-01-01T12:34:56.789Z" *)
+    let len = String.length s in
+    if len < 20 then raise (Invalid_argument "Timestamp too short");
+    
+    (* Extract date parts *)
+    let year = int_of_string (String.sub s 0 4) in
+    let month = int_of_string (String.sub s 5 2) in
+    let day = int_of_string (String.sub s 8 2) in
+    
+    (* Extract time parts *)
+    let hour = int_of_string (String.sub s 11 2) in
+    let minute = int_of_string (String.sub s 14 2) in
+    let sec = int_of_string (String.sub s 17 2) in
+    
+    (* Extract milliseconds if present *)
+    let ms = 
+      if len > 20 && s.[19] = '.' then
+        let ms_str = String.sub s 20 (min (len - 21) 3) in
+        float_of_string ("0." ^ ms_str)
+      else 0.0
+    in
+    
+    (* Convert to Unix timestamp *)
+    let tm = Unix.{ tm_year = year - 1900; tm_mon = month - 1; tm_mday = day;
+                    tm_hour = hour; tm_min = minute; tm_sec = sec;
+                    tm_wday = 0; tm_yday = 0; tm_isdst = false } in
+    let unix_time = Unix.mktime tm |> fst in
+    (unix_time +. ms) *. 1_000_000. |> Int64.of_float
+  with e ->
+    Lwt_log_core.warning ~section (Printf.sprintf "Failed to parse timestamp: %s, using current time: %s" s (Printexc.to_string e)) |> ignore;
+    Unix.gettimeofday () *. 1_000_000. |> Int64.of_float
+
+let kraken_side_to_core_side = function
+  | Some "buy" -> Some Buy
+  | Some "sell" -> Some Sell
+  | _ -> None
+
+let kraken_status_to_core_state status =
+  match status with
+  | "new" | "pending_new" | "amended" | "restated" | "status" -> Open
+  | "filled" -> Filled
+  | "canceled" | "expired" -> Canceled
+  | "rejected" -> Rejected
+  | _ ->
+      Lwt_log_core.warning ~section (Printf.sprintf "Unhandled Kraken order status: %s, mapping to Rejected" status) |> ignore;
+      Rejected
+
+let execution_report_to_market_event (report : execution_report) : market_event option =
+  let order_id = report.order_id in
+  let client_id = "kraken:" ^ order_id in
+  let ts = kraken_ts_to_core_ts report.timestamp in
+  let state = kraken_status_to_core_state report.order_status in
+  let symbol_opt = report.symbol in
+
+  match report.exec_type, report.last_qty, report.last_price, kraken_side_to_core_side report.side, symbol_opt with
+  | ("trade" | "filled"), Some qty_f, Some price_f, Some side, Some symbol when qty_f > 0.0 ->
+      begin try
+        let price = float_to_price ~scale:8 price_f in
+        let qty = float_to_qty ~scale:8 qty_f in
+        Some (Fill { symbol; order_id; client_id; price; qty; side; ts })
+      with ex ->
+        Lwt_log_core.error ~section (Printf.sprintf "Failed to convert Fill data for order %s: %s" order_id (Printexc.to_string ex)) |> ignore;
+        Some (Ack { order_id; client_id; state; ts })
+      end
+  | _ ->
+      Some (Ack { order_id; client_id; state; ts })
 
 (* Connection Setup *)
 let connect cfg is_auth =
@@ -206,78 +283,92 @@ let make_subscribe_message ?req_id (cfg : config) channel =
 let handle_public_frame conn frame ~on_tick =
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
+      Lwt_log_core.debug ~section ("Public frame received: " ^ frame.content) >>= fun () ->
       let json = Json.from_string frame.content in
-      begin match Json.Util.(member "channel" json |> to_string_option) with
-      | Some "ticker" ->
-          begin match ticker_response_of_yojson json with
-          | Ok { type_ = ("snapshot" | "update") as type_; data = [ticker]; _ } ->
-              Lwt_log_core.debug ~section (Printf.sprintf "Received %s ticker for %s" type_ ticker.symbol) >>= fun () ->
-              let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
-              let tick_event : Types.Event.tick = {
-                src = "kraken";
-                symbol = ticker.symbol;
-                bid = float_to_price ~scale:8 ticker.bid;
-                ask = float_to_price ~scale:8 ticker.ask;
-                ts;
-              } in
-              on_tick tick_event
-          | Ok _ ->
-              Lwt_log_core.warning ~section ("Unexpected ticker data format: " ^ frame.content)
-          | Error err ->
-              Lwt_log_core.error ~section (Printf.sprintf "Failed to parse ticker: %s" err)
-          end
-      | Some "status" ->
-          begin match status_response_of_yojson json with
-          | Ok { data = [status]; _ } ->
-              Lwt_log_core.info ~section (Printf.sprintf "System Status: %s (Version: %s)" status.system status.version)
-          | Ok _ ->
-              Lwt_log_core.warning ~section ("Unexpected status data format: " ^ frame.content)
-          | Error err ->
-              Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s" err)
-          end
-      | Some "heartbeat" ->
-          Lwt_log_core.debug ~section "Received Heartbeat"
-      | Some "subscribe" ->
+      (* Check for method first (for subscription responses) *) 
+      begin match Json.Util.(member "method" json |> to_string_option) with 
+      | Some "subscribe" -> 
+          (* Handle subscription response *) 
           begin match subscription_response_of_yojson json with
-          | Ok { success = true; result = Some result; _ } ->
-              let channel = Json.Util.to_string_option (Json.Util.member "channel" result) |> Option.value ~default:"unknown" in
-              Lwt_log_core.info ~section (Printf.sprintf "Subscribed to %s" channel)
-          | Ok { success = false; error = Some err; _ } ->
-              Lwt_log_core.error ~section (Printf.sprintf "Subscription failed: %s" err)
+          | Ok { success = true; req_id = Some id; result = Some res; _ } ->
+              let subscribed_channel = Json.Util.(member "channel" res |> to_string_option |> Option.value ~default:"unknown") in
+              Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%d): %s" id subscribed_channel)
+          | Ok { success = false; req_id = Some id; error = Some err; _ } ->
+              Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%d): %s" id err)
           | _ ->
-              Lwt_log_core.error ~section "Invalid subscription response"
+              Lwt_log_core.warning ~section ("Unhandled subscription response format: " ^ frame.content)
           end
-      | _ ->
-          Lwt_log_core.warning ~section ("Unhandled channel: " ^ frame.content)
+      | Some _ | None -> 
+          (* Handle data messages by channel *) 
+          begin match Json.Util.(member "channel" json |> to_string_option) with
+          | Some "ticker" ->
+              begin match ticker_response_of_yojson json with
+              | Ok { type_ = ("snapshot" | "update") as msg_type; data = ticker_list; _ } ->
+                  Lwt_log_core.debug ~section (Printf.sprintf "Received %s ticker data (%d entries)" msg_type (List.length ticker_list)) >>= fun () ->
+                  (* Process each ticker entry in the list *) 
+                  Lwt_list.iter_s (fun (ticker : ticker_data) -> (* Force the type here *) 
+                    let symbol_str = ticker.symbol in (* Should be string now *) 
+                    let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
+                    let tick_event : Types.Event.tick = {
+                      src = "kraken";
+                      symbol = symbol_str; (* Use the string *) 
+                      bid = float_to_price ~scale:8 ticker.bid; (* Should work now *) 
+                      ask = float_to_price ~scale:8 ticker.ask;
+                      ts;
+                    } in
+                    on_tick tick_event
+                  ) ticker_list
+              | Ok _ ->
+                  Lwt_log_core.warning ~section ("Unexpected ticker data format: " ^ frame.content)
+              | Error err ->
+                  Lwt_log_core.error ~section (Printf.sprintf "Failed to parse ticker: %s. Payload: %s" err frame.content)
+              end
+          | Some "status" ->
+              begin match status_response_of_yojson json with
+              | Ok { data = [_status]; _ } ->
+                   Lwt_log_core.info ~section (Printf.sprintf "System Status: %s (Version: %s)" _status.system _status.version)
+              | Ok _ ->
+                  Lwt_log_core.warning ~section ("Unexpected status data format: " ^ frame.content)
+              | Error err ->
+                  Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s" err)
+              end
+          | Some "heartbeat" ->
+              Lwt_log_core.debug ~section "Received Public Heartbeat" >>= fun () ->
+              Lwt.return_unit (* Add explicit return *)
+          (* REMOVED the subscribe handling from here, it's handled above *)
+          | _ ->
+              Lwt_log_core.warning ~section ("Unhandled public channel/message: " ^ frame.content)
+          end
       end
   | Frame.Opcode.Ping ->
-      Lwt_log_core.debug ~section "Received Ping" >>= fun () ->
+      Lwt_log_core.debug ~section "Received Public Ping" >>= fun () ->
       Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Pong ())
   | Frame.Opcode.Pong ->
-      Lwt_log_core.debug ~section "Received Pong"
+      Lwt_log_core.debug ~section "Received Public Pong"
   | Frame.Opcode.Close ->
-      Lwt_log_core.info ~section "Received Close"
+      Lwt_log_core.info ~section "Received Public Close"
   | _ ->
-      Lwt_log_core.warning ~section ("Unhandled frame type: " ^ Frame.Opcode.to_string frame.Websocket.Frame.opcode)
+      Lwt_log_core.warning ~section ("Unhandled public frame type: " ^ Frame.Opcode.to_string frame.Websocket.Frame.opcode)
 
 let handle_auth_frame conn frame ~on_execution =
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
-      (* Log raw content first *) 
+      (* Log raw content first - keep this for debugging parsing issues *)
       Lwt_log_core.debug ~section (Printf.sprintf "Auth frame received: %s" frame.content) >>= fun () ->
       let json = Json.from_string frame.content in
       begin match Json.Util.(member "channel" json |> to_string_option) with
       | Some "executions" ->
           begin match executions_response_of_yojson json with
-          | Ok { type_ = ("snapshot" | "update") as type_; data; channel = _ } ->
-              Lwt_log_core.info ~section (Printf.sprintf "Received %s executions (%d reports)" type_ (List.length data)) >>= fun () ->
-              List.iter (fun report ->
-                let side = Option.value report.side ~default:"N/A" in
-                let symbol = Option.value report.symbol ~default:"N/A" in
-                Lwt_log_core.debug ~section (Printf.sprintf "Execution: %s %s %s %s order_id=%s"
-                  symbol side report.exec_type report.order_status report.order_id) |> ignore
-              ) data;
-              on_execution data
+          | Ok { type_ = ("snapshot" | "update"); data; channel = _ } ->
+              (* Lwt_log_core.info ~section (Printf.sprintf "Received %s executions (%d reports)" type_ (List.length data)) >>= fun () -> *)
+              (* List.iter (fun report -> *)
+              (*   let side = Option.value report.side ~default:"N/A" in *)
+              (*   let symbol = Option.value report.symbol ~default:"N/A" in *)
+              (*   Lwt_log_core.debug ~section (Printf.sprintf "Execution: %s %s %s %s order_id=%s" *)
+              (*     symbol side report.exec_type report.order_status report.order_id) |> ignore *)
+              (* ) data; *)
+              let market_events = List.filter_map execution_report_to_market_event data in
+              on_execution market_events
           | Ok _ ->
               Lwt_log_core.warning ~section ("Unexpected executions data format: " ^ frame.content)
           | Error err ->
@@ -285,20 +376,23 @@ let handle_auth_frame conn frame ~on_execution =
           end
       | Some "status" ->
           begin match status_response_of_yojson json with
-          | Ok { data = [status]; _ } ->
-              Lwt_log_core.info ~section (Printf.sprintf "System Status: %s (Version: %s)" status.system status.version)
+          | Ok { data = [_status]; _ } ->
+              (* Lwt_log_core.info ~section (Printf.sprintf "System Status: %s (Version: %s)" status.system status.version) *)
+              Lwt.return_unit
           | Ok _ ->
               Lwt_log_core.warning ~section ("Unexpected status data format: " ^ frame.content)
           | Error err ->
               Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s" err)
           end
       | Some "heartbeat" ->
-          Lwt_log_core.debug ~section "Received Heartbeat"
+          (* Lwt_log_core.debug ~section "Received Heartbeat" *)
+          Lwt.return_unit
       | Some "subscribe" ->
           begin match subscription_response_of_yojson json with
-          | Ok { success = true; result = Some result; _ } ->
-              let channel = Json.Util.to_string_option (Json.Util.member "channel" result) |> Option.value ~default:"unknown" in
-              Lwt_log_core.info ~section (Printf.sprintf "Subscribed to %s" channel)
+          | Ok { success = true; result = Some _result; _ } ->
+              (* let channel = Json.Util.to_string_option (Json.Util.member "channel" result) |> Option.value ~default:"unknown" in *)
+              (* Lwt_log_core.info ~section (Printf.sprintf "Subscribed to %s" channel) *)
+              Lwt.return_unit
           | Ok { success = false; error = Some err; _ } ->
               Lwt_log_core.error ~section (Printf.sprintf "Subscription failed: %s" err)
           | _ ->
@@ -308,12 +402,14 @@ let handle_auth_frame conn frame ~on_execution =
           Lwt_log_core.warning ~section ("Unhandled channel: " ^ frame.content)
       end
   | Frame.Opcode.Ping ->
-      Lwt_log_core.debug ~section "Received Ping" >>= fun () ->
+      (* Lwt_log_core.debug ~section "Received Ping" >>= fun () -> *)
       Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Pong ())
   | Frame.Opcode.Pong ->
-      Lwt_log_core.debug ~section "Received Pong"
+      (* Lwt_log_core.debug ~section "Received Pong" *)
+      Lwt.return_unit
   | Frame.Opcode.Close ->
-      Lwt_log_core.info ~section "Received Close"
+      (* Lwt_log_core.info ~section "Received Close" *)
+      Lwt.return_unit
   | _ ->
       Lwt_log_core.warning ~section ("Unhandled frame type: " ^ Frame.Opcode.to_string frame.Websocket.Frame.opcode)
 
@@ -384,6 +480,9 @@ let handle_execution_report report =
       end
   | _ -> Lwt.return_unit
 
+(* Getter for open orders (used by Strategy) *)
+let get_open_buy_orders () = open_buy_orders
+
 (* Main Feed Functions *)
 let start cfg ~on_tick =
   let rec loop conn =
@@ -398,24 +497,19 @@ let start cfg ~on_tick =
   loop conn
 
 let start_executions cfg ~on_execution =
-  let section = Lwt_log_core.Section.make "kraken_ws_auth" in (* Use a specific section for clarity *) 
+  let section = Lwt_log_core.Section.make "kraken_ws_auth" in
   match cfg.auth_token with
   | None -> Lwt.fail_with "Authentication token required for executions feed"
   | Some _ ->
       let rec loop conn =
         Websocket_lwt_unix.read conn >>= fun frame ->
-        (* Add catch for read errors potentially *) 
         Lwt.catch 
           (fun () -> 
-            handle_auth_frame conn frame ~on_execution:(fun reports ->
-              Lwt_list.iter_s handle_execution_report reports >>= fun () ->
-              on_execution reports
-            )
+            handle_auth_frame conn frame ~on_execution
           )
           (fun ex -> 
             Lwt_log_core.error_f ~section "Error reading/handling auth frame: %s" (Printexc.to_string ex) >>= fun () ->
-            (* Optionally re-raise or handle reconnection here *) 
-            Lwt.fail ex 
+            Lwt.fail ex
           ) >>= fun () ->
         loop conn
       in
@@ -425,15 +519,14 @@ let start_executions cfg ~on_execution =
           connect cfg true >>= fun conn ->
           Lwt_log_core.info ~section "Successfully connected to auth endpoint." >>= fun () ->
           let subscribe_msg = make_subscribe_message ~req_id:2 cfg `Executions in
-          let content_str = subscribe_msg.content in
           Lwt_log_core.info ~section "Subscribing to executions feed" >>= fun () ->
-          Lwt_log_core.debug ~section (Printf.sprintf "Sending executions subscribe message: %s" content_str) >>= fun () ->
+          Lwt_log_core.debug ~section (Printf.sprintf "Sending executions subscribe message: %s" subscribe_msg.content) >>= fun () ->
           Websocket_lwt_unix.write conn subscribe_msg >>= fun () ->
           Lwt_log_core.info ~section "Starting auth message loop..." >>= fun () ->
           loop conn
         )
         (fun ex -> 
           Lwt_log_core.error_f ~section "Failed to connect/subscribe to auth endpoint: %s" (Printexc.to_string ex) >>= fun () ->
-          Lwt.fail ex (* Re-throw the exception to be caught by the main loop if needed *) 
+          Lwt.fail ex
         )
 
