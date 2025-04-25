@@ -1,16 +1,16 @@
-[@@@warning "-33"] (* Suppress unused open warning for Types_engine/Ringbuffer needed for type inference *)
+(* Remove warning suppression for Types_engine *)
+(* [@@@warning "-33"] *) 
 
 (* src/engine/router.ml *)
 open Lwt.Infix  (* for >>= *)
-open Types_engine (* For config type *)
-open Types.Core (* Needed for order_cmd_to_yojson, market_event_to_yojson *)
-open Ringbuffer (* For Ringbuffer.t and functions *)
+open Types.Core (* Use Types.Core for config, events, etc. *)
+
 
 
 let start _cfg ~cmd_buffer ~exec_buffer =
   (* TODO: Dispatch commands from cmd_buffer to appropriate exchange handler *)
   let rec cmd_loop () =
-    match Ringbuffer.pop_opt cmd_buffer with
+    match Types.Ringbuffer.pop_opt cmd_buffer with
     | Some cmd ->
         Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router") 
           (Printf.sprintf "Routing command: %s" (Yojson.Safe.to_string (order_cmd_to_yojson cmd)))
@@ -23,9 +23,9 @@ let start _cfg ~cmd_buffer ~exec_buffer =
 
   (* TODO: Optionally process execution reports from exec_buffer *)
   let rec exec_loop () =
-    match Ringbuffer.pop_opt exec_buffer with
+    match Types.Ringbuffer.pop_opt exec_buffer with
     | Some event ->
-        Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.router") 
+        Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router")
           (Printf.sprintf "Router received exec event: %s" (Yojson.Safe.to_string (market_event_to_yojson event)))
         >>= fun () -> 
         (* TODO: Handle execution event (e.g., update internal state) *) 

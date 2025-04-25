@@ -22,6 +22,7 @@ depends: [
   "alcotest"
   "dotenv"
   "cstruct"
+  "alcotest-lwt"
   "odoc" {with-doc}
 ]
 build: [

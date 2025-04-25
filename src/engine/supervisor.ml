@@ -1,11 +1,11 @@
 (* src/engine/supervisor.ml *)
 open Lwt.Infix  (* for >>= *)
-open Types_engine (* Contains config, strategy, router types *)
-open Feed (* For config *)
-open Types
-open Types.Core
+open Types (* For Event.tick *)
+open Types.Core (* Contains config, strategy, router, order_cmd etc. *)
 
-(* The function signature now expects types from Types_engine.ml and buffers *)
+
+
+(* The function signature now expects types from Types.Core *)
 let start ~feed 
     ~(strategy : strategy) 
     ~(router : router) 

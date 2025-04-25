@@ -21,4 +21,5 @@
   prometheus
   alcotest
   dotenv
-  cstruct))
+  cstruct
+  alcotest-lwt))

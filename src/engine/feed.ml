@@ -1,53 +1,58 @@
 (* src/engine/feed.ml *)
 open Lwt.Infix  (* for >>= *)
-open Types (* To access Event.tick and market_event type for on_tick/on_execution *)
-open Types.Core (* For market_event *)
+open Types
+open Types.Core (* Contains config, market_event, order_cmd etc. *)
 
-(* Import the Kraken feed module *)
-module Kraken_feed = Kraken.Ws_feed
 
-(* Define the configuration type, mirroring Kraken.Ws_feed.config *)
-type config = {
-  ws_host: string;
-  ws_port: int;
-  ws_path: string;
-  symbols: string list;
-  auth_token: string option;
-}
+(* 1. Define the WebSocket Interface using Types.Core.config *)
+module type WS = sig
+  type config = Types.Core.config (* Use the central config type *)
 
-(* Convert our config to Kraken_feed.config *)
-let to_kraken_config (cfg : config) : Kraken_feed.config = {
-  ws_host = cfg.ws_host;
-  ws_port = cfg.ws_port;
-  ws_path = cfg.ws_path;
-  symbols = cfg.symbols;
-  auth_token = cfg.auth_token;
-}
+  val start : config -> on_tick:(Event.tick -> unit Lwt.t) -> unit Lwt.t
+  val start_executions : config -> on_execution:(market_event list -> unit Lwt.t) -> unit Lwt.t
+  val get_open_buy_orders : unit -> (string, Kraken.Ws_feed.execution_report) Hashtbl.t
+end
 
-(* Section for logging *)
-let section = Lwt_log_core.Section.make "engine.feed"
+(* 2. Implement the Functor *)
+module Make (W : WS) = struct
+  let section = Lwt_log_core.Section.make "engine.feed"
 
-(* Start the public data feed (e.g., Ticker) *)
-let start cfg ~on_tick:(on_tick : Event.tick -> unit Lwt.t) =
-  Lwt_log_core.info ~section "Starting Kraken WebSocket feed..." >>= fun () ->
-  Lwt.catch
-    (fun () -> Kraken_feed.start (to_kraken_config cfg) ~on_tick)
-    (fun exn ->
-      Lwt_log_core.error_f ~section "Error starting public feed: %s" (Printexc.to_string exn) >>= fun () ->
-      Lwt.fail exn (* Re-raise the exception after logging *)
-    )
+  let start (cfg : Types.Core.config) ~on_tick =
+    Lwt_log_core.info ~section "Starting WebSocket feed..." >>= fun () ->
+    Lwt.catch
+      (fun () -> W.start cfg ~on_tick) (* W.start expects Core.config *)
+      (fun exn ->
+        Lwt_log_core.error_f ~section "Error starting public feed: %s" (Printexc.to_string exn) >>= fun () ->
+        Lwt.fail exn)
 
-(* Start the private data feed (e.g., Executions) *)
-let start_executions cfg ~on_execution:(on_execution : market_event list -> unit Lwt.t) =
-  match cfg.auth_token with
-  | Some _ ->
-      Lwt_log_core.info ~section "Auth token found, starting Kraken execution feed..." >>= fun () ->
-      Lwt.catch
-        (fun () -> Kraken_feed.start_executions (to_kraken_config cfg) ~on_execution)
-        (fun exn ->
-          Lwt_log_core.error_f ~section "Error starting execution feed: %s" (Printexc.to_string exn) >>= fun () ->
-          Lwt.fail exn (* Re-raise the exception after logging *)
-        )
-  | None ->
-      Lwt_log_core.warning ~section "Auth token not found or failed to retrieve, skipping execution feed." >>= fun () ->
-      Lwt.return_unit (* Return a resolved promise if no token *)
+  let start_executions (cfg : Types.Core.config) ~on_execution =
+    match cfg.auth_token with
+    | Some _ ->
+        Lwt_log_core.info ~section "Auth token found, starting execution feed..." >>= fun () ->
+        Lwt.catch
+          (fun () -> W.start_executions cfg ~on_execution) (* W.start_executions expects Core.config *)
+          (fun exn ->
+            Lwt_log_core.error_f ~section "Error starting execution feed: %s" (Printexc.to_string exn) >>= fun () ->
+            Lwt.fail exn)
+    | None ->
+        Lwt_log_core.warning ~section "Auth token not found, skipping execution feed." >>= fun () ->
+        Lwt.return_unit
+end
+
+(* 3. Define the production implementation using the real Kraken Ws_feed *)
+(* Kraken.Ws_feed now uses Types.Core.config, matching the WS signature *)
+module Kraken_ws : WS with type config = Types.Core.config = struct
+  type config = Types.Core.config (* Satisfy signature constraint *)
+
+  (* Map functions, coercing return type *)
+  let start cfg ~on_tick : unit Lwt.t =
+    (Kraken.Ws_feed.start cfg ~on_tick : unit Lwt.t)
+
+  let start_executions cfg ~on_execution : unit Lwt.t =
+    (Kraken.Ws_feed.start_executions cfg ~on_execution : unit Lwt.t)
+
+  let get_open_buy_orders = Kraken.Ws_feed.get_open_buy_orders
+end
+
+(* 4. Instantiate the production Feed module *)
+module Prod = Make (Kraken_ws)

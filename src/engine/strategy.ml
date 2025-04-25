@@ -1,7 +1,9 @@
 (* src/engine/strategy.ml *)
 open Lwt.Infix  (* for >>= *)
 
-open Types.Core (* For order_cmd type *)
+
+open Types.Core
+
 open Types (* For Event.tick type *)
 open Types.Primitives (* Needed for Qty, Price etc. *)
 
@@ -11,10 +13,12 @@ let start _cfg ~tick_buffer ~cmd_buffer =
   (* Grid strategy: consume ticks, emit Core.order_cmd via cmd_buffer *)
   let rec loop () =
     match Ringbuffer.pop_opt tick_buffer with
-    | Some (tick : Event.tick) -> (* Explicitly annotate type here *) 
-        (* Handle optional symbol - NOTE: Event.tick.symbol is string, not option *)
-        (* The previous error was likely due to the compiler mistyping 'tick' *) 
-        let symbol_str = tick.symbol in (* Directly use symbol, it's string *) 
+    | Some (tick : Event.tick) -> 
+        (* Log the popped tick *)
+        Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
+          (Printf.sprintf "Popped Tick: %s" (Yojson.Safe.to_string (Event.tick_to_yojson tick))) 
+        >>= fun () -> 
+        let symbol_str = tick.symbol in 
         (* TODO: apply grid logic using tick *) 
         (* Example: Get open orders for logic *) 
         let _open_orders = get_open_buy_orders () in 

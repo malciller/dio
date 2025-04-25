@@ -3,8 +3,14 @@
 open Types (* Needed for Event.tick *)
 open Types.Core (* Needed for order_cmd *)
 
-(* Define the config type based on the Feed module's config *)
-type config = Feed.config
+(* Define the engine configuration structure HERE *)
+type config = {
+  ws_host: string;
+  ws_port: int;
+  ws_path: string;
+  symbols: string list;
+  auth_token: string option;
+}
 
 (* Type for streams *)
 type 'a stream = unit -> 'a option

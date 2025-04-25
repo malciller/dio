@@ -1,9 +1,11 @@
 open Lwt.Infix
-open Engine
+open Types.Core
 
 (* Set up logging *)
 let setup_logging () =
-  Lwt_log.add_rule "*" Lwt_log_core.Debug; (* Log Debug level and above for all sections *)
+  Lwt_log.add_rule "*" Lwt_log_core.Error; (* Default to Error level *)
+  Lwt_log.add_rule "engine.strategy" Lwt_log_core.Info; (* Allow Info for strategy *) 
+  Lwt_log.add_rule "engine.router" Lwt_log_core.Info;   (* Allow Info for router *) 
   Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
 
 
@@ -34,7 +36,7 @@ let main () =
         ) >>= fun auth_token_opt ->
 
         (* Create Kraken WS Feed Configuration *)
-        let cfg : Types_engine.config = {
+        let cfg : Types.Core.config = {
           ws_host = "ws.kraken.com";
           ws_port = 443;
           ws_path = "/v2"; (* Base path, connect function handles auth/public specific paths *)
@@ -46,13 +48,13 @@ let main () =
           (Printf.sprintf "Using symbols: %s" (String.concat ", " cfg.symbols)) >>= fun () ->
 
         (* Create strategy and router modules *)
-        let strategy : Types_engine.strategy = {
+        let strategy : Types.Core.strategy = {
           (* Signature: start: config -> tick_buffer -> cmd_buffer -> unit Lwt.t *)
-          start = Strategy.start (* Directly use Strategy.start now *)
+          start = Strategy.start (* Use Strategy.start directly *)
         } in
-        let router : Types_engine.router = {
+        let router : Types.Core.router = {
           (* Signature: start: config -> cmd_buffer -> exec_buffer -> unit Lwt.t *)
-          start = Router.start (* Directly use Router.start now *)
+          start = Router.start (* Use Router.start directly *)
         } in
 
         (* Start the engine with all components *)

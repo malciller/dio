@@ -1,5 +1,5 @@
 open Alcotest
-open Ringbuffer
+open Types.Ringbuffer
 
 (* ------------------------------------------------------------------ *)
 let test_fifo () =
@@ -11,10 +11,10 @@ let test_fifo () =
   check (list int) "fifo order" [ 1; 2; 3 ] popped
 
 let test_overflow () =
-  let q = Ringbuffer.create 2 in
-  assert (Ringbuffer.push q 1);
-  assert (Ringbuffer.push q 2);
-  assert (not (Ringbuffer.push q 3))       (* correctly refuses when full *)
+  let q = Types.Ringbuffer.create 2 in
+  assert (Types.Ringbuffer.push q 1);
+  assert (Types.Ringbuffer.push q 2);
+  assert (not (Types.Ringbuffer.push q 3))       (* correctly refuses when full *)
 
 (* ------------------------------------------------------------------ *)
 let () =

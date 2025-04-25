@@ -2,17 +2,9 @@ open Lwt.Infix
 open Websocket
 open Types.Core
 
-
 module Json = Yojson.Safe
 
-(* Configuration type *)
-type config = {
-  ws_host: string;
-  ws_port: int;
-  ws_path: string;
-  symbols: string list;
-  auth_token: string option;
-}
+(* Configuration type - REMOVED, using Types.Core.config *)
 
 (* Type Definitions for Kraken WS v2 API *)
 
@@ -203,7 +195,7 @@ let execution_report_to_market_event (report : execution_report) : market_event 
       Some (Ack { order_id; client_id; state; ts })
 
 (* Connection Setup *)
-let connect cfg is_auth =
+let connect (cfg : config) is_auth =
   let port = cfg.ws_port in
   let ctx = Lazy.force Conduit_lwt_unix.default_ctx in
 
@@ -484,7 +476,7 @@ let handle_execution_report report =
 let get_open_buy_orders () = open_buy_orders
 
 (* Main Feed Functions *)
-let start cfg ~on_tick =
+let start (cfg : config) ~on_tick =
   let rec loop conn =
     Websocket_lwt_unix.read conn >>= fun frame ->
     handle_public_frame conn frame ~on_tick >>= fun () ->
@@ -496,7 +488,7 @@ let start cfg ~on_tick =
   Websocket_lwt_unix.write conn subscribe_msg >>= fun () ->
   loop conn
 
-let start_executions cfg ~on_execution =
+let start_executions (cfg : config) ~on_execution =
   let section = Lwt_log_core.Section.make "kraken_ws_auth" in
   match cfg.auth_token with
   | None -> Lwt.fail_with "Authentication token required for executions feed"
