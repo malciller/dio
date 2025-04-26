@@ -189,10 +189,103 @@ module State = struct
         tick.symbol 
         (Price.to_string tick.current_price))
 
+  (* Check and adjust orders that are too far from current price *)
+  let check_and_adjust_orders runtime_cfg cmd_buffer (tick : Event.tick) =
+    (* Find the asset configuration for this symbol *)
+    let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) -> 
+      String.equal asset.symbol tick.symbol
+    ) runtime_cfg.assets in
 
-
-
-
+    match asset_cfg_opt with
+    | Some asset_cfg ->
+        let current_price_float = Float.of_string (Price.to_string tick.current_price) in
+        let grid_pct = Float.of_string (Fixed.to_string asset_cfg.grid_interval) in
+        let max_distance_pct = grid_pct *. 2.0 in (* 2x grid interval *)
+        
+        (* Log the price and grid settings *)
+        Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+          (Printf.sprintf "Checking orders for %s - Current Price: %.8f, Grid Interval: %.2f%%, Max Distance: %.2f%%" 
+            tick.symbol current_price_float grid_pct max_distance_pct) >>= fun () ->
+        
+        (* Get all open buy orders for this symbol *)
+        let orders = Hashtbl.to_seq_values (K.get_open_buy_orders ()) |> List.of_seq in
+        
+        (* Log how many orders we're checking *)
+        Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+          (Printf.sprintf "Found %d open orders to check" (List.length orders)) >>= fun () ->
+        
+        (* Process each order *)
+        Lwt_list.iter_s (fun (order : K.order) ->
+          (* Log each order we're examining *)
+          Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+            (Printf.sprintf "Examining order %s: symbol=%s side=%s price=%.8f" 
+              order.order_id 
+              order.order_symbol
+              (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown")
+              order.limit_price) >>= fun () ->
+          
+          if String.equal order.order_symbol tick.symbol && 
+             (match order.side with Some Buy -> true | _ -> false) then
+              let price_diff_pct = 
+                ((order.limit_price -. current_price_float) /. current_price_float) *. -100.0 in
+              
+              (* Log the price difference *)
+              Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+                (Printf.sprintf "Order %s price difference: %.2f%% (max allowed: %.2f%%)" 
+                  order.order_id price_diff_pct max_distance_pct) >>= fun () ->
+              
+              (* If price difference exceeds 2x grid interval, adjust the order *)
+              if price_diff_pct > max_distance_pct then
+                let new_price_float = current_price_float *. (1.0 -. grid_pct /. 100.0) in
+                let new_price = match K.get_precisions tick.symbol with
+                  | Some (price_prec, _) ->
+                      Price.of_string_exn ~scale:price_prec
+                        (Printf.sprintf "%.*f" price_prec new_price_float)
+                  | None -> 
+                      Price.of_string_exn ~scale:tick.current_price.scale
+                        (Printf.sprintf "%.*f" tick.current_price.scale new_price_float)
+                in
+                
+                (* Create amend command *)
+                let amend_cmd = Amend {
+                  dst = "kraken";
+                  order_id = order.order_id;
+                  new_price = Some new_price;
+                  new_qty = None
+                } in
+                
+                (* Log the adjustment *)
+                Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                  (Printf.sprintf "Adjusting order %s price from %.2f to %.2f (current: %.2f, diff: %.1f%%)"
+                    order.order_id
+                    order.limit_price
+                    new_price_float
+                    current_price_float
+                    price_diff_pct) >>= fun () ->
+                
+                (* Push the amend command *)
+                let pushed = Ringbuffer.push cmd_buffer amend_cmd in
+                Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+                  (Printf.sprintf "Amend command %s pushed to buffer: %b" 
+                    order.order_id pushed) >>= fun () ->
+                
+                if not pushed then
+                  Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy")
+                    "Command buffer full! Dropping amend command."
+                else
+                  Lwt.return_unit
+              else
+                Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+                  (Printf.sprintf "Order %s within acceptable range" order.order_id) >>= fun () ->
+                Lwt.return_unit
+          else
+            Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+              (Printf.sprintf "Skipping order %s (wrong symbol or side)" order.order_id) >>= fun () ->
+            Lwt.return_unit
+        ) orders
+    | None ->
+        Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy")
+          (Printf.sprintf "No configuration found for symbol %s in runtime_cfg" tick.symbol)
 
   (* Update open orders based on execution *)
   let handle_execution runtime_cfg cmd_buffer (event : market_event) =
@@ -352,6 +445,7 @@ let start (runtime_cfg : runtime_cfg) (core_cfg : config) ~tick_buffer ~cmd_buff
               (* Only update state if price changed *)
               State.update_price tick >>= fun () ->
               State.sync_open_orders () >>= fun () ->
+              State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
               State.create_initial_orders runtime_cfg tick.symbol cmd_buffer >>= fun () -> 
               loop ()
             ) else (
