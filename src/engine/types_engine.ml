@@ -1,5 +1,4 @@
 (* src/engine/types_engine.ml *)
-(* open Feed (* For config = Feed.config *) -- Not needed, type is qualified *)
 open Types (* Needed for Event.tick *)
 open Types.Core (* Needed for order_cmd *)
 

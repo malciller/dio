@@ -191,6 +191,13 @@ module State = struct
 end
 
 let start cfg ~tick_buffer ~cmd_buffer ~exec_buffer =
+  (* Wait for the execution snapshot to be processed *)
+  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+    "Waiting for execution snapshot from Kraken..." >>= fun () ->
+  K.wait_for_snapshot () >>= fun () ->
+  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+    "Execution snapshot received, initializing strategy state..." >>= fun () ->
+
   (* Initialize state using the config *)
   State.initialize_orders cfg >>= fun () -> (* Explicitly initialize state *)
 

@@ -5,6 +5,12 @@ open Lwt.Syntax
 module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
 
+(* Add at the top of the file, after module imports *)
+let snapshot_processed, resolve_snapshot_processed = Lwt.task ()
+
+(* Expose a function to get the snapshot promise *)
+let wait_for_snapshot () = snapshot_processed
+
 (* Configuration type - REMOVED, using Types.Core.config *)
 (* Order Tracking definitions moved below the 'order' type definition *)
 
@@ -254,7 +260,6 @@ let connect (cfg : config) is_auth =
     (* Authenticated connection logic based on provided example *) 
     let host = "ws-auth.kraken.com" in
     let uri = Uri.of_string (Printf.sprintf "wss://%s:%d/v2" host port) in (* Use /v2 path *)
-    Lwt_log_core.info ~section ("Connecting to (auth) " ^ (Uri.to_string uri)) >>= fun () ->
     let tls_config = `Hostname host, `IP (Ipaddr.of_string_exn "104.16.248.94"), `Port port in
     let endpoint = `TLS tls_config in
     Websocket_lwt_unix.connect ~ctx endpoint uri
@@ -263,7 +268,6 @@ let connect (cfg : config) is_auth =
     let host = cfg.ws_host in
     let path = "/v2" in
     let uri = Uri.of_string (Printf.sprintf "wss://%s:%d%s" host port path) in
-    Lwt_log_core.info ~section ("Connecting to (public) " ^ (Uri.to_string uri)) >>= fun () ->
     Lwt_unix.getaddrinfo host (string_of_int port) [Unix.(AI_FAMILY PF_INET)] >>= fun addrs ->
     match addrs with
     | { Unix.ai_addr = Unix.ADDR_INET (ip_addr_from_dns, _); _ } :: _ ->
@@ -319,7 +323,6 @@ let make_subscribe_message ?req_id (cfg : config) channel =
     req_id;
   } in
   let content = custom_subscribe_message_to_yojson msg |> Json.to_string in
-  Lwt_log_core.debug ~section (Printf.sprintf "Sending subscribe message: %s" content) |> ignore;
   Frame.create ~content ()
 
 (* Frame Handlers *)
@@ -340,12 +343,14 @@ let handle_public_frame conn frame ~on_tick =
           if success then
             begin match JsonUtil.(member "result" json |> member "channel" |> to_string_option) with
             | Some "ticker" ->
-                let symbol = JsonUtil.(member "result" json |> member "symbol" |> to_string_option |> Option.value ~default:"unknown") in
-                Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%s): ticker for %s" req_id_str symbol)
-            | Some other_channel ->
-                 Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%s): channel %s (result format not fully parsed)" req_id_str other_channel)
+                (* Remove the unused variable warning by not binding the symbol *)
+                let _ = JsonUtil.(member "result" json |> member "symbol" |> to_string_option |> Option.value ~default:"unknown") in
+                Lwt.return_unit
+            | Some _ ->
+                (* Remove the unused variable warning by not binding other_channel *)
+                Lwt.return_unit
             | None ->
-                 Lwt_log_core.warning ~section (Printf.sprintf "Subscription successful (req_id=%s) but result or channel missing: %s" req_id_str frame.content)
+                Lwt.return_unit
             end
           else
             begin match error_opt with
@@ -357,7 +362,7 @@ let handle_public_frame conn frame ~on_tick =
           begin match Json.Util.(member "channel" json |> to_string_option) with
           | Some "ticker" ->
               begin match ticker_response_of_yojson json with
-              | Ok { type_ = ("snapshot" | "update") as msg_type; data = ticker_list; _ } ->
+              | Ok { type_ = ("snapshot" | "update"); data = ticker_list; _ } ->
                   (* Process each ticker entry in the list *) 
                   Lwt_list.iter_s (fun (ticker : ticker_data) -> (* Force the type here *) 
                     let symbol_str = ticker.symbol in (* Should be string now *) 
@@ -373,13 +378,6 @@ let handle_public_frame conn frame ~on_tick =
                       current_price = current_price; (* Set the new field *) 
                       ts;
                     } in
-                    (* Log the created tick event before passing it on *) 
-                    Lwt_log_core.debug ~section (Printf.sprintf "Processed %s tick: Symbol=%s, Bid=%s, Ask=%s, Mid=%s" 
-                      msg_type 
-                      tick_event.symbol 
-                      (Types.Primitives.Price.to_string tick_event.bid)
-                      (Types.Primitives.Price.to_string tick_event.ask)
-                      (Types.Primitives.Price.to_string tick_event.current_price)) >>= fun () ->
                     on_tick tick_event
                   ) ticker_list
               | Ok _ ->
@@ -390,7 +388,7 @@ let handle_public_frame conn frame ~on_tick =
           | Some "status" ->
               begin match status_response_of_yojson json with
               | Ok { data = [_status]; _ } ->
-                   Lwt_log_core.info ~section (Printf.sprintf "System Status: %s (Version: %s)" _status.system _status.version)
+                  Lwt.return_unit
               | Ok _ ->
                   Lwt_log_core.warning ~section ("Unexpected status data format: " ^ frame.content)
               | Error err ->
@@ -428,23 +426,15 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
               let error_opt = JsonUtil.(member "error" json |> to_string_option) in
               let req_id_str = Option.map string_of_int req_id_opt |> Option.value ~default:"N/A" in
 
-              if success then
-                begin match JsonUtil.(member "result" json |> member "channel" |> to_string_option) with
-                | Some "executions" ->
-                    (* Optionally extract more details from result if needed, e.g., maxratecount *)
-                    let maxratecount = JsonUtil.(member "result" json |> member "maxratecount" |> to_int_option) in
-                    Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%s): executions (maxratecount: %s)"
-                      req_id_str (Option.map string_of_int maxratecount |> Option.value ~default:"N/A"))
-                | Some other_channel ->
-                    Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%s): channel %s (result format not fully parsed)" req_id_str other_channel)
-                | None ->
-                    Lwt_log_core.warning ~section (Printf.sprintf "Subscription successful (req_id=%s) but result or channel missing: %s" req_id_str frame.content)
-                end
-              else
-                begin match error_opt with
-                | Some err -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s" req_id_str err)
-                | None -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s) with unknown error: %s" req_id_str frame.content)
-                end
+              (if not success then
+                  begin match error_opt with
+                  | Some err -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s" req_id_str err)
+                  | None -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s) with unknown error: %s" req_id_str frame.content)
+                  end
+               else
+                 Lwt.return_unit
+              ) >>= fun () ->
+              Lwt.return_unit
           | _ ->
               (* Handle data messages by channel *)
               let channel_opt = JsonUtil.(member "channel" json |> to_string_option) in
@@ -452,8 +442,6 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
               | Some "executions" ->
                   let msg_type = JsonUtil.(member "type" json |> to_string_option) in
                   let data_json = JsonUtil.(member "data" json |> to_list) in
-                  debug_log (Printf.sprintf "[PRIVATE] Processing %s message with %d execution items" 
-                    (Option.value msg_type ~default:"unknown") (List.length data_json)) >>= fun () ->
                   (* Process based on message type: snapshot or update *)
                   begin match msg_type with
                   | Some "snapshot" ->
@@ -469,12 +457,7 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                           let last_price_opt = JsonUtil.(member "last_price" order_json |> to_float_option) in
                           let last_qty_opt = JsonUtil.(member "last_qty" order_json |> to_float_option) in
                           
-                          (* Log extracted data for snapshot item *)
-                          debug_log (Printf.sprintf "[SnapshotItem] ID: %s, Type: %s, Status: %s, Symbol: %s, Side: %s"
-                            order_id exec_type order_status_str 
-                            (Option.value symbol_opt ~default:"N/A") 
-                            (Option.value side_str_opt ~default:"N/A")) >>= fun () ->
-                          
+                         
                           (* Internal State Update Logic *)
                           match exec_type with
                           | "canceled" ->
@@ -570,7 +553,11 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                                   debug_log log_msg_lwt >>= fun () ->
                                   if List.mem exec_type ["new"; "amended"; "restated"] then log_open_orders () else Lwt.return_unit
                               | _ -> Lwt.return_unit (* Skip non-buy/untracked or unknown side *)
-                      ) data_json
+                      ) data_json >>= fun () ->
+                      (* Signal that snapshot is processed *)
+                      Lwt_log_core.info ~section "Execution snapshot processed, resolving snapshot promise" >>= fun () ->
+                      Lwt.wakeup_later resolve_snapshot_processed ();
+                      Lwt.return_unit
                   | Some "update" ->
                       (* Update: Generate events AND update internal state *)
                       (* Step 1: Generate events *)
@@ -744,7 +731,7 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
               | Some "status" ->
                   begin match status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
-                      Lwt_log_core.info ~section (Printf.sprintf "System Status: %s (Version: %s)" _status.system _status.version)
+                      Lwt.return_unit
                   | Ok _ ->
                       Lwt_log_core.warning ~section ("Unexpected status data format: " ^ frame.content)
                   | Error err ->
@@ -788,7 +775,6 @@ let start (cfg : config) ~on_tick =
   in
   connect cfg false >>= fun conn ->
   let subscribe_msg = make_subscribe_message ~req_id:1 cfg `Ticker in
-  Lwt_log_core.info ~section "Subscribing to ticker feed" >>= fun () ->
   Websocket_lwt_unix.write conn subscribe_msg >>= fun () ->
   loop conn
 
