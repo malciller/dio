@@ -7,10 +7,12 @@ let setup_logging () =
   Lwt_log.add_rule "*" Lwt_log_core.Error; (* Default to Error level *)
   Lwt_log.add_rule "*" Lwt_log_core.Warning; (* Default to Error level *)
   (*Lwt_log.add_rule "engine.strategy" Lwt_log_core.Debug;  Allow Debug for strategy *) 
-  Lwt_log.add_rule "engine.router" Lwt_log_core.Info;   (* Allow Info for router *) 
-  Lwt_log.add_rule "engine.router" Lwt_log_core.Debug;   (* Allow Info for router *) 
-  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info;   (* Allow Info for WebSocket execution *)
-  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Debug;   (* Allow Info for WebSocket execution *)
+  Lwt_log.add_rule "engine.router" Lwt_log_core.Info;   
+  Lwt_log.add_rule "engine.router" Lwt_log_core.Debug;   
+  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info;   
+  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Debug;
+    Lwt_log.add_rule "engine.strategy" Lwt_log_core.Info;   
+  Lwt_log.add_rule "enginge.strategy" Lwt_log_core.Debug;      
   (* Lwt_log.add_rule "kraken_ws_feed" Lwt_log_core.Debug;    Allow Info for router *) 
   Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
 

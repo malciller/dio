@@ -1,3 +1,5 @@
+
+(* src/types/ringbuffer.ml *)
 type 'a t = {
   buf   : 'a option array;
   mask  : int;             (* capacity - 1, when cap is power-of-2 *)

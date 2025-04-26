@@ -1,4 +1,4 @@
-(* Kraken WebSocket Protocol Types *)
+(* src/types/kraken_protocol.ml*)
 
 (* Ensure necessary modules are available if types depend on them, e.g., Yojson.Safe *)
 module Json = Yojson.Safe
