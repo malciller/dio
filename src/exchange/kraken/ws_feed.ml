@@ -7,9 +7,18 @@ module JsonUtil = Yojson.Safe.Util
 
 (* Add at the top of the file, after module imports *)
 let snapshot_processed, resolve_snapshot_processed = Lwt.task ()
+let instruments_loaded, resolve_instruments_loaded = Lwt.task () (* New promise for instruments *)
 
 (* Expose a function to get the snapshot promise *)
 let wait_for_snapshot () = snapshot_processed
+(* Expose a function to get the instruments promise *)
+let wait_for_instruments () = instruments_loaded
+
+(* Storage for instrument precisions: symbol -> (price_precision, qty_precision) *)
+let instrument_precisions : (string, (int * int)) Hashtbl.t = Hashtbl.create 16
+
+(* Getter for instrument precisions *)
+let get_precisions symbol = Hashtbl.find_opt instrument_precisions symbol
 
 (* Configuration type - REMOVED, using Types.Core.config *)
 (* Order Tracking definitions moved below the 'order' type definition *)
@@ -29,6 +38,9 @@ type channel_params =
       order_status: bool;
       ratecounter: bool;
       token: string;
+    }
+  | Instrument of { (* New variant for instrument channel *)
+      snapshot: bool;
     }
 [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
@@ -84,6 +96,41 @@ type subscription_response = {
 type heartbeat_response = {
   channel: string; [@key "channel"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
+
+(* START: Instrument Channel Types *)
+(* Instrument Asset Data *)
+type asset_data = {
+  id: string; [@key "id"]
+  precision: int; [@key "precision"]
+  precision_display: int; [@key "precision_display"]
+  status: string; [@key "status"]
+  (* Add other fields if needed *)
+} [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
+
+(* Instrument Pair Data *)
+type pair_data = {
+  symbol: string; [@key "symbol"]
+  base: string; [@key "base"]
+  quote: string; [@key "quote"]
+  price_precision: int; [@key "price_precision"]
+  qty_precision: int; [@key "qty_precision"]
+  status: string; [@key "status"]
+  (* Add other fields if needed *)
+} [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
+
+(* Instrument Channel Data Container *)
+type instrument_data = {
+  assets: asset_data list; [@key "assets"]
+  pairs: pair_data list; [@key "pairs"]
+} [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
+
+(* Instrument Channel Response *)
+type instrument_response = {
+  channel: string; [@key "channel"]
+  type_: string; [@key "type"]
+  data: instrument_data; (* Note: data is an object here, not list *)
+} [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
+(* END: Instrument Channel Types *)
 
 (* Execution Report *)
 type fee = {
@@ -291,6 +338,8 @@ let custom_channel_params_to_yojson = function
         [("channel", `String "executions"); ("snap_trades", `Bool snap_trades); ("snap_orders", `Bool snap_orders);
          ("order_status", `Bool order_status); ("ratecounter", `Bool ratecounter); ("token", `String token)]
       )
+  | Instrument { snapshot } ->
+      `Assoc [("channel", `String "instrument"); ("snapshot", `Bool snapshot)]
 
 (* Custom Yojson converter for subscribe_message *)
 let custom_subscribe_message_to_yojson (msg : subscribe_message) : Json.t =
@@ -316,6 +365,10 @@ let make_subscribe_message ?req_id (cfg : config) channel =
           ratecounter = false;
           token = Option.get cfg.auth_token;
         }
+    | `Instrument ->
+        Instrument {
+          snapshot = true;
+        }
   in
   let msg = {
     method_ = "subscribe";
@@ -325,91 +378,114 @@ let make_subscribe_message ?req_id (cfg : config) channel =
   let content = custom_subscribe_message_to_yojson msg |> Json.to_string in
   Frame.create ~content ()
 
-(* Frame Handlers *)
-let handle_public_frame conn frame ~on_tick =
+
+let handle_public_frame conn (cfg : config) frame ~on_tick =
+  let section = Lwt_log_core.Section.make "kraken_ws_feed" in
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
-      Lwt.return_unit >>= fun () ->
-      let json = Json.from_string frame.content in
-      (* Check for method first (for subscription responses) *)
-      begin match Json.Util.(member "method" json |> to_string_option) with
-      | Some "subscribe" ->
-          (* Handle subscription response manually *)
-          let success = JsonUtil.(member "success" json |> to_bool_option |> Option.value ~default:false) in
-          let req_id_opt = JsonUtil.(member "req_id" json |> to_int_option) in
-          let error_opt = JsonUtil.(member "error" json |> to_string_option) in
-          let req_id_str = Option.map string_of_int req_id_opt |> Option.value ~default:"N/A" in
-
-          if success then
-            begin match JsonUtil.(member "result" json |> member "channel" |> to_string_option) with
-            | Some "ticker" ->
-                (* Remove the unused variable warning by not binding the symbol *)
-                let _ = JsonUtil.(member "result" json |> member "symbol" |> to_string_option |> Option.value ~default:"unknown") in
-                Lwt.return_unit
-            | Some _ ->
-                (* Remove the unused variable warning by not binding other_channel *)
-                Lwt.return_unit
-            | None ->
-                Lwt.return_unit
-            end
-          else
-            begin match error_opt with
-            | Some err -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s" req_id_str err)
-            | None -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s) with unknown error: %s" req_id_str frame.content)
-            end
-      | Some _ | None ->
-          (* Handle data messages by channel *)
-          begin match Json.Util.(member "channel" json |> to_string_option) with
-          | Some "ticker" ->
-              begin match ticker_response_of_yojson json with
-              | Ok { type_ = ("snapshot" | "update"); data = ticker_list; _ } ->
-                  (* Process each ticker entry in the list *) 
-                  Lwt_list.iter_s (fun (ticker : ticker_data) -> (* Force the type here *) 
-                    let symbol_str = ticker.symbol in (* Should be string now *) 
-                    let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
-                    let bid_price = float_to_price ~scale:8 ticker.bid in (* Use helper *) 
-                    let ask_price = float_to_price ~scale:8 ticker.ask in (* Use helper *) 
-                    let current_price = Types.Primitives.Price.midpoint bid_price ask_price in (* Calculate midpoint *) 
-                    let tick_event : Types.Event.tick = {
-                      src = "kraken";
-                      symbol = symbol_str; (* Use the string *) 
-                      bid = bid_price; 
-                      ask = ask_price;
-                      current_price = current_price; (* Set the new field *) 
-                      ts;
-                    } in
-                    on_tick tick_event
-                  ) ticker_list
-              | Ok _ ->
-                  Lwt_log_core.warning ~section ("Unexpected ticker data format: " ^ frame.content)
-              | Error err ->
-                  Lwt_log_core.error ~section (Printf.sprintf "Failed to parse ticker: %s. Payload: %s" err frame.content)
-              end
-          | Some "status" ->
-              begin match status_response_of_yojson json with
-              | Ok { data = [_status]; _ } ->
-                  Lwt.return_unit
-              | Ok _ ->
-                  Lwt_log_core.warning ~section ("Unexpected status data format: " ^ frame.content)
-              | Error err ->
-                  Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s" err)
-              end
-          | Some "heartbeat" ->
-              Lwt.return_unit
-          (* REMOVED the subscribe handling from here, it's handled above *)
+      Lwt.catch
+        (fun () ->
+          let json = Json.from_string frame.content in
+          (* Check for 'method' field to identify subscription responses *)
+          match JsonUtil.(member "method" json |> to_string_option) with
+          | Some "subscribe" ->
+              let success = JsonUtil.(member "success" json |> to_bool_option |> Option.value ~default:false) in
+              let req_id = JsonUtil.(member "req_id" json |> to_int_option |> Option.map string_of_int |> Option.value ~default:"N/A") in
+              let error = JsonUtil.(member "error" json |> to_string_option) in
+              if success then
+                let channel = JsonUtil.(member "result" json |> member "channel" |> to_string_option |> Option.value ~default:"unknown") in
+                Lwt_log_core.debug ~section (Printf.sprintf "Subscription successful (req_id=%s, channel=%s)" req_id channel)
+              else
+                let error_msg = Option.value error ~default:"unknown error" in
+                Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s. Payload: %s" req_id error_msg frame.content)
           | _ ->
-              Lwt_log_core.warning ~section ("Unhandled public channel/message: " ^ frame.content)
-          end
-    end (* Add this missing end keyword *)
+              (* Handle data messages by channel *)
+              match JsonUtil.(member "channel" json |> to_string_option) with
+              | Some "ticker" ->
+                  begin match ticker_response_of_yojson json with
+                  | Ok { type_ = ("snapshot" | "update"); data = ticker_list; _ } ->
+                      Lwt_list.iter_s
+                        (fun (ticker : ticker_data) ->
+                          let symbol = ticker.symbol in
+                          let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
+                          let bid_price = float_to_price ~scale:8 ticker.bid in
+                          let ask_price = float_to_price ~scale:8 ticker.ask in
+                          let current_price = Types.Primitives.Price.midpoint bid_price ask_price in
+                          let tick_event : Types.Event.tick = {
+                            src = "kraken";
+                            symbol;
+                            bid = bid_price;
+                            ask = ask_price;
+                            current_price;
+                            ts;
+                          } in
+                          on_tick tick_event)
+                        ticker_list
+                  | Ok _ ->
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected ticker data format: %s" frame.content)
+                  | Error err ->
+                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse ticker: %s. Payload: %s" err frame.content)
+                  end
+              | Some "status" ->
+                  begin match status_response_of_yojson json with
+                  | Ok { data = [_status]; _ } ->
+                      Lwt_log_core.debug ~section "Received valid status message"
+                  | Ok _ ->
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected status data format: %s" frame.content)
+                  | Error err ->
+                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s. Payload: %s" err frame.content)
+                  end
+              | Some "heartbeat" ->
+                  Lwt_log_core.debug ~section "Received heartbeat"
+              | Some "instrument" ->
+                  begin match instrument_response_of_yojson json with
+                  | Ok { type_ = ("snapshot" | "update"); data = { pairs; _ }; _ } ->
+                      Lwt_list.iter_s
+                        (fun (pair : pair_data) ->
+                          if List.mem pair.symbol cfg.symbols then
+                            let () = Hashtbl.replace instrument_precisions pair.symbol (pair.price_precision, pair.qty_precision) in
+                            Lwt_log_core.debug ~section
+                              (Printf.sprintf "Stored precisions for %s: price=%d, qty=%d"
+                                 pair.symbol pair.price_precision pair.qty_precision)
+                          else
+                            Lwt.return_unit)
+                        pairs
+                      >>= fun () ->
+                      if Lwt.state instruments_loaded = Lwt.Sleep then
+                        Lwt_log_core.info ~section "Instrument snapshot processed, resolving instruments promise" >>= fun () ->
+                        Lwt.wakeup_later resolve_instruments_loaded ();
+                        Lwt.return_unit
+                      else
+                        Lwt.return_unit
+                  | Ok _ ->
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected instrument data format: %s" frame.content)
+                  | Error err ->
+                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse instrument data: %s. Payload: %s" err frame.content)
+                  end
+              | Some unknown_channel ->
+                  Lwt_log_core.warning ~section
+                    (Printf.sprintf "Received unhandled channel '%s': %s" unknown_channel frame.content)
+              | None ->
+                  Lwt_log_core.warning ~section
+                    (Printf.sprintf "Missing or invalid channel in message: %s" frame.content)
+        )
+        (fun ex ->
+          Lwt_log_core.error ~section
+            (Printf.sprintf "Error processing text frame: %s. Payload: %s" (Printexc.to_string ex) frame.content)
+          >>= fun () ->
+          Lwt.return_unit)
   | Frame.Opcode.Ping ->
-      Lwt_log_core.debug ~section "Received Public Ping" >>= fun () ->
+      Lwt_log_core.debug ~section "Received ping" >>= fun () ->
       Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Pong ())
   | Frame.Opcode.Pong ->
-      Lwt_log_core.debug ~section "Received Public Pong"
+      Lwt_log_core.debug ~section "Received pong"
   | Frame.Opcode.Close ->
-      Lwt_log_core.info ~section "Received Public Close"
-  | _ ->
-      Lwt_log_core.warning ~section ("Unhandled public frame type: " ^ Frame.Opcode.to_string frame.Websocket.Frame.opcode)
+      Lwt_log_core.info ~section "Received close frame"
+  | opcode ->
+      Lwt_log_core.warning ~section
+        (Printf.sprintf "Received unhandled opcode: %s" (Frame.Opcode.to_string opcode))
+
+
 
 let handle_auth_frame conn (cfg: config) frame ~on_execution =
   match frame.Websocket.Frame.opcode with
@@ -742,7 +818,7 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
               | Some "" | None ->
                   Lwt_log_core.warning ~section (Printf.sprintf "Auth message with empty or missing channel: %s" frame.content)
               | Some other_channel ->
-                  Lwt_log_core.warning ~section (Printf.sprintf "Unhandled auth channel: %s. Content: %s" other_channel frame.content)
+                  Lwt_log_core.warning ~section (Printf.sprintf "Unhandled public channel: %s. Content: %s" other_channel frame.content)
         )
         (fun ex ->
           Lwt_log_core.error ~section
@@ -770,12 +846,14 @@ let get_open_buy_orders () : (string, order) Hashtbl.t = open_buy_orders
 let start (cfg : config) ~on_tick =
   let rec loop conn =
     Websocket_lwt_unix.read conn >>= fun frame ->
-    handle_public_frame conn frame ~on_tick >>= fun () ->
+    handle_public_frame conn cfg frame ~on_tick >>= fun () ->
     loop conn
   in
   connect cfg false >>= fun conn ->
-  let subscribe_msg = make_subscribe_message ~req_id:1 cfg `Ticker in
-  Websocket_lwt_unix.write conn subscribe_msg >>= fun () ->
+  let subscribe_ticker_msg = make_subscribe_message ~req_id:1 cfg `Ticker in
+  let subscribe_instrument_msg = make_subscribe_message ~req_id:3 cfg `Instrument in (* New subscription *)
+  Websocket_lwt_unix.write conn subscribe_ticker_msg >>= fun () ->
+  Websocket_lwt_unix.write conn subscribe_instrument_msg >>= fun () -> (* Send instrument subscription *)
   loop conn
 
 let start_executions (cfg : config) ~on_execution =

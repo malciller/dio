@@ -11,6 +11,12 @@
       "qty": "0.1",
       "grid_interval": "10.0",
       "sell_mult": "0.99"
+    },
+    {
+      "symbol": "TRX/USD",
+      "qty": "0.1",
+      "grid_interval": "10.0",
+      "sell_mult": "0.99"
     }
   ],
   "debounce_ms": 1000,

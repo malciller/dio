@@ -44,7 +44,7 @@ let main () =
     Lwt.catch
       (fun () ->
         (* Read config file *)
-        match read_config "config.json" with
+        match read_config "kraken_grid_config.json" with
         | Error msg ->
             Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.config") msg >>= fun () ->
             Lwt.fail_with msg

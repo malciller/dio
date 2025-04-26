@@ -48,16 +48,28 @@ module State = struct
 
   (* Create a new order command *)
   let create_order ~symbol ~side ~price ~qty =
-    Add {
-      dst = "kraken";
-      client_id = "grid-" ^ Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float);
-      symbol;
-      side;
-      price;
-      qty = Qty.of_string_exn ~scale:8 qty;
-      tif = GTC;
-      tags = [`Grid];
-    }
+    match K.get_precisions symbol with
+    | Some (price_prec, qty_prec) ->
+        let price_str = Price.to_string price in
+        let qty_str = Qty.to_string qty in
+        (* Reformat price and qty based on fetched precision *) 
+        let formatted_price = Price.of_string_exn ~scale:price_prec price_str in
+        let formatted_qty = Qty.of_string_exn ~scale:qty_prec qty_str in
+        Add {
+          dst = "kraken";
+          client_id = "grid-" ^ Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float);
+          symbol;
+          side;
+          price = formatted_price;
+          qty = formatted_qty;
+          tif = GTC;
+          tags = [`Grid];
+        }
+    | None -> 
+        (* Log error and potentially raise an exception or return an error type *)
+        let () = Logs.err (fun m -> m "Precisions not found for symbol: %s. Cannot create order." symbol) in
+        (* Decide on error handling: For now, let's cause a failure *) 
+        failwith ("Precision data missing for symbol: " ^ symbol)
 
   (* Update open orders based on execution *)
   let handle_execution (event : market_event) =
@@ -146,13 +158,13 @@ module State = struct
       | Some tick ->
           (* Create a buy order slightly below current bid *)
           let bid_float = Price.to_string tick.bid |> float_of_string in
-          let buy_price = Price.of_string_exn ~scale:8 (Printf.sprintf "%.8f" (bid_float *. 0.995)) in
-          let buy_cmd = create_order ~symbol ~side:Buy ~price:buy_price ~qty:"0.001" in
+          let buy_price = Price.of_string_exn ~scale:8 (Printf.sprintf "%.8f" (bid_float *. 0.995)) in (* Use initial scale for calculation *)
+          let buy_cmd = create_order ~symbol ~side:Buy ~price:buy_price ~qty:(Qty.of_string_exn ~scale:8 "0.001") in (* Use Qty type *)
           
           (* Create a sell order slightly above current ask *)
           let ask_float = Price.to_string tick.ask |> float_of_string in
-          let sell_price = Price.of_string_exn ~scale:8 (Printf.sprintf "%.8f" (ask_float *. 1.005)) in
-          let sell_cmd = create_order ~symbol ~side:Sell ~price:sell_price ~qty:"0.001" in
+          let sell_price = Price.of_string_exn ~scale:8 (Printf.sprintf "%.8f" (ask_float *. 1.005)) in (* Use initial scale for calculation *)
+          let sell_cmd = create_order ~symbol ~side:Sell ~price:sell_price ~qty:(Qty.of_string_exn ~scale:8 "0.001") in (* Use Qty type *)
           
           (* Push both orders to the command buffer *)
           (if not (Ringbuffer.push cmd_buffer buy_cmd) then
@@ -197,6 +209,13 @@ let start cfg ~tick_buffer ~cmd_buffer ~exec_buffer =
   K.wait_for_snapshot () >>= fun () ->
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     "Execution snapshot received, initializing strategy state..." >>= fun () ->
+
+  (* Wait for instrument data to be loaded *) 
+  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
+    "Waiting for instrument data from Kraken..." >>= fun () ->
+  K.wait_for_instruments () >>= fun () ->
+  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
+    "Instrument data received." >>= fun () ->
 
   (* Initialize state using the config *)
   State.initialize_orders cfg >>= fun () -> (* Explicitly initialize state *)
