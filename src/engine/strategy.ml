@@ -32,11 +32,10 @@ module State = struct
   (* Update price info for a symbol *)
   let update_price (tick : Event.tick) =
     Hashtbl.replace price_info tick.symbol tick;
-    Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy") 
-      (Printf.sprintf "Updated price for %s: bid=%s ask=%s" 
+    Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
+      (Printf.sprintf "Updated price for %s: current_price=%s" 
         tick.symbol 
-        (Price.to_string tick.bid)
-        (Price.to_string tick.ask))
+        (Price.to_string tick.current_price))
 
   (* Get latest price info for a symbol *)
   let get_price symbol = Hashtbl.find_opt price_info symbol
@@ -96,16 +95,20 @@ module State = struct
     | _ -> Lwt.return_unit
 
   (* Initialize order state from exchange *)
-  let initialize_orders () =
+  let initialize_orders (cfg : Types.Core.config) =
+    (* Initialize all configured symbols to false *) 
+    List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) cfg.symbols;
+    
+    (* Fetch existing orders *) 
     let exchange_orders = K.get_open_buy_orders () in
     Hashtbl.clear open_orders;
     (* Process each order and collect logging promises *)
     let log_promises = Hashtbl.fold (fun order_id (order : K.order) promises -> (* USE NEW TYPE *)
       let log_promise = 
         let symbol_str = order.order_symbol in (* Use field from K.order *)
-        if symbol_str <> "N/A" then (
+        if symbol_str <> "N/A" && List.mem symbol_str cfg.symbols then ( (* Only process orders for configured symbols *) 
           Hashtbl.replace open_orders order_id order;
-          Hashtbl.replace initialized_symbols symbol_str true;
+          Hashtbl.replace initialized_symbols symbol_str true; (* Set to true if existing order found *) 
           Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
             (Printf.sprintf "Loaded existing order %s for %s" order_id symbol_str)
         ) else (
@@ -188,6 +191,9 @@ module State = struct
 end
 
 let start cfg ~tick_buffer ~cmd_buffer ~exec_buffer =
+  (* Initialize state using the config *)
+  State.initialize_orders cfg >>= fun () -> (* Explicitly initialize state *)
+
   (* Log strategy startup with config info *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     (Printf.sprintf "Starting grid strategy for symbols: [%s]" (String.concat ", " cfg.symbols)) >>= fun () ->
@@ -201,17 +207,27 @@ let start cfg ~tick_buffer ~cmd_buffer ~exec_buffer =
         loop () (* Continue processing executions *)
     | None ->
         (* Then process any ticks *)
-        match Ringbuffer.pop_opt tick_buffer with
-        | Some tick -> 
-            (* Update price info *)
-            State.update_price tick >>= fun () ->
-            (* Sync open orders periodically *)
-            State.sync_open_orders () >>= fun () ->
-            (* Create initial orders if none exist *)
-            State.create_initial_orders tick.symbol cmd_buffer >>= fun () ->
-            loop ()
-        | None -> 
-            Lwt_unix.sleep 0.01 >>= loop (* Sleep briefly if both buffers empty *)
-    end
+        (match Ringbuffer.peek_opt tick_buffer with
+        | Some (tick : Event.tick) ->
+            ignore (Ringbuffer.pop_opt tick_buffer); (* ALWAYS pop the peeked tick *)
+            let should_update =
+              match State.get_price tick.symbol with
+              | Some prev_tick ->
+                  not (prev_tick.bid = tick.bid && prev_tick.ask = tick.ask)
+              | None -> true
+            in
+            if should_update then (
+              (* Only update state if price changed *)
+              State.update_price tick >>= fun () ->
+              State.sync_open_orders () >>= fun () ->
+              State.create_initial_orders tick.symbol cmd_buffer >>= fun () ->
+              loop ()
+            ) else (
+              (* Price unchanged, state not updated, just loop *)
+              loop ()
+            )
+        | None -> Lwt_unix.sleep 0.01 >>= loop (* Sleep briefly if buffer empty *)
+        )
+    end (* End of outer begin for exec/tick processing *)
   in
   loop ()

@@ -1,5 +1,4 @@
 (* src/engine/engine.ml *)
-open Lwt.Infix  (* for >>= *)
 open Types (* For Event.tick *)
 open Types.Core (* For market_event, order_cmd, config, strategy, router *)
 
@@ -8,8 +7,6 @@ module Feed = Feed
 module Kraken = Kraken
 
 
-(* Define the callbacks the engine needs (keep this here) *)
-(* type callbacks = { ... } -- No longer used directly by run *)
 
 (* Helper: Push a single tick onto the buffer, logging if full *)
 (* Extracted for testability *) 
@@ -37,8 +34,6 @@ let start_feed (cfg: config) (tick_buffer: Event.tick Ringbuffer.t) (exec_buffer
 
 (* Main run function that orchestrates all components *)
 let run ~strategy ~router (cfg: config) =
-  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine") "Starting engine..." >>= fun () ->
-  
   (* Create the ring buffers *)
   let tick_buffer = Ringbuffer.create 1024 in
   let exec_buffer = Ringbuffer.create 1024 in 
@@ -52,5 +47,4 @@ let run ~strategy ~router (cfg: config) =
     ~tick_buffer
     ~exec_buffer
     ~cmd_buffer
-    cfg >>= fun () ->
-  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine") "Engine started successfully"
+    cfg

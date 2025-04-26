@@ -6,8 +6,8 @@ open Lwt.Infix  (* for >>= *)
 open Types.Core (* Use Types.Core for config, events, etc. *)
 open Types.Primitives (* For Price and Qty *)
 
-let start _cfg ~cmd_buffer ~exec_buffer =
-  (* TODO: Dispatch commands from cmd_buffer to appropriate exchange handler *)
+let start _cfg ~cmd_buffer ~exec_buffer:_ =
+  (* Process commands from cmd_buffer and route to appropriate exchange handler *)
   let rec cmd_loop () =
     match Types.Ringbuffer.pop_opt cmd_buffer with
     | Some cmd ->
@@ -41,18 +41,5 @@ let start _cfg ~cmd_buffer ~exec_buffer =
     | None -> 
         Lwt_unix.sleep 0.01 >>= cmd_loop (* Sleep briefly if buffer is empty *)
   in
-
-  (* TODO: Optionally process execution reports from exec_buffer *)
-  let rec exec_loop () =
-    match Types.Ringbuffer.pop_opt exec_buffer with
-    | Some event ->
-        Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router")
-          (Printf.sprintf "Router received exec event: %s" (Yojson.Safe.to_string (market_event_to_yojson event)))
-        >>= fun () -> 
-        (* TODO: Handle execution event (e.g., update internal state) *) 
-        exec_loop ()
-    | None -> 
-        Lwt_unix.sleep 0.01 >>= exec_loop (* Sleep briefly if buffer is empty *)
-  in
   
-  Lwt.join [cmd_loop () ; exec_loop ()] (* Run both loops concurrently *)
+  cmd_loop () (* Run the command processing loop *)

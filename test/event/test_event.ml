@@ -17,11 +17,15 @@ let price = P.Price.of_string_exn ~scale:2
 let qty   = P.Qty.  of_string_exn ~scale:8
 
 (* Sample values ----------------------------------------------------- *)
-let sample_tick : E.tick = {
+let sample_tick : E.tick = 
+  let bid_price = price "65000.12" in
+  let ask_price = price "65001.34" in
+  {
   src    = "kraken";
   symbol = "BTC/USD";
-  bid    = price "65000.12";
-  ask    = price "65001.34";
+  bid    = bid_price;
+  ask    = ask_price;
+  current_price = P.Price.midpoint bid_price ask_price;
   ts     = 1678886400123456L; (* Example timestamp *)
 }
 

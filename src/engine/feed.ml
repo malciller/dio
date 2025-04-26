@@ -18,7 +18,6 @@ module Make (W : WS) = struct
   let section = Lwt_log_core.Section.make "engine.feed"
 
   let start (cfg : Types.Core.config) ~on_tick =
-    Lwt_log_core.info ~section "Starting WebSocket feed..." >>= fun () ->
     Lwt.catch
       (fun () -> W.start cfg ~on_tick) (* W.start expects Core.config *)
       (fun exn ->
@@ -28,7 +27,6 @@ module Make (W : WS) = struct
   let start_executions (cfg : Types.Core.config) ~on_execution =
     match cfg.auth_token with
     | Some _ ->
-        Lwt_log_core.info ~section "Auth token found, starting execution feed..." >>= fun () ->
         Lwt.catch
           (fun () -> W.start_executions cfg ~on_execution) (* W.start_executions expects Core.config *)
           (fun exn ->

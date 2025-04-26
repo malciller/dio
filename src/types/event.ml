@@ -11,6 +11,7 @@ type tick = {
   symbol : string;      (* normalized, e.g. "BTC/USD" *)
   bid    : Price.t;
   ask    : Price.t;
+  current_price : Price.t; (* Midpoint of bid/ask *)
   ts     : timestamp;   (* µs since epoch *)
 }
 [@@deriving yojson { exn = true }]

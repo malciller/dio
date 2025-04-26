@@ -125,7 +125,6 @@ let float_to_qty ~scale f =
 
 let section = Lwt_log_core.Section.make "kraken_ws_feed"
 
-(* Helper Functions from Example *)
 let safe_string json key default = JsonUtil.(member key json |> to_string_option |> Option.value ~default)
 let safe_float json key default = JsonUtil.(member key json |> to_float_option |> Option.value ~default)
 let debug_log msg = Lwt_log_core.debug ~section msg
@@ -136,16 +135,12 @@ let parse_order_side = function
   | "sell" -> Some Sell
   | _ -> None
 
-(* Order Status Parsing (REMOVED - Using Types.Core.order_state now) *)
-(* type order_status = Pending | Open | Filled | Canceled | Expired | Rejected | Amended | Restated | Status | UnknownStatus *)
-(* let parse_order_status = function ... *)
 
-(* Example Order Type *)
 type order = {
   order_id : string;
   order_symbol : string;
   side : Types.Core.side option;
-  status : Types.Core.order_state; (* Updated type to use Core.order_state *)
+  status : Types.Core.order_state; 
   limit_price : float;
 }
 
@@ -331,39 +326,60 @@ let make_subscribe_message ?req_id (cfg : config) channel =
 let handle_public_frame conn frame ~on_tick =
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
-      Lwt_log_core.debug ~section ("Public frame received: " ^ frame.content) >>= fun () ->
+      Lwt.return_unit >>= fun () ->
       let json = Json.from_string frame.content in
-      (* Check for method first (for subscription responses) *) 
-      begin match Json.Util.(member "method" json |> to_string_option) with 
-      | Some "subscribe" -> 
-          (* Handle subscription response *) 
-          begin match subscription_response_of_yojson json with
-          | Ok { success = true; req_id = Some id; result = Some res; _ } ->
-              let subscribed_channel = Json.Util.(member "channel" res |> to_string_option |> Option.value ~default:"unknown") in
-              Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%d): %s" id subscribed_channel)
-          | Ok { success = false; req_id = Some id; error = Some err; _ } ->
-              Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%d): %s" id err)
-          | _ ->
-              Lwt_log_core.warning ~section ("Unhandled subscription response format: " ^ frame.content)
-          end
-      | Some _ | None -> 
-          (* Handle data messages by channel *) 
+      (* Check for method first (for subscription responses) *)
+      begin match Json.Util.(member "method" json |> to_string_option) with
+      | Some "subscribe" ->
+          (* Handle subscription response manually *)
+          let success = JsonUtil.(member "success" json |> to_bool_option |> Option.value ~default:false) in
+          let req_id_opt = JsonUtil.(member "req_id" json |> to_int_option) in
+          let error_opt = JsonUtil.(member "error" json |> to_string_option) in
+          let req_id_str = Option.map string_of_int req_id_opt |> Option.value ~default:"N/A" in
+
+          if success then
+            begin match JsonUtil.(member "result" json |> member "channel" |> to_string_option) with
+            | Some "ticker" ->
+                let symbol = JsonUtil.(member "result" json |> member "symbol" |> to_string_option |> Option.value ~default:"unknown") in
+                Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%s): ticker for %s" req_id_str symbol)
+            | Some other_channel ->
+                 Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%s): channel %s (result format not fully parsed)" req_id_str other_channel)
+            | None ->
+                 Lwt_log_core.warning ~section (Printf.sprintf "Subscription successful (req_id=%s) but result or channel missing: %s" req_id_str frame.content)
+            end
+          else
+            begin match error_opt with
+            | Some err -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s" req_id_str err)
+            | None -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s) with unknown error: %s" req_id_str frame.content)
+            end
+      | Some _ | None ->
+          (* Handle data messages by channel *)
           begin match Json.Util.(member "channel" json |> to_string_option) with
           | Some "ticker" ->
               begin match ticker_response_of_yojson json with
               | Ok { type_ = ("snapshot" | "update") as msg_type; data = ticker_list; _ } ->
-                  Lwt_log_core.debug ~section (Printf.sprintf "Received %s ticker data (%d entries)" msg_type (List.length ticker_list)) >>= fun () ->
                   (* Process each ticker entry in the list *) 
                   Lwt_list.iter_s (fun (ticker : ticker_data) -> (* Force the type here *) 
                     let symbol_str = ticker.symbol in (* Should be string now *) 
                     let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
+                    let bid_price = float_to_price ~scale:8 ticker.bid in (* Use helper *) 
+                    let ask_price = float_to_price ~scale:8 ticker.ask in (* Use helper *) 
+                    let current_price = Types.Primitives.Price.midpoint bid_price ask_price in (* Calculate midpoint *) 
                     let tick_event : Types.Event.tick = {
                       src = "kraken";
                       symbol = symbol_str; (* Use the string *) 
-                      bid = float_to_price ~scale:8 ticker.bid; (* Should work now *) 
-                      ask = float_to_price ~scale:8 ticker.ask;
+                      bid = bid_price; 
+                      ask = ask_price;
+                      current_price = current_price; (* Set the new field *) 
                       ts;
                     } in
+                    (* Log the created tick event before passing it on *) 
+                    Lwt_log_core.debug ~section (Printf.sprintf "Processed %s tick: Symbol=%s, Bid=%s, Ask=%s, Mid=%s" 
+                      msg_type 
+                      tick_event.symbol 
+                      (Types.Primitives.Price.to_string tick_event.bid)
+                      (Types.Primitives.Price.to_string tick_event.ask)
+                      (Types.Primitives.Price.to_string tick_event.current_price)) >>= fun () ->
                     on_tick tick_event
                   ) ticker_list
               | Ok _ ->
@@ -381,13 +397,12 @@ let handle_public_frame conn frame ~on_tick =
                   Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s" err)
               end
           | Some "heartbeat" ->
-              Lwt_log_core.debug ~section "Received Public Heartbeat" >>= fun () ->
-              Lwt.return_unit (* Add explicit return *)
+              Lwt.return_unit
           (* REMOVED the subscribe handling from here, it's handled above *)
           | _ ->
               Lwt_log_core.warning ~section ("Unhandled public channel/message: " ^ frame.content)
           end
-      end
+    end (* Add this missing end keyword *)
   | Frame.Opcode.Ping ->
       Lwt_log_core.debug ~section "Received Public Ping" >>= fun () ->
       Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Pong ())
@@ -401,25 +416,35 @@ let handle_public_frame conn frame ~on_tick =
 let handle_auth_frame conn (cfg: config) frame ~on_execution =
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
-      Lwt_log_core.debug ~section (Printf.sprintf "Auth frame received: %s" frame.content) >>= fun () ->
       let json = Json.from_string frame.content in
       Lwt.catch
         (fun () ->
           (* First, check if this is a subscription response by looking at the 'method' field *)
           match JsonUtil.(member "method" json |> to_string_option) with
           | Some "subscribe" ->
-              (* Handle subscription response *)
-              begin match subscription_response_of_yojson json with
-              | Ok { success = true; req_id; result = Some res; _ } ->
-                  let subscribed_channel = JsonUtil.(member "channel" res |> to_string_option |> Option.value ~default:"unknown") in
-                  Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%s): %s" 
-                    (Option.map string_of_int req_id |> Option.value ~default:"N/A") subscribed_channel)
-              | Ok { success = false; req_id; error = Some err; _ } ->
-                  Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s" 
-                    (Option.map string_of_int req_id |> Option.value ~default:"N/A") err)
-              | _ ->
-                  Lwt_log_core.error ~section ("Invalid subscription response: " ^ frame.content)
-              end
+              (* Handle subscription response manually *)
+              let success = JsonUtil.(member "success" json |> to_bool_option |> Option.value ~default:false) in
+              let req_id_opt = JsonUtil.(member "req_id" json |> to_int_option) in
+              let error_opt = JsonUtil.(member "error" json |> to_string_option) in
+              let req_id_str = Option.map string_of_int req_id_opt |> Option.value ~default:"N/A" in
+
+              if success then
+                begin match JsonUtil.(member "result" json |> member "channel" |> to_string_option) with
+                | Some "executions" ->
+                    (* Optionally extract more details from result if needed, e.g., maxratecount *)
+                    let maxratecount = JsonUtil.(member "result" json |> member "maxratecount" |> to_int_option) in
+                    Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%s): executions (maxratecount: %s)"
+                      req_id_str (Option.map string_of_int maxratecount |> Option.value ~default:"N/A"))
+                | Some other_channel ->
+                    Lwt_log_core.info ~section (Printf.sprintf "Subscription successful (req_id=%s): channel %s (result format not fully parsed)" req_id_str other_channel)
+                | None ->
+                    Lwt_log_core.warning ~section (Printf.sprintf "Subscription successful (req_id=%s) but result or channel missing: %s" req_id_str frame.content)
+                end
+              else
+                begin match error_opt with
+                | Some err -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s" req_id_str err)
+                | None -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s) with unknown error: %s" req_id_str frame.content)
+                end
           | _ ->
               (* Handle data messages by channel *)
               let channel_opt = JsonUtil.(member "channel" json |> to_string_option) in
@@ -726,7 +751,7 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                       Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s" err)
                   end
               | Some "heartbeat" ->
-                  Lwt_log_core.debug ~section "Received Auth Heartbeat"
+                  Lwt.return_unit
               | Some "" | None ->
                   Lwt_log_core.warning ~section (Printf.sprintf "Auth message with empty or missing channel: %s" frame.content)
               | Some other_channel ->

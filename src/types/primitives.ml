@@ -18,8 +18,10 @@ module Fixed : sig
   (* -- JSON helpers for ppx_deriving_yojson ------------------------------ *)
   val to_yojson : t -> Yojson.Safe.t
   val of_yojson : Yojson.Safe.t -> (t, string) result
-end = struct
-  [@@@warning "-32"]                (* silence “unused” inside this module *)
+
+  (* Calculate midpoint *)
+  val midpoint : t -> t -> t
+end = struct              (* silence "unused" inside this module *)
 
   type t = { raw : int64; scale : int }
 
@@ -71,6 +73,14 @@ end = struct
         in
         Ok (of_string_exn ~scale s)
     | _ -> Error "Fixed.of_yojson: expected JSON string"
+
+  (* Calculate midpoint *)
+  let midpoint p1 p2 =
+    if p1.scale <> p2.scale then
+      invalid_arg "Fixed.midpoint: scales must match";
+    let open Int64 in
+    let avg_raw = div (add p1.raw p2.raw) 2L in
+    { raw = avg_raw; scale = p1.scale }
 end
 
 (* Aliases for clarity – they inherit to_yojson/of_yojson *)

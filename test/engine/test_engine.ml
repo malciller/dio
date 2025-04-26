@@ -9,12 +9,18 @@ let test_buffer_push_pop _switch () =
   let buffer = Types.Ringbuffer.create 4 in
 
   (* two example ticks *)
-  let tick1 = { src="t"; symbol="BTC/USD";
-                bid=Price.of_string_exn ~scale:2 "100.00";
-                ask=Price.of_string_exn ~scale:2 "100.10"; ts=0L } in
-  let tick2 = { src="t"; symbol="ETH/USD";
-                bid=Price.of_string_exn ~scale:2 "50.00";
-                ask=Price.of_string_exn ~scale:2 "50.05"; ts=1L } in
+  let tick1 = 
+    let bid = Price.of_string_exn ~scale:2 "100.00" in
+    let ask = Price.of_string_exn ~scale:2 "100.10" in
+    { src="t"; symbol="BTC/USD"; 
+      bid; ask; current_price = Price.midpoint bid ask; ts=0L }
+  in
+  let tick2 =
+    let bid = Price.of_string_exn ~scale:2 "50.00" in
+    let ask = Price.of_string_exn ~scale:2 "50.05" in
+    { src="t"; symbol="ETH/USD"; 
+      bid; ask; current_price = Price.midpoint bid ask; ts=1L }
+  in
 
   Alcotest.(check bool) "push1" true (Types.Ringbuffer.push buffer tick1);
   Alcotest.(check bool) "push2" true (Types.Ringbuffer.push buffer tick2);
@@ -34,5 +40,5 @@ let test_buffer_push_pop _switch () =
 let () =
   Lwt_main.run
     (Alcotest_lwt.run "Engine"
-       [ "Ringbuffer",
+       [ "Engine - Create Ringbuffer",
          [ Alcotest_lwt.test_case "push-pop" `Quick test_buffer_push_pop ] ])

@@ -101,10 +101,16 @@ let test_callbacks_passed_down _switch () =
   Mock_feed.start_executions test_config_with_auth ~on_execution:on_exec_test >>= fun () ->
 
   (* Manually invoke the callbacks stored by the mock *) 
-  let sample_tick = { src="test"; symbol="X"; bid=Price.of_string_exn ~scale:1 "1"; ask=Price.of_string_exn ~scale:1 "1"; ts=0L } in
   let sample_exec = [ Ack { order_id = "o"; client_id = "c"; state = Open; ts = 0L } ] in
 
-  !(Mock_state.last_on_tick_callback) sample_tick >>= fun () ->
+  (* Create a dummy tick for the type check, even though we don't use its value *) 
+  let dummy_tick_for_callback = 
+    let bid = Price.of_string_exn ~scale:1 "1" in
+    let ask = Price.of_string_exn ~scale:1 "1" in
+    { src="test"; symbol="X"; bid; ask; current_price = Price.midpoint bid ask; ts=0L }
+  in
+
+  !(Mock_state.last_on_tick_callback) dummy_tick_for_callback >>= fun () ->
   !(Mock_state.last_on_exec_callback) sample_exec >>= fun () ->
 
   Alcotest.(check bool "on_tick callback was invoked via mock") true !tick_received;

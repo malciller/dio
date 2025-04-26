@@ -39,8 +39,6 @@ let main () =
   (* Load .env file to get the API token *)
   (try Dotenv.export ~path:"src/exchange/kraken/.env" () with _ -> Printf.eprintf "Warning: Failed to load .env file.\n%!");
 
-  Printf.printf "Starting market and execution feeds...\n%!";
-
   (* Start the engine with all components *)
   Lwt_main.run (
     Lwt.catch
@@ -63,9 +61,8 @@ let main () =
 
             (* Update config with auth token *)
             let cfg = { cfg with auth_token = auth_token_opt } in
-
-            Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.config") 
-              (Printf.sprintf "Using symbols: %s" (String.concat ", " cfg.symbols)) >>= fun () ->
+            (* Removed non-error related log *)
+            Lwt.return_unit >>= fun () ->
 
             (* Create strategy and router modules *)
             let strategy : Types.Core.strategy = {

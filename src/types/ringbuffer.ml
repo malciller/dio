@@ -35,3 +35,9 @@ let pop_opt q =
         q.buf.(idx) <- None;
         q.tail <- q.tail + 1;
         Some v
+
+let peek_opt q =
+  if is_empty q then None
+  else
+    let idx = q.tail land q.mask in
+    q.buf.(idx)
