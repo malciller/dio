@@ -4,7 +4,7 @@ open Primitives
 type asset_cfg = {
   symbol        : symbol;
   qty           : Qty.t;
-  grid_interval : Price.t;
+  grid_interval : Decimal.t;
   sell_mult     : Decimal.t;  (* e.g. 0.999 to sell almost all *)
 } [@@deriving yojson { exn = true }]   (* generates _to_yojson + _of_yojson_exn *)
 

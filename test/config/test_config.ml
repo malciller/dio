@@ -15,7 +15,7 @@ let asset_cfg_sample =
   let open Primitives in
   { Config.symbol        = "BTC/USD"
   ; qty                  = Qty.of_string_exn   ~scale:8 "0.01000000"
-  ; grid_interval        = Price.of_string_exn ~scale:2 "100.00"
+  ; grid_interval        = Decimal.of_string "1.0" (* Represents 1% *)
   ; sell_mult            = Decimal.of_string "0.999"
   }
 

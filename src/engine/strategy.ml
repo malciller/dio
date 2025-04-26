@@ -50,7 +50,7 @@ module State = struct
   let create_order ~symbol ~side ~price ~qty =
     Add {
       dst = "kraken";
-      client_id = "strategy-" ^ Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float);
+      client_id = "grid-" ^ Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float);
       symbol;
       side;
       price;
