@@ -17,7 +17,7 @@ let push_tick_to_buffer tick_buffer tick =
   else
     Lwt.return_unit
 
-(* Helper: Push a list of execution events onto the buffer, logging if full *)
+(* Helper: Push a list of execution events onto the buffer, logging if full *) 
 (* Extracted for testability *) 
 let push_execs_to_buffer exec_buffer events =
   List.iter (fun event ->

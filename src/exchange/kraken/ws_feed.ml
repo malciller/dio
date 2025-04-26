@@ -9,6 +9,21 @@ module JsonUtil = Yojson.Safe.Util
 let snapshot_processed, resolve_snapshot_processed = Lwt.task ()
 let instruments_loaded, resolve_instruments_loaded = Lwt.task () (* New promise for instruments *)
 
+(* Flags to track snapshot completion *)
+let executions_snapshot_done = ref false
+let open_orders_snapshot_done = ref false
+
+(* Function to check and resolve the main snapshot promise *) 
+let check_and_resolve_snapshot_promise () =
+  let section = Lwt_log_core.Section.make "kraken_ws_feed" in (* Define section here *) 
+  if !executions_snapshot_done && !open_orders_snapshot_done then (
+    if Lwt.state snapshot_processed = Lwt.Sleep then (
+      Lwt_log_core.info ~section "Both execution and openOrders snapshots processed, resolving main snapshot promise" >>= fun () ->
+      Lwt.wakeup_later resolve_snapshot_processed ();
+      Lwt.return_unit
+    ) else Lwt.return_unit (* Already resolved *)
+  ) else Lwt.return_unit (* Not all snapshots done yet *)
+
 (* Expose a function to get the snapshot promise *)
 let wait_for_snapshot () = snapshot_processed
 (* Expose a function to get the instruments promise *)
@@ -18,7 +33,13 @@ let wait_for_instruments () = instruments_loaded
 let instrument_precisions : (string, (int * int)) Hashtbl.t = Hashtbl.create 16
 
 (* Getter for instrument precisions *)
-let get_precisions symbol = Hashtbl.find_opt instrument_precisions symbol
+let get_precisions symbol : (int * int) option = Hashtbl.find_opt instrument_precisions symbol
+
+(* NEW Getter specifically for price precision *)
+let get_price_precision symbol : int option =
+  match Hashtbl.find_opt instrument_precisions symbol with
+  | Some (price_prec, _) -> Some price_prec
+  | None -> None
 
 (* Configuration type - REMOVED, using Types.Core.config *)
 (* Order Tracking definitions moved below the 'order' type definition *)
@@ -191,10 +212,12 @@ let parse_order_side = function
 
 type order = {
   order_id : string;
+  client_id : string option; (* Mapped from userref *)
   order_symbol : string;
   side : Types.Core.side option;
-  status : Types.Core.order_state; 
+  status : Types.Core.order_state;
   limit_price : float;
+  qty: float; (* Mapped from vol *)
 }
 
 (* Order Tracking - Define Hashtables after 'order' type *)
@@ -532,6 +555,7 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                           let limit_price_opt = JsonUtil.(member "limit_price" order_json |> to_float_option) in
                           let last_price_opt = JsonUtil.(member "last_price" order_json |> to_float_option) in
                           let last_qty_opt = JsonUtil.(member "last_qty" order_json |> to_float_option) in
+                          let _order_qty_opt = JsonUtil.(member "order_qty" order_json |> to_float_option) in (* Extract order_qty (unused here) *)
                           
                          
                           (* Internal State Update Logic *)
@@ -595,7 +619,27 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                                         | None -> Option.value limit_price_opt ~default:0.0)
                                     | _ -> Option.value limit_price_opt ~default:0.0
                                   in
-                                  let order = { order_id; order_symbol = symbol; side = side_opt; status; limit_price } in
+                                  let qty = (* Get quantity, prioritize existing if amending/new, else use snapshot *)
+                                    match exec_type with
+                                    | "new" ->
+                                        (match Hashtbl.find_opt pending_orders order_id with
+                                        | Some o -> o.qty (* Use qty from pending order *)
+                                        | None -> Option.value _order_qty_opt ~default:0.0)
+                                    | "amended" ->
+                                        (match Hashtbl.find_opt open_buy_orders order_id with
+                                        | Some o -> Option.value _order_qty_opt ~default:o.qty (* Use new qty, fallback to existing *)
+                                        | None -> Option.value _order_qty_opt ~default:0.0)
+                                    | _ -> Option.value _order_qty_opt ~default:0.0 (* Use snapshot qty for other types *)
+                                  in
+                                  let order = { 
+                                    order_id; 
+                                    client_id = None; (* FIXME: Parse userref? *) 
+                                    order_symbol = symbol; 
+                                    side = side_opt; 
+                                    status; 
+                                    limit_price;
+                                    qty = qty; (* Use parsed/retrieved quantity *)
+                                  } in
                                   let* log_msg_lwt = match exec_type with
                                     | "pending_new" -> 
                                         Hashtbl.replace pending_orders order_id order; 
@@ -640,6 +684,7 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                           let side_str_opt = JsonUtil.(member "side" order_json |> to_string_option) in
                           let last_price_opt = JsonUtil.(member "last_price" order_json |> to_float_option) in
                           let last_qty_opt = JsonUtil.(member "last_qty" order_json |> to_float_option) in
+                          let _order_qty_opt = JsonUtil.(member "order_qty" order_json |> to_float_option) in (* Extract order_qty (unused here) *)
                           let timestamp_str = safe_string order_json "timestamp" "" in
                           
                           (* Log extracted data for update item event generation *)
@@ -668,7 +713,7 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                       
                       (* Step 2: Call on_execution if events were generated *)
                       let* () = 
-                        if List.length market_events > 0 then (
+                        if market_events <> [] then (
                           debug_log (Printf.sprintf "Calling on_execution with %d events from update" (List.length market_events)) >>= fun () ->
                           on_execution market_events
                         ) else (
@@ -687,6 +732,7 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                           let limit_price_opt = JsonUtil.(member "limit_price" order_json |> to_float_option) in
                           let last_price_opt = JsonUtil.(member "last_price" order_json |> to_float_option) in
                           let last_qty_opt = JsonUtil.(member "last_qty" order_json |> to_float_option) in
+                          let _order_qty_opt = JsonUtil.(member "order_qty" order_json |> to_float_option) in (* Extract order_qty (unused here) *)
                           
                           (* Log extracted data for state update from update item *)
                           debug_log (Printf.sprintf "[StateUpdateFromUpdate] ID: %s, Type: %s, Status: %s, Symbol: %s, Side: %s"
@@ -755,7 +801,27 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                                         | None -> Option.value limit_price_opt ~default:0.0)
                                     | _ -> Option.value limit_price_opt ~default:0.0
                                   in
-                                  let order = { order_id; order_symbol = symbol; side = side_opt; status; limit_price } in
+                                  let qty = (* Get quantity, prioritize existing if amending/new, else use update *)
+                                    match exec_type with
+                                    | "new" ->
+                                        (match Hashtbl.find_opt pending_orders order_id with
+                                        | Some o -> o.qty (* Use qty from pending order *)
+                                        | None -> Option.value _order_qty_opt ~default:0.0)
+                                    | "amended" ->
+                                        (match Hashtbl.find_opt open_buy_orders order_id with
+                                        | Some o -> Option.value _order_qty_opt ~default:o.qty (* Use new qty, fallback to existing *)
+                                        | None -> Option.value _order_qty_opt ~default:0.0)
+                                    | _ -> Option.value _order_qty_opt ~default:0.0 (* Use update qty for other types *)
+                                  in
+                                  let order = { 
+                                    order_id; 
+                                    client_id = None; (* FIXME: Parse userref? *) 
+                                    order_symbol = symbol; 
+                                    side = side_opt; 
+                                    status; 
+                                    limit_price;
+                                    qty = qty; (* Use parsed/retrieved quantity *)
+                                  } in
                                   let* log_msg_lwt = match exec_type with
                                     | "pending_new" -> 
                                         Hashtbl.replace pending_orders order_id order; 

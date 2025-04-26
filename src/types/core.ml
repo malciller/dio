@@ -19,7 +19,14 @@ type order_cmd =
       tif        : tif;
       tags       : order_tag list;
     }
-  | Amend of { dst : Event.exchange; order_id : string; new_price : Price.t option; new_qty : Qty.t option }
+  | Amend of {
+      dst : Event.exchange;
+      order_id : string;
+      symbol : symbol;
+      new_price : Price.t;
+      new_qty : Qty.t;
+      ts: timestamp;
+    }
   | Cancel of { dst : Event.exchange; order_id : string }
 [@@deriving yojson { exn = true }]
 
@@ -56,4 +63,11 @@ type strategy = {
 type router = {
   start: config -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
+
+(* Response type for order operations *)
+type order_response = {
+  success: bool;
+  error: string option;
+  result: Yojson.Safe.t option;
+} [@@deriving yojson]
 

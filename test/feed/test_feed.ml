@@ -101,7 +101,7 @@ let test_callbacks_passed_down _switch () =
   Mock_feed.start_executions test_config_with_auth ~on_execution:on_exec_test >>= fun () ->
 
   (* Manually invoke the callbacks stored by the mock *) 
-  let sample_exec = [ Ack { order_id = "o"; client_id = "c"; state = Open; ts = 0L } ] in
+  let sample_exec = [ Ack { order_id = "o"; client_id = "c"; state = Open; ts = 0L } ] in (* List of events *) 
 
   (* Create a dummy tick for the type check, even though we don't use its value *) 
   let dummy_tick_for_callback = 
@@ -111,7 +111,7 @@ let test_callbacks_passed_down _switch () =
   in
 
   !(Mock_state.last_on_tick_callback) dummy_tick_for_callback >>= fun () ->
-  !(Mock_state.last_on_exec_callback) sample_exec >>= fun () ->
+  !(Mock_state.last_on_exec_callback) sample_exec >>= fun () -> (* Pass list *) 
 
   Alcotest.(check bool "on_tick callback was invoked via mock") true !tick_received;
   Alcotest.(check bool "on_execution callback was invoked via mock") true !exec_received;

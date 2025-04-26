@@ -104,3 +104,11 @@ module Id = struct
     let r2 = Random.bits () land 0xFFFFFF in
     Printf.sprintf "%06x%06x" r1 r2
 end
+
+(* Utility to format a float price to a string with specific precision *)
+let format_float_precision (value : float) (precision : int) : string =
+  try
+    Printf.sprintf "%.*f" precision value
+  with _ ->
+    (* Fallback in case of formatting error *)
+    string_of_float value
