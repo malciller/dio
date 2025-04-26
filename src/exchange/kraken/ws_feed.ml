@@ -436,7 +436,7 @@ let handle_public_frame conn (cfg : config) frame ~on_tick =
                       Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s. Payload: %s" err frame.content)
                   end
               | Some "heartbeat" ->
-                  Lwt_log_core.debug ~section "Received heartbeat"
+                  Lwt.return_unit
               | Some "instrument" ->
                   begin match instrument_response_of_yojson json with
                   | Ok { type_ = ("snapshot" | "update"); data = { pairs; _ }; _ } ->
@@ -609,17 +609,11 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                                         let last_price = Option.value last_price_opt ~default:0.0 in 
                                         Lwt.return (Printf.sprintf "[ORDER FILL (Snapshot)] %f %s at %.2f" last_qty order.order_symbol last_price)
                                     | "amended" ->
-                                        let existing_order_opt = Hashtbl.find_opt open_buy_orders order_id in
-                                        debug_log (Printf.sprintf "[CACHE UPDATE (Snapshot)] %s Before amendment - Order %s: %.8f" 
-                                          symbol order_id (match existing_order_opt with None -> 0.0 | Some o -> o.limit_price)) >>= fun () ->
                                         Hashtbl.replace open_buy_orders order_id order;
-                                        debug_log (Printf.sprintf "[CACHE UPDATE (Snapshot)] After amendment - Order %s: %.8f" 
-                                          order_id order.limit_price) >>= fun () ->
                                         Lwt.return (format_order_log order "AMENDED (Snapshot)")
                                     | "restated" -> 
                                         Hashtbl.replace open_buy_orders order_id order; 
-                                        let reason = safe_string order_json "reason" "unknown" in 
-                                        Lwt.return (Printf.sprintf "[ORDER RESTATED (Snapshot)] %s: %s" order_id reason)
+                                        Lwt.return (format_order_log order "STATUS (Snapshot)")
                                     | "status" -> 
                                         Hashtbl.replace open_buy_orders order_id order; 
                                         Lwt.return (format_order_log order "STATUS (Snapshot)")

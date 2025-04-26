@@ -5,25 +5,25 @@ open Types.Config
 (* Set up logging *)
 let setup_logging () =
   Lwt_log.add_rule "*" Lwt_log_core.Error; (* Default to Error level *)
-  Lwt_log.add_rule "engine.strategy" Lwt_log_core.Info; (* Allow Info for strategy *) 
+  Lwt_log.add_rule "engine.strategy" Lwt_log_core.Debug; (* Allow Debug for strategy *) 
   Lwt_log.add_rule "engine.router" Lwt_log_core.Info;   (* Allow Info for router *) 
-  Lwt_log.add_rule "kraken_ws_feed" Lwt_log_core.Debug; (* Allow Debug for ws_feed *) 
   Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
 
 (* Read and parse config file *)
-let read_config config_path =
+let read_config config_path : (runtime_cfg * config, string) result = (* Return both configs *)
   try
     let json = Yojson.Safe.from_file config_path in
     let runtime_cfg = runtime_cfg_of_yojson_exn json in
     (* Convert runtime_cfg to Core.config *)
     let symbols = List.map (fun asset -> asset.symbol) runtime_cfg.assets in
-    Ok {
+    let core_cfg = { (* Rename to core_cfg for clarity *)
       ws_host = "ws.kraken.com";
       ws_port = 443;
       ws_path = "/v2";
       symbols;
       auth_token = None; (* Will be set later from .env *)
-    }
+    } in
+    Ok (runtime_cfg, core_cfg) (* Return tuple *)
   with
   | Yojson.Json_error msg -> Error (Printf.sprintf "Invalid JSON in config file: %s" msg)
   | Sys_error msg -> Error (Printf.sprintf "Failed to read config file: %s" msg)
@@ -48,7 +48,7 @@ let main () =
         | Error msg ->
             Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.config") msg >>= fun () ->
             Lwt.fail_with msg
-        | Ok cfg ->
+        | Ok (runtime_cfg, core_cfg) -> (* Destructure the tuple *)
             (* Retrieve Auth Token using Kraken.Token.get_token, handle potential errors *)
             (Lwt.catch 
               (fun () -> Kraken.Token.get_token () >>= fun token -> Lwt.return_some token)
@@ -59,23 +59,25 @@ let main () =
               )
             ) >>= fun auth_token_opt ->
 
-            (* Update config with auth token *)
-            let cfg = { cfg with auth_token = auth_token_opt } in
+            (* Update core_cfg with auth token *)
+            let core_cfg = { core_cfg with auth_token = auth_token_opt } in
             (* Removed non-error related log *)
             Lwt.return_unit >>= fun () ->
 
             (* Create strategy and router modules *)
-            let strategy : Types.Core.strategy = {
-              (* Signature: start: config -> tick_buffer -> cmd_buffer -> exec_buffer -> unit Lwt.t *)
-              start = Strategy.start (* Use Strategy.start directly *)
+            (* The types will need updating in Types.Core and Engine *)
+            let strategy : Types.Core.strategy = { 
+              (* Signature update needed in Types.Core: 
+                 start: runtime_cfg -> config -> tick_buffer -> cmd_buffer -> exec_buffer -> unit Lwt.t *)
+              start = Strategy.start 
             } in
             let router : Types.Core.router = {
-              (* Signature: start: config -> cmd_buffer -> exec_buffer -> unit Lwt.t *)
-              start = Router.start (* Use Router.start directly *)
+              (* Signature likely remains: start: config -> cmd_buffer -> exec_buffer -> unit Lwt.t *)
+              start = Router.start 
             } in
 
-            (* Start the engine with all components *)
-            Engine.run ~strategy ~router cfg (* No callbacks needed *)
+            (* Start the engine with all components - Engine.run needs signature update *)
+            Engine.run ~strategy ~router runtime_cfg core_cfg (* Pass both configs *)
       )
       (fun exn ->
         (* Log errors from starting the engine *)

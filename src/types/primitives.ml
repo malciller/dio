@@ -21,6 +21,9 @@ module Fixed : sig
 
   (* Calculate midpoint *)
   val midpoint : t -> t -> t
+
+  (* Calculate powers of 10 *)
+  val pow10 : int -> int64
 end = struct              (* silence "unused" inside this module *)
 
   type t = { raw : int64; scale : int }

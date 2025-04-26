@@ -1,6 +1,7 @@
 (* src/types/core.ml *)
 open Primitives
 (* open Ringbuffer (* Added for strategy/router types - Compiler says unused, let's try removing *) *)
+(* open Types.Config (* Let's qualify instead of opening *) *)
 
 type side  = Buy | Sell                 [@@deriving yojson]
 type tif   = GTC | IOC | FOK            [@@deriving yojson]
@@ -46,9 +47,9 @@ type config = {
   auth_token: string option;
 }
 
-(* Type for strategy component *) 
+(* Type for strategy component - Updated start signature *) 
 type strategy = {
-  start: config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
+  start: Config.runtime_cfg -> config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
 
 (* Type for router component *) 

@@ -2,13 +2,13 @@
   "assets": [
     {
       "symbol": "BTC/USD",
-      "qty": "0.01",
-      "grid_interval": "100.0",
+      "qty": "0.001",
+      "grid_interval": "1.0",
       "sell_mult": "0.99"
     },
     {
       "symbol": "ETH/USD",
-      "qty": "0.1",
+      "qty": "0.01",
       "grid_interval": "10.0",
       "sell_mult": "0.99"
     },

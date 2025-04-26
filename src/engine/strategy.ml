@@ -3,6 +3,7 @@ open Lwt.Infix  (* for >>= *)
 
 
 open Types.Core
+open Types.Config (* Import runtime_cfg type and derived functions *)
 
 open Types (* For Event.tick type *)
 open Types.Primitives (* Needed for Qty, Price etc. *)
@@ -29,22 +30,14 @@ module State = struct
     limit_price: float;
   }
 
-  (* Update price info for a symbol *)
-  let update_price (tick : Event.tick) =
-    Hashtbl.replace price_info tick.symbol tick;
-    Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
-      (Printf.sprintf "Updated price for %s: current_price=%s" 
-        tick.symbol 
-        (Price.to_string tick.current_price))
-
-  (* Get latest price info for a symbol *)
-  let get_price symbol = Hashtbl.find_opt price_info symbol
-
   (* Check if we have any open orders for a symbol *)
   let has_open_orders symbol =
     Hashtbl.fold (fun _ (order : K.order) has_orders -> (* USE NEW TYPE *)
       has_orders || String.equal order.order_symbol symbol (* Use field from K.order *)
     ) open_orders false
+
+  (* Get latest price info for a symbol *)
+  let get_price symbol = Hashtbl.find_opt price_info symbol
 
   (* Create a new order command *)
   let create_order ~symbol ~side ~price ~qty =
@@ -55,24 +48,154 @@ module State = struct
         (* Reformat price and qty based on fetched precision *) 
         let formatted_price = Price.of_string_exn ~scale:price_prec price_str in
         let formatted_qty = Qty.of_string_exn ~scale:qty_prec qty_str in
-        Add {
+        let client_id = "grid-" ^ Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float) in
+        let order = Add {
           dst = "kraken";
-          client_id = "grid-" ^ Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float);
+          client_id;
           symbol;
           side;
           price = formatted_price;
           qty = formatted_qty;
           tif = GTC;
           tags = [`Grid];
-        }
+        } in
+        Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+          (Printf.sprintf "Created order: client_id=%s symbol=%s side=%s price=%s qty=%s"
+            client_id
+            symbol
+            (match side with Buy -> "BUY" | Sell -> "SELL")
+            price_str
+            qty_str) |> ignore;
+        order
     | None -> 
         (* Log error and potentially raise an exception or return an error type *)
         let () = Logs.err (fun m -> m "Precisions not found for symbol: %s. Cannot create order." symbol) in
         (* Decide on error handling: For now, let's cause a failure *) 
         failwith ("Precision data missing for symbol: " ^ symbol)
 
+  (* Forward declaration for create_initial_orders *)
+  let create_initial_orders : runtime_cfg -> string -> Core.order_cmd Ringbuffer.t -> unit Lwt.t = 
+    fun runtime_cfg symbol cmd_buffer ->
+      (* Only proceed if we've initialized orders for this symbol *)
+      if Hashtbl.mem initialized_symbols symbol && not (has_open_orders symbol) then
+        match get_price symbol with
+        | Some tick ->
+            (* Find the asset configuration for this symbol *)
+            let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) -> 
+              String.equal asset.symbol symbol
+            ) runtime_cfg.assets in
+
+            (match asset_cfg_opt with
+            | Some asset_cfg ->
+                (* Get current price from stored price info *)
+                let current_price = tick.current_price in
+                let current_price_float = 
+                  Float.of_string (Price.to_string current_price) in
+                
+                (* Convert grid_interval to float percentage *)
+                let grid_pct = 
+                  Float.of_string (Fixed.to_string asset_cfg.grid_interval) in
+                
+                (* Calculate raw prices using percentage adjustment *)
+                let sell_price_raw = current_price_float *. (1.0 +. (grid_pct /. 100.0)) in
+                let buy_price_raw = current_price_float *. (1.0 -. (grid_pct /. 100.0)) in
+                
+                (* Convert back to Fixed point with proper scale *)
+                let sell_price = Price.of_string_exn ~scale:current_price.scale 
+                  (Printf.sprintf "%.*f" current_price.scale sell_price_raw) in
+                let buy_price = Price.of_string_exn ~scale:current_price.scale 
+                  (Printf.sprintf "%.*f" current_price.scale buy_price_raw) in
+                
+                (* Log the price calculations *)
+                Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                  (Printf.sprintf "Calculating grid prices for %s: current=%.2f buy=%.2f sell=%.2f interval=%.1f%%" 
+                    symbol
+                    current_price_float
+                    buy_price_raw
+                    sell_price_raw
+                    grid_pct) >>= fun () ->
+                
+                (* Calculate sell quantity by applying sell_mult *)
+                let base_qty_float = Float.of_string (Qty.to_string asset_cfg.qty) in
+                let sell_mult_float = Float.of_string (Fixed.to_string asset_cfg.sell_mult) in
+                let sell_qty_float = base_qty_float *. sell_mult_float in
+                let sell_qty = match K.get_precisions symbol with
+                  | Some (_, qty_prec) ->
+                      Qty.of_string_exn ~scale:qty_prec
+                        (Printf.sprintf "%.*f" qty_prec sell_qty_float)
+                  | None ->
+                      Qty.of_string_exn ~scale:asset_cfg.qty.scale
+                        (Printf.sprintf "%.*f" asset_cfg.qty.scale sell_qty_float)
+                in
+
+                (* Log quantities with more precision to verify calculation *)
+                Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                  (Printf.sprintf "Order quantities for %s: buy=%.8f sell=%.8f (mult=%.3f -> %.8f * %.3f = %.8f)" 
+                    symbol
+                    base_qty_float
+                    sell_qty_float
+                    sell_mult_float
+                    base_qty_float
+                    sell_mult_float
+                    (base_qty_float *. sell_mult_float)) >>= fun () ->
+                
+                (* Create and push sell order first with adjusted quantity *)
+                let sell_cmd = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
+                (if not (Ringbuffer.push cmd_buffer sell_cmd) then
+                  Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy") 
+                    "Command buffer full! Dropping sell command."
+                else
+                  match sell_cmd with
+                  | Add order ->
+                      Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+                        (Printf.sprintf "Successfully pushed sell order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
+                          order.client_id
+                          order.symbol
+                          (Price.to_string order.price)
+                          (Qty.to_string order.qty))
+                  | _ -> Lwt.return_unit) >>= fun () ->
+
+                (* Create and push buy order second with base quantity *)
+                let buy_cmd = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
+                (if not (Ringbuffer.push cmd_buffer buy_cmd) then
+                  Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy") 
+                    "Command buffer full! Dropping buy command."
+                else
+                  match buy_cmd with
+                  | Add order ->
+                      Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+                        (Printf.sprintf "Successfully pushed buy order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
+                          order.client_id
+                          order.symbol
+                          (Price.to_string order.price)
+                          (Qty.to_string order.qty))
+                  | _ -> Lwt.return_unit) >>= fun () ->
+                
+                Lwt.return_unit
+            | None ->
+                Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy")
+                  (Printf.sprintf "No configuration found for symbol %s in runtime_cfg" symbol))
+        | None ->
+            Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy")
+              (Printf.sprintf "No price info available for %s, skipping order creation" symbol)
+      else
+        Lwt.return_unit
+
+  (* Update price info for a symbol *)
+  let update_price (tick : Event.tick) =
+    Hashtbl.replace price_info tick.symbol tick;
+    Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
+      (Printf.sprintf "Updated price for %s: current_price=%s" 
+        tick.symbol 
+        (Price.to_string tick.current_price))
+
+
+
+
+
+
   (* Update open orders based on execution *)
-  let handle_execution (event : market_event) =
+  let handle_execution runtime_cfg cmd_buffer (event : market_event) =
     match event with
     | Fill { order_id; symbol; price; qty; side; _ } ->
         begin match Hashtbl.find_opt open_orders order_id with
@@ -93,23 +216,38 @@ module State = struct
                 (Price.to_string price)
                 order_side_str) >>= fun () ->
             Hashtbl.remove open_orders order_id;
-            Lwt.return_unit
+            (* Create new orders after fill *)
+            create_initial_orders runtime_cfg symbol cmd_buffer
         | None -> Lwt.return_unit
         end
     | Ack { order_id; state = Canceled; _ } ->
-        Hashtbl.remove open_orders order_id;
-        Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
-          (Printf.sprintf "Order %s canceled" order_id)
+        begin match Hashtbl.find_opt open_orders order_id with
+        | Some order ->
+            let symbol = order.order_symbol in
+            Hashtbl.remove open_orders order_id;
+            Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+              (Printf.sprintf "Order %s canceled" order_id) >>= fun () ->
+            (* Create new orders after cancellation *)
+            create_initial_orders runtime_cfg symbol cmd_buffer
+        | None -> Lwt.return_unit
+        end
     | Ack { order_id; state = Rejected; _ } ->
-        Hashtbl.remove open_orders order_id;
-        Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
-          (Printf.sprintf "Order %s rejected" order_id)
+        begin match Hashtbl.find_opt open_orders order_id with
+        | Some order ->
+            let symbol = order.order_symbol in
+            Hashtbl.remove open_orders order_id;
+            Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+              (Printf.sprintf "Order %s rejected" order_id) >>= fun () ->
+            (* Create new orders after rejection *)
+            create_initial_orders runtime_cfg symbol cmd_buffer
+        | None -> Lwt.return_unit
+        end
     | _ -> Lwt.return_unit
 
-  (* Initialize order state from exchange *)
-  let initialize_orders (cfg : Types.Core.config) =
+  (* Initialize order state from exchange - uses core_cfg for symbols *)
+  let initialize_orders (core_cfg : Types.Core.config) =
     (* Initialize all configured symbols to false *) 
-    List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) cfg.symbols;
+    List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) core_cfg.symbols;
     
     (* Fetch existing orders *) 
     let exchange_orders = K.get_open_buy_orders () in
@@ -118,7 +256,7 @@ module State = struct
     let log_promises = Hashtbl.fold (fun order_id (order : K.order) promises -> (* USE NEW TYPE *)
       let log_promise = 
         let symbol_str = order.order_symbol in (* Use field from K.order *)
-        if symbol_str <> "N/A" && List.mem symbol_str cfg.symbols then ( (* Only process orders for configured symbols *) 
+        if symbol_str <> "N/A" && List.mem symbol_str core_cfg.symbols then ( (* Check against core_cfg.symbols *) 
           Hashtbl.replace open_orders order_id order;
           Hashtbl.replace initialized_symbols symbol_str true; (* Set to true if existing order found *) 
           Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
@@ -150,44 +288,6 @@ module State = struct
     ) exchange_orders;
     Lwt.return_unit
 
-  (* Create initial orders for a symbol if none exist *)
-  let create_initial_orders symbol cmd_buffer =
-    (* Only proceed if we've initialized orders for this symbol *)
-    if Hashtbl.mem initialized_symbols symbol && not (has_open_orders symbol) then
-      match get_price symbol with
-      | Some tick ->
-          (* Create a buy order slightly below current bid *)
-          let bid_float = Price.to_string tick.bid |> float_of_string in
-          let buy_price = Price.of_string_exn ~scale:8 (Printf.sprintf "%.8f" (bid_float *. 0.995)) in (* Use initial scale for calculation *)
-          let buy_cmd = create_order ~symbol ~side:Buy ~price:buy_price ~qty:(Qty.of_string_exn ~scale:8 "0.001") in (* Use Qty type *)
-          
-          (* Create a sell order slightly above current ask *)
-          let ask_float = Price.to_string tick.ask |> float_of_string in
-          let sell_price = Price.of_string_exn ~scale:8 (Printf.sprintf "%.8f" (ask_float *. 1.005)) in (* Use initial scale for calculation *)
-          let sell_cmd = create_order ~symbol ~side:Sell ~price:sell_price ~qty:(Qty.of_string_exn ~scale:8 "0.001") in (* Use Qty type *)
-          
-          (* Push both orders to the command buffer *)
-          (if not (Ringbuffer.push cmd_buffer buy_cmd) then
-            Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy") 
-              "Command buffer full! Dropping buy command."
-          else
-            Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
-              (Printf.sprintf "Created buy order for %s @ %s" symbol (Price.to_string buy_price))) >>= fun () ->
-
-          (if not (Ringbuffer.push cmd_buffer sell_cmd) then
-            Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy") 
-              "Command buffer full! Dropping sell command."
-          else
-            Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
-              (Printf.sprintf "Created sell order for %s @ %s" symbol (Price.to_string sell_price))) >>= fun () ->
-          
-          Lwt.return_unit
-      | None ->
-          Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy")
-            (Printf.sprintf "No price info available for %s, skipping order creation" symbol)
-    else
-      Lwt.return_unit
-
   let get_open_orders () : open_order list =
     let buy_orders = K.get_open_buy_orders () in
     let orders = Hashtbl.to_seq_values buy_orders |> List.of_seq in
@@ -202,7 +302,13 @@ module State = struct
     ) orders
 end
 
-let start cfg ~tick_buffer ~cmd_buffer ~exec_buffer =
+(* Updated signature for start function *)
+let start (runtime_cfg : runtime_cfg) (core_cfg : config) ~tick_buffer ~cmd_buffer ~exec_buffer =
+  (* Log the runtime config to use the variable *)
+  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+    (Printf.sprintf "Strategy received runtime_cfg: %s" 
+       (Yojson.Safe.to_string (runtime_cfg_to_yojson runtime_cfg))) >>= fun () ->
+
   (* Wait for the execution snapshot to be processed *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     "Waiting for execution snapshot from Kraken..." >>= fun () ->
@@ -217,19 +323,19 @@ let start cfg ~tick_buffer ~cmd_buffer ~exec_buffer =
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
     "Instrument data received." >>= fun () ->
 
-  (* Initialize state using the config *)
-  State.initialize_orders cfg >>= fun () -> (* Explicitly initialize state *)
+  (* Initialize state using the core_cfg *)
+  State.initialize_orders core_cfg >>= fun () -> (* Pass core_cfg *)
 
-  (* Log strategy startup with config info *)
+  (* Log strategy startup with config info - Use core_cfg for symbols *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
-    (Printf.sprintf "Starting grid strategy for symbols: [%s]" (String.concat ", " cfg.symbols)) >>= fun () ->
+    (Printf.sprintf "Starting grid strategy for symbols: [%s]" (String.concat ", " core_cfg.symbols)) >>= fun () ->
 
   (* Grid strategy: consume ticks and executions, emit Core.order_cmd via cmd_buffer *)
   let rec loop () =
     (* First process any executions *)
     begin match Ringbuffer.pop_opt exec_buffer with
     | Some event -> 
-        State.handle_execution event >>= fun () ->
+        State.handle_execution runtime_cfg cmd_buffer event >>= fun () ->
         loop () (* Continue processing executions *)
     | None ->
         (* Then process any ticks *)
@@ -246,7 +352,7 @@ let start cfg ~tick_buffer ~cmd_buffer ~exec_buffer =
               (* Only update state if price changed *)
               State.update_price tick >>= fun () ->
               State.sync_open_orders () >>= fun () ->
-              State.create_initial_orders tick.symbol cmd_buffer >>= fun () ->
+              State.create_initial_orders runtime_cfg tick.symbol cmd_buffer >>= fun () -> 
               loop ()
             ) else (
               (* Price unchanged, state not updated, just loop *)
