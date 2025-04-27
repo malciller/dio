@@ -7,16 +7,15 @@ open Conduit_lwt_unix
 
 (* Set up logging *)
 let setup_logging () =
-  Lwt_log.add_rule "*" Lwt_log_core.Error; (* Default to Error level *)
-  Lwt_log.add_rule "*" Lwt_log_core.Warning; (* Default to Error level *)
-  (*Lwt_log.add_rule "engine.strategy" Lwt_log_core.Debug;  Allow Debug for strategy *) 
+  Lwt_log.add_rule "*" Lwt_log_core.Error;
+  Lwt_log.add_rule "*" Lwt_log_core.Warning; 
   Lwt_log.add_rule "engine.router" Lwt_log_core.Info;   
   Lwt_log.add_rule "engine.router" Lwt_log_core.Debug;   
   Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info;   
   Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Debug;
     Lwt_log.add_rule "engine.strategy" Lwt_log_core.Info;   
   Lwt_log.add_rule "enginge.strategy" Lwt_log_core.Debug;      
-  (* Lwt_log.add_rule "kraken_ws_feed" Lwt_log_core.Debug;    Allow Info for router *) 
+  (* Allow Info for router *) 
   Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
 
 (* Read and parse config file *)
@@ -48,7 +47,6 @@ let main () =
 
   (* Load .env file to get the API token *)
   (try Dotenv.export ~path:".env" () with _ -> Printf.eprintf "Warning: Failed to load .env file.\n%!"); 
-  (* === ADD DEBUG LOGS HERE === *)
   let key_check = match Sys.getenv_opt "KRAKEN_API_KEY" with Some _ -> "FOUND" | None -> "MISSING" in
   let secret_check = match Sys.getenv_opt "KRAKEN_API_SECRET" with Some _ -> "FOUND" | None -> "MISSING" in
   Printf.eprintf "[DEBUG] Post Dotenv.export: KRAKEN_API_KEY status: %s, KRAKEN_API_SECRET status: %s\n%!" key_check secret_check;
@@ -69,7 +67,6 @@ let main () =
             (Lwt.catch 
               (fun () -> Kraken.Token.get_token () >>= fun token -> Lwt.return_some token)
               (fun exn -> 
-                (* ADD BACKTRACE HERE if you removed it *)
                 let backtrace = Printexc.get_backtrace () in 
                 Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.auth") 
                   (Printf.sprintf "Failed to retrieve auth token: %s\nBacktrace:\n%s" 
@@ -82,22 +79,18 @@ let main () =
 
             (* Update core_cfg with auth token *)
             let core_cfg = { core_cfg with auth_token = auth_token_opt } in
-            (* Removed non-error related log *)
             Lwt.return_unit >>= fun () ->
 
             (* Create strategy and router modules *)
             let strategy : Types.Core.strategy = { 
-              (* Signature update needed in Types.Core: 
-                 start: runtime_cfg -> config -> tick_buffer -> cmd_buffer -> exec_buffer -> unit Lwt.t *)
               start = Strategy.start 
             } in
             let router : Types.Core.router = {
-              (* Signature likely remains: start: config -> cmd_buffer -> exec_buffer -> unit Lwt.t *)
               start = Router.start 
             } in
 
-            (* Start the engine with all components - Engine.run needs signature update *)
-            Engine.run ~strategy ~router runtime_cfg core_cfg (* Pass both configs *)
+
+            Engine.run ~strategy ~router runtime_cfg core_cfg 
       )
       (fun exn ->
         (* Log errors from starting the engine *)

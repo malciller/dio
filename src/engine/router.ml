@@ -17,21 +17,17 @@ type order_response = {
 module OrderCache = struct
   (* Cache recent orders to prevent duplicates *)
   let recent_orders = Hashtbl.create 1024
-  let cache_timeout = 5.0 (* seconds *)
+  let cache_timeout = 10.0 (* seconds *)
 
   (* Create a unique key for each order *)
   let make_order_key = function
-    | Add { dst; client_id; symbol; side; price; qty; _ } ->
-        Printf.sprintf "add:%s:%s:%s:%s:%s:%s" 
-          dst client_id symbol 
+    | Add { dst; symbol; side; _ } ->
+        Printf.sprintf "add:%s:%s:%s"
+          dst symbol 
           (match side with Buy -> "buy" | Sell -> "sell")
-          (Price.to_string price)
-          (Qty.to_string qty)
-    | Amend { dst; order_id; new_price; new_qty; _ } ->
-        Printf.sprintf "amend:%s:%s:%s:%s" 
+    | Amend { dst; order_id; _ } ->
+        Printf.sprintf "amend:%s:%s" 
           dst order_id
-          (Price.to_string new_price)
-          (Qty.to_string new_qty)
     | Cancel { dst; order_id } ->
         Printf.sprintf "cancel:%s:%s" dst order_id
 
