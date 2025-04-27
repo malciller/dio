@@ -1,4 +1,4 @@
-<!-- Mermaid.js Diagram - https://mermaid.live ; copy from below the comment, and paste into viewer.->
+<!-- Mermaid.js Diagram - https://mermaid.live ; copy from below the comment, and paste into viewer. -->
 
 graph TD
     A[bin/dio.ml] --> A1[main]
