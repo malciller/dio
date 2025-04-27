@@ -11,6 +11,12 @@
  (name dio)
  (synopsis "Dio – trading engine")
  (depends
+  ;; TLS back-end first, then conduit
+  lwt_ssl
+  tls-lwt
+  conduit-lwt-unix
+
+  ;; rest of your deps
   dune
   decimal
   lwt lwt_ppx
@@ -19,7 +25,6 @@
   websocket-lwt-unix cohttp-lwt-unix
   cmdliner
   prometheus
-  alcotest
+  alcotest alcotest-lwt
   dotenv
-  cstruct
-  alcotest-lwt))
+  cstruct))

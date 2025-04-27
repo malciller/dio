@@ -1,0 +1,8 @@
+_opam
+_build
+*.log
+node_modules
+.git
+.gitignore
+*.swp
+*.swo

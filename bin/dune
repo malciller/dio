@@ -1,5 +1,5 @@
 (executable
  (name dio)          
  (public_name dio)  
- (libraries dio.engine dio.exchange.kraken lwt dotenv mirage-crypto-rng.unix)
+ (libraries dio.engine dio.exchange.kraken lwt dotenv mirage-crypto-rng.unix lwt_ssl ssl conduit-lwt-unix)
  (preprocess (pps lwt_ppx)))

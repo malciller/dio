@@ -7,6 +7,9 @@ license: "MIT"
 homepage: "https://github.com/malciller/dio"
 bug-reports: "https://github.com/malciller/dio/issues"
 depends: [
+  "lwt_ssl"
+  "tls-lwt"
+  "conduit-lwt-unix"
   "dune" {>= "3.13"}
   "decimal"
   "lwt"
@@ -20,9 +23,9 @@ depends: [
   "cmdliner"
   "prometheus"
   "alcotest"
+  "alcotest-lwt"
   "dotenv"
   "cstruct"
-  "alcotest-lwt"
   "odoc" {with-doc}
 ]
 build: [
