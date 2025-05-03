@@ -2,10 +2,10 @@
 
 open Lwt.Infix
 open Websocket
-open Types
 open Lwt.Syntax
 module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
+open Types
 
 (* Add at the top of the file, after module imports *)
 let snapshot_processed, resolve_snapshot_processed = Lwt.task ()
