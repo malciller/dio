@@ -80,7 +80,7 @@ let main () =
 
             (* Create strategy and router modules *)
             let strategy : Types.Core.strategy = { 
-              start = Strategy.start 
+              start = Grid_strategy.start 
             } in
             let router : Types.Core.router = {
               start = Router.start 
