@@ -1,7 +1,5 @@
 (* src/types/core.ml *)
 open Primitives
-(* open Ringbuffer (* Added for strategy/router types - Compiler says unused, let's try removing *) *)
-(* open Types.Config (* Let's qualify instead of opening *) *)
 
 type side  = Buy | Sell                 [@@deriving yojson]
 type tif   = GTC | IOC | FOK            [@@deriving yojson]

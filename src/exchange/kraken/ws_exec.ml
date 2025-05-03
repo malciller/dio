@@ -1,7 +1,7 @@
 (* src/exchange/kraken/ws_exec.ml *)
 open Lwt.Infix
 open Websocket
-open Types.Primitives
+open Types
 
 
 (* Type definitions for Kraken WS v2 API messages *)
@@ -94,7 +94,7 @@ let send_order_command state token (cmd : Types.Core.order_cmd) : unit Lwt.t =
             Lwt_log_core.debug ~section
               (Printf.sprintf "Formatting price for %s with precision %d" symbol precision) |> Lwt.ignore_result;
             (* Use the shared formatting function from Primitives *) 
-            format_float_precision raw_price_float precision
+            Primitives.format_float_precision raw_price_float precision
         | None ->
             Lwt_log_core.warning ~section
               (Printf.sprintf "No precision found for symbol %s, sending raw price as string." symbol) |> Lwt.ignore_result;
@@ -157,7 +157,7 @@ let send_order_command state token (cmd : Types.Core.order_cmd) : unit Lwt.t =
             Lwt_log_core.debug ~section
               (Printf.sprintf "Formatting amend price for %s with precision %d" symbol precision) |> Lwt.ignore_result;
             (* Use the shared formatting function from Primitives *) 
-            format_float_precision raw_price_float precision
+            Primitives.format_float_precision raw_price_float precision
         | None ->
             Lwt_log_core.warning ~section
               (Printf.sprintf "No precision found for symbol %s in amend, sending raw price as string." symbol) |> Lwt.ignore_result;

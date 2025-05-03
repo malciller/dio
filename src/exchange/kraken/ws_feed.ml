@@ -2,7 +2,7 @@
 
 open Lwt.Infix
 open Websocket
-open Types.Core
+open Types
 open Lwt.Syntax
 module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
@@ -43,7 +43,7 @@ let get_price_precision symbol : int option =
   | Some (price_prec, _) -> Some price_prec
   | None -> None
 
-(* Configuration type - REMOVED, using Types.Core.config *)
+(* Configuration type - REMOVED, using Core.config *)
 (* Order Tracking definitions moved below the 'order' type definition *)
 
 (* Type Definitions for Kraken WS v2 API *)
@@ -193,11 +193,11 @@ type executions_response = {
 (* Utility Functions *)
 let float_to_price ~scale f =
   let s = Printf.sprintf "%.*f" scale f in
-  Types.Primitives.Price.of_string_exn ~scale s
+  Primitives.Price.of_string_exn ~scale s
 
 let float_to_qty ~scale f =
   let s = Printf.sprintf "%.*f" scale f in
-  Types.Primitives.Qty.of_string_exn ~scale s
+  Primitives.Qty.of_string_exn ~scale s
 
 let section = Lwt_log_core.Section.make "kraken_ws_feed"
 
@@ -207,8 +207,8 @@ let debug_log msg = Lwt_log_core.debug ~section msg
 
 (* Order Side Parsing *)
 let parse_order_side = function
-  | "buy" -> Some Buy
-  | "sell" -> Some Sell
+  | "buy" -> Some Core.Buy
+  | "sell" -> Some Core.Sell
   | _ -> None
 
 
@@ -216,8 +216,8 @@ type order = {
   order_id : string;
   client_id : string option; (* Mapped from userref *)
   order_symbol : string;
-  side : Types.Core.side option;
-  status : Types.Core.order_state;
+  side : Core.side option;
+  status : Core.order_state;
   limit_price : float;
   qty: float; (* Mapped from vol *)
 }
@@ -231,13 +231,13 @@ let format_order_log order action =
     action order.order_id order.order_symbol
     (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown")
     (match order.status with (* Updated match for Core.order_state - removed redundant case *)
-     | Types.Core.Open -> "Open"
-     | Types.Core.Filled -> "Filled"
-     | Types.Core.Canceled -> "Canceled"
-     | Types.Core.Rejected -> "Rejected" 
+     | Core.Open -> "Open"
+     | Core.Filled -> "Filled"
+     | Core.Canceled -> "Canceled"
+     | Core.Rejected -> "Rejected" 
      (* Add other Core.order_state variants if they exist and need specific strings *)
-     (* | Types.Core.Expired -> "Expired"  <- Assuming Expired exists *)
-     (* | Types.Core.Pending -> "Pending" <- Assuming Pending exists *)
+     (* | Core.Expired -> "Expired"  <- Assuming Expired exists *)
+     (* | Core.Pending -> "Pending" <- Assuming Pending exists *)
     )
     order.limit_price
 
@@ -289,11 +289,11 @@ let kraken_ts_to_core_ts s =
     Unix.gettimeofday () *. 1_000_000. |> Int64.of_float
 
 let kraken_side_to_core_side = function
-  | Some "buy" -> Some Buy
-  | Some "sell" -> Some Sell
+  | Some "buy" -> Some Core.Buy
+  | Some "sell" -> Some Core.Sell
   | _ -> None
 
-let kraken_status_to_core_state status : Types.Core.order_state = (* Explicit return type *)
+let kraken_status_to_core_state status : Core.order_state = (* Explicit return type *)
   match status with
   | "new" | "pending_new" | "amended" | "restated" | "status" -> Open
   | "filled" -> Filled
@@ -303,7 +303,7 @@ let kraken_status_to_core_state status : Types.Core.order_state = (* Explicit re
       Lwt_log_core.warning ~section (Printf.sprintf "Unhandled Kraken order status: %s, mapping to Rejected" status) |> ignore;
       Rejected
 
-let execution_report_to_market_event (report : execution_report) : market_event option =
+let execution_report_to_market_event (report : execution_report) : Core.market_event option =
   let order_id = report.order_id in
   let client_id = "kraken:" ^ order_id in
   let ts = kraken_ts_to_core_ts report.timestamp in
@@ -315,16 +315,16 @@ let execution_report_to_market_event (report : execution_report) : market_event 
       begin try
         let price = float_to_price ~scale:8 price_f in
         let qty = float_to_qty ~scale:8 qty_f in
-        Some (Fill { symbol; order_id; client_id; price; qty; side; ts })
+        Some (Core.Fill { symbol; order_id; client_id; price; qty; side; ts })
       with ex ->
         Lwt_log_core.error ~section (Printf.sprintf "Failed to convert Fill data for order %s: %s" order_id (Printexc.to_string ex)) |> ignore;
-        Some (Ack { order_id; client_id; state; ts })
+        Some (Core.Ack { order_id; client_id; state; ts })
       end
   | _ ->
-      Some (Ack { order_id; client_id; state; ts })
+      Some (Core.Ack { order_id; client_id; state; ts })
 
 (* Connection Setup *)
-let connect (cfg : config) is_auth =
+let connect (cfg : Core.config) is_auth =
   let port = cfg.ws_port in
   let ctx = Lazy.force Conduit_lwt_unix.default_ctx in
 
@@ -374,7 +374,7 @@ let custom_subscribe_message_to_yojson (msg : subscribe_message) : Json.t =
   )
 
 (* Subscription Messages *)
-let make_subscribe_message ?req_id (cfg : config) channel =
+let make_subscribe_message ?req_id (cfg : Core.config) channel =
   let params = match channel with
     | `Ticker -> 
         Ticker {
@@ -404,7 +404,7 @@ let make_subscribe_message ?req_id (cfg : config) channel =
   Frame.create ~content ()
 
 
-let handle_public_frame conn (cfg : config) frame ~on_tick =
+let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
   let section = Lwt_log_core.Section.make "kraken_ws_feed" in
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
@@ -435,8 +435,8 @@ let handle_public_frame conn (cfg : config) frame ~on_tick =
                           let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
                           let bid_price = float_to_price ~scale:8 ticker.bid in
                           let ask_price = float_to_price ~scale:8 ticker.ask in
-                          let current_price = Types.Primitives.Price.midpoint bid_price ask_price in
-                          let tick_event : Types.Event.tick = {
+                          let current_price = Primitives.Price.midpoint bid_price ask_price in
+                          let tick_event : Event.tick = {
                             src = "kraken";
                             symbol;
                             bid = bid_price;
@@ -512,7 +512,7 @@ let handle_public_frame conn (cfg : config) frame ~on_tick =
 
 
 
-let handle_auth_frame conn (cfg: config) frame ~on_execution =
+let handle_auth_frame conn (cfg: Core.config) frame ~on_execution =
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
       let json = Json.from_string frame.content in
@@ -607,7 +607,7 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                                 | _ -> parse_order_side (Option.value side_str_opt ~default:"")
                               in
                               match side_opt with
-                              | Some Buy when List.exists (fun s -> String.equal s symbol) cfg.symbols ->
+                              | Some Core.Buy when List.exists (fun s -> String.equal s symbol) cfg.symbols ->
                                   let status = kraken_status_to_core_state order_status_str in
                                   let limit_price = 
                                     match exec_type with
@@ -704,12 +704,12 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
                           match exec_type, last_qty_opt, last_price_opt, kraken_side_to_core_side side_str_opt, symbol_opt with
                           | ("trade" | "filled"), Some qty_f, Some price_f, Some side, Some symbol when qty_f > 0.0 ->
                               (try 
-                                 Some (Fill { symbol; order_id; client_id; price=(float_to_price ~scale:8 price_f); qty=(float_to_qty ~scale:8 qty_f); side; ts }) 
+                                 Some (Core.Fill { symbol; order_id; client_id; price=(float_to_price ~scale:8 price_f); qty=(float_to_qty ~scale:8 qty_f); side; ts }) 
                                with ex -> 
                                  Lwt_log_core.error ~section (Printf.sprintf "Failed converting Fill data for update %s: %s" order_id (Printexc.to_string ex)) |> Lwt.ignore_result; 
-                                 Some (Ack { order_id; client_id; state; ts }))
+                                 Some (Core.Ack { order_id; client_id; state; ts }))
                           | ("canceled" | "expired" | "rejected"), _, _, _, _ ->
-                              Some (Ack { order_id; client_id; state; ts }) (* Generate Ack for terminal states *)
+                              Some (Core.Ack { order_id; client_id; state; ts }) (* Generate Ack for terminal states *)
                           | _ -> None (* Ignore other exec_types for event generation *)
                       ) data_json in
                       
@@ -905,7 +905,7 @@ let handle_auth_frame conn (cfg: config) frame ~on_execution =
 let get_open_buy_orders () : (string, order) Hashtbl.t = open_buy_orders
 
 (* Main Feed Functions *)
-let start (cfg : config) ~on_tick =
+let start (cfg : Core.config) ~on_tick =
   let rec loop conn =
     Websocket_lwt_unix.read conn >>= fun frame ->
     handle_public_frame conn cfg frame ~on_tick >>= fun () ->
@@ -918,7 +918,7 @@ let start (cfg : config) ~on_tick =
   Websocket_lwt_unix.write conn subscribe_instrument_msg >>= fun () -> (* Send instrument subscription *)
   loop conn
 
-let start_executions (cfg : config) ~on_execution =
+let start_executions (cfg : Core.config) ~on_execution =
   let section = Lwt_log_core.Section.make "kraken_ws_auth" in
   match cfg.auth_token with
   | None -> Lwt.fail_with "Authentication token required for executions feed"

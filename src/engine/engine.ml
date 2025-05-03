@@ -1,8 +1,5 @@
 (* src/engine/engine.ml *)
 open Types (* For Event.tick *)
-open Types.Core (* For market_event, order_cmd, config, strategy, router *)
-open Types.Config (* For runtime_cfg *)
-
 
 module Feed = Feed
 module Kraken = Kraken
@@ -28,7 +25,7 @@ let push_execs_to_buffer exec_buffer events =
 
 (* Adapter function that starts both feed streams using ring buffers *)
 (* This function only needs the core connection/symbol/token info *)
-let start_feed (core_cfg: config) (tick_buffer: Event.tick Ringbuffer.t) (exec_buffer: market_event Ringbuffer.t) =
+let start_feed (core_cfg: Core.config) (tick_buffer: Event.tick Ringbuffer.t) (exec_buffer: Core.market_event Ringbuffer.t) =
   (* Use the helper functions as callbacks *) 
   let feed_promise = Feed.Prod.start core_cfg ~on_tick:(push_tick_to_buffer tick_buffer) in
   let executions_promise = Feed.Prod.start_executions core_cfg ~on_execution:(push_execs_to_buffer exec_buffer) in
@@ -36,7 +33,7 @@ let start_feed (core_cfg: config) (tick_buffer: Event.tick Ringbuffer.t) (exec_b
 
 (* Main run function that orchestrates all components *)
 (* Updated signature to accept both runtime_cfg and core_cfg *)
-let run ~strategy ~router (runtime_cfg: runtime_cfg) (core_cfg: config) =
+let run ~strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Core.config) =
   (* Create the ring buffers *)
   (* TODO: Potentially use runtime_cfg.queues_cap here? For now, keep fixed size. *)
   let tick_buffer = Ringbuffer.create 1024 in

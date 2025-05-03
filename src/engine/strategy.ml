@@ -1,12 +1,6 @@
 (* src/engine/strategy.ml *)
 open Lwt.Infix  (* for >>= *)
-
-
-open Types.Core
-open Types.Config (* Import runtime_cfg type and derived functions *)
-
-open Types (* For Event.tick type *)
-open Types.Primitives (* Needed for Qty, Price etc. *)
+open Types 
 
 module K = Kraken.Ws_feed (* To get open orders *)
 
@@ -25,8 +19,8 @@ module State = struct
   type open_order = {
     order_id: string;
     symbol: string;
-    side: side;
-    status: order_state;
+    side: Core.side;
+    status: Core.order_state;
     limit_price: float;
   }
 
@@ -43,13 +37,13 @@ module State = struct
   let create_order ~symbol ~side ~price ~qty =
     match K.get_precisions symbol with
     | Some (price_prec, qty_prec) ->
-        let price_str = Price.to_string price in
-        let qty_str = Qty.to_string qty in
+        let price_str = Primitives.Price.to_string price in
+        let qty_str = Primitives.Qty.to_string qty in
         (* Reformat price and qty based on fetched precision *) 
-        let formatted_price = Price.of_string_exn ~scale:price_prec price_str in
-        let formatted_qty = Qty.of_string_exn ~scale:qty_prec qty_str in
+        let formatted_price = Primitives.Price.of_string_exn ~scale:price_prec price_str in
+        let formatted_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
         let client_id = "grid-" ^ Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float) in
-        let order = Add {
+        let order = Core.Add {
           dst = "kraken";
           client_id;
           symbol;
@@ -74,7 +68,7 @@ module State = struct
         failwith ("Precision data missing for symbol: " ^ symbol)
 
   (* Forward declaration for create_initial_orders *)
-  let create_initial_orders : runtime_cfg -> string -> Core.order_cmd Ringbuffer.t -> unit Lwt.t = 
+  let create_initial_orders : Config.runtime_cfg -> string -> Core.order_cmd Ringbuffer.t -> unit Lwt.t = 
     fun runtime_cfg symbol cmd_buffer ->
       (* Only proceed if we've initialized orders for this symbol *)
       if Hashtbl.mem initialized_symbols symbol && not (has_open_orders symbol) then
@@ -90,20 +84,20 @@ module State = struct
                 (* Get current price from stored price info *)
                 let current_price = tick.current_price in
                 let current_price_float = 
-                  Float.of_string (Price.to_string current_price) in
+                  Float.of_string (Primitives.Price.to_string current_price) in
                 
                 (* Convert grid_interval to float percentage *)
                 let grid_pct = 
-                  Float.of_string (Fixed.to_string asset_cfg.grid_interval) in
+                  Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval) in
                 
                 (* Calculate raw prices using percentage adjustment *)
                 let sell_price_raw = current_price_float *. (1.0 +. (grid_pct /. 100.0)) in
                 let buy_price_raw = current_price_float *. (1.0 -. (grid_pct /. 100.0)) in
                 
                 (* Convert back to Fixed point with proper scale *)
-                let sell_price = Price.of_string_exn ~scale:current_price.scale 
+                let sell_price = Primitives.Price.of_string_exn ~scale:current_price.scale 
                   (Printf.sprintf "%.*f" current_price.scale sell_price_raw) in
-                let buy_price = Price.of_string_exn ~scale:current_price.scale 
+                let buy_price = Primitives.Price.of_string_exn ~scale:current_price.scale 
                   (Printf.sprintf "%.*f" current_price.scale buy_price_raw) in
                 
                 (* Log the price calculations *)
@@ -116,15 +110,15 @@ module State = struct
                     grid_pct) >>= fun () ->
                 
                 (* Calculate sell quantity by applying sell_mult *)
-                let base_qty_float = Float.of_string (Qty.to_string asset_cfg.qty) in
-                let sell_mult_float = Float.of_string (Fixed.to_string asset_cfg.sell_mult) in
+                let base_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
+                let sell_mult_float = Float.of_string (Primitives.Fixed.to_string asset_cfg.sell_mult) in
                 let sell_qty_float = base_qty_float *. sell_mult_float in
                 let sell_qty = match K.get_precisions symbol with
                   | Some (_, qty_prec) ->
-                      Qty.of_string_exn ~scale:qty_prec
+                      Primitives.Qty.of_string_exn ~scale:qty_prec
                         (Printf.sprintf "%.*f" qty_prec sell_qty_float)
                   | None ->
-                      Qty.of_string_exn ~scale:asset_cfg.qty.scale
+                      Primitives.Qty.of_string_exn ~scale:asset_cfg.qty.scale
                         (Printf.sprintf "%.*f" asset_cfg.qty.scale sell_qty_float)
                 in
 
@@ -151,8 +145,8 @@ module State = struct
                         (Printf.sprintf "Successfully pushed sell order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
                           order.client_id
                           order.symbol
-                          (Price.to_string order.price)
-                          (Qty.to_string order.qty))
+                          (Primitives.Price.to_string order.price)
+                          (Primitives.Qty.to_string order.qty))
                   | _ -> Lwt.return_unit) >>= fun () ->
 
                 (* Create and push buy order second with base quantity *)
@@ -167,8 +161,8 @@ module State = struct
                         (Printf.sprintf "Successfully pushed buy order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
                           order.client_id
                           order.symbol
-                          (Price.to_string order.price)
-                          (Qty.to_string order.qty))
+                          (Primitives.Price.to_string order.price)
+                          (Primitives.Qty.to_string order.qty))
                   | _ -> Lwt.return_unit) >>= fun () ->
                 
                 Lwt.return_unit
@@ -187,10 +181,10 @@ module State = struct
     Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
       (Printf.sprintf "Updated price for %s: current_price=%s" 
         tick.symbol 
-        (Price.to_string tick.current_price))
+        (Primitives.Price.to_string tick.current_price))
 
   (* Check and adjust orders that are too far from current price *)
-  let check_and_adjust_orders runtime_cfg cmd_buffer (tick : Event.tick) =
+  let check_and_adjust_orders (runtime_cfg : Config.runtime_cfg) cmd_buffer (tick : Event.tick) =
     (* Find the asset configuration for this symbol *)
     let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) -> 
       String.equal asset.symbol tick.symbol
@@ -198,8 +192,8 @@ module State = struct
 
     match asset_cfg_opt with
     | Some asset_cfg ->
-        let current_price_float = Float.of_string (Price.to_string tick.current_price) in
-        let grid_pct = Float.of_string (Fixed.to_string asset_cfg.grid_interval) in
+        let current_price_float = Float.of_string (Primitives.Price.to_string tick.current_price) in
+        let grid_pct = Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval) in
         let max_distance_pct = grid_pct *. 2.0 in (* 2x grid interval *)
         
         (* Log the price and grid settings *)
@@ -239,18 +233,18 @@ module State = struct
                let new_price_float = current_price_float *. (1.0 -. grid_pct /. 100.0) in
                let new_price = match K.get_precisions tick.symbol with
                  | Some (price_prec, _) ->
-                     Price.of_string_exn ~scale:price_prec
+                     Primitives.Price.of_string_exn ~scale:price_prec
                        (Printf.sprintf "%.*f" price_prec new_price_float)
                  | None -> 
-                     Price.of_string_exn ~scale:tick.current_price.scale
+                     Primitives.Price.of_string_exn ~scale:tick.current_price.scale
                        (Printf.sprintf "%.*f" tick.current_price.scale new_price_float)
                in
                
                (* Remove unused client_id definition *)
-               let current_qty = Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty) in (* Use order.qty from K.order *)
+               let current_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty) in (* Use order.qty from K.order *)
                
                (* Create amend command *) 
-               let amend_cmd = Amend {
+               let amend_cmd = Core.Amend {
                  dst = "kraken";
                  order_id = order.order_id; (* Use order_id directly *)
                  symbol = order.order_symbol; (* Add symbol from order *)
@@ -336,9 +330,9 @@ module State = struct
     Lwt.return_unit
 
   (* Update open orders based on execution *)
-  let handle_execution runtime_cfg cmd_buffer (event : market_event) =
+  let handle_execution runtime_cfg cmd_buffer (event : Core.market_event) =
     match event with
-    | Fill { order_id; symbol; price; qty; side; _ } ->
+    | Core.Fill { order_id; symbol; price; qty; side; _ } ->
         begin match Hashtbl.find_opt open_orders order_id with
         | Some (order : K.order) ->
             let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
@@ -352,9 +346,9 @@ module State = struct
               (Printf.sprintf "Order %s filled: %s %s %s @ %s (original side: %s)" 
                 order_id
                 side_str
-                (Qty.to_string qty)
+                (Primitives.Qty.to_string qty)
                 symbol
-                (Price.to_string price)
+                (Primitives.Price.to_string price)
                 order_side_str) >>= fun () ->
             Hashtbl.remove open_orders order_id;
             (* After a fill, check other orders and create new ones if needed *)
@@ -440,11 +434,11 @@ module State = struct
 end
 
 (* Updated signature for start function *)
-let start (runtime_cfg : runtime_cfg) (core_cfg : config) ~tick_buffer ~cmd_buffer ~exec_buffer =
+let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Core.config) ~tick_buffer ~cmd_buffer ~exec_buffer =
   (* Log the runtime config to use the variable *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     (Printf.sprintf "Strategy received runtime_cfg: %s" 
-       (Yojson.Safe.to_string (runtime_cfg_to_yojson runtime_cfg))) >>= fun () ->
+       (Yojson.Safe.to_string (Config.runtime_cfg_to_yojson runtime_cfg))) >>= fun () ->
 
   (* Wait for the execution snapshot to be processed *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
