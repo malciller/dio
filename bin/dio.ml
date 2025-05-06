@@ -10,8 +10,7 @@ let setup_logging () =
   Lwt_log.add_rule "engine.router" Lwt_log_core.Debug;   
   Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info;   
   Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Debug;
-    Lwt_log.add_rule "engine.strategy" Lwt_log_core.Info;   
-  Lwt_log.add_rule "enginge.strategy" Lwt_log_core.Debug;      
+  Lwt_log.add_rule "engine.strategy" Lwt_log_core.Info;         
   (* Allow Info for router *) 
   Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
 
@@ -79,7 +78,7 @@ let main () =
             Lwt.return_unit >>= fun () ->
 
             (* Create strategy and router modules *)
-            let strategy : Types.Core.strategy = { 
+            let grid_strategy : Types.Core.grid_strategy = { 
               start = Grid_strategy.start 
             } in
             let router : Types.Core.router = {
@@ -87,7 +86,7 @@ let main () =
             } in
 
 
-            Engine.run ~strategy ~router runtime_cfg core_cfg 
+            Engine.run ~grid_strategy ~router runtime_cfg core_cfg 
       )
       (fun exn ->
         (* Log errors from starting the engine *)

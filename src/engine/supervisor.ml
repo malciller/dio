@@ -22,8 +22,8 @@ let supervise name fiber_fun =
   loop ()
 
 (* Updated signature to accept both runtime_cfg and core_cfg *)
-let start ~feed 
-    ~(strategy : Core.strategy) 
+let start ~(feed_initializer_fn : unit -> unit Lwt.t)
+    ~(grid_strategy : Core.grid_strategy) 
     ~(router : Core.router) 
     ~(tick_buffer: Event.tick Ringbuffer.t) 
     ~(exec_buffer: Core.market_event Ringbuffer.t) 
@@ -31,8 +31,8 @@ let start ~feed
     (runtime_cfg : Config.runtime_cfg) (* Add runtime_cfg *)
     (core_cfg : Core.config) =        (* Keep core_cfg *)
   (* Coordinator: launch the three main fibers and supervise them *)
-  let feed_fut = supervise "feed" (fun () -> feed) in
-  let strat_fut = supervise "strategy" (fun () -> strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in 
+  let feed_fut = supervise "feed" (fun () -> feed_initializer_fn ()) in
+  let strat_fut = supervise "strategy" (fun () -> grid_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in 
   let router_fut = supervise "router" (fun () -> router.start core_cfg ~cmd_buffer ~exec_buffer) in
 
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.supervisor") "Starting all components under supervision..." >>= fun () ->

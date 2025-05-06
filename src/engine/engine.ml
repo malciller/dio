@@ -33,7 +33,7 @@ let start_feed (core_cfg: Core.config) (tick_buffer: Event.tick Ringbuffer.t) (e
 
 (* Main run function that orchestrates all components *)
 (* Updated signature to accept both runtime_cfg and core_cfg *)
-let run ~strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Core.config) =
+let run ~grid_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Core.config) =
   (* Create the ring buffers *)
   (* TODO: Potentially use runtime_cfg.queues_cap here? For now, keep fixed size. *)
   let tick_buffer = Ringbuffer.create 1024 in
@@ -41,13 +41,12 @@ let run ~strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Core.conf
   let cmd_buffer  = Ringbuffer.create 1024 in
 
   (* Start all components via the supervisor *)
-  (* Supervisor.start will also need its signature updated *)
   Supervisor.start 
-    ~feed:(start_feed core_cfg tick_buffer exec_buffer) (* Pass core_cfg to feed *)
-    ~strategy
+    ~feed_initializer_fn:(fun () -> start_feed core_cfg tick_buffer exec_buffer) (* Updated label name and wrapped in function *)
+    ~grid_strategy
     ~router
     ~tick_buffer
     ~exec_buffer
     ~cmd_buffer
-    runtime_cfg (* Pass runtime_cfg to supervisor *)
-    core_cfg (* Pass core_cfg to supervisor *)
+    runtime_cfg
+    core_cfg

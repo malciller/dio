@@ -8,7 +8,7 @@ type order_tag = [`Grid | `Manual | `Rebalance] [@@deriving yojson]
 
 type order_cmd =
   | Add of {
-      dst        : Event.exchange;      (* NEW – which exchange to send to *)
+      dst        : Event.exchange;    
       client_id  : string;
       symbol     : symbol;
       side       : side;
@@ -53,7 +53,7 @@ type config = {
 }
 
 (* Type for strategy component - Updated start signature *) 
-type strategy = {
+type grid_strategy = {
   start: Config.runtime_cfg -> config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
 
