@@ -42,7 +42,7 @@ let run ~grid_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Core
 
   (* Start all components via the supervisor *)
   Supervisor.start 
-    ~feed_initializer_fn:(fun () -> start_feed core_cfg tick_buffer exec_buffer) (* Updated label name and wrapped in function *)
+    ~feed_initializer_fn:(fun () -> start_feed core_cfg tick_buffer exec_buffer)
     ~grid_strategy
     ~router
     ~tick_buffer

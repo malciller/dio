@@ -31,7 +31,7 @@ let start ~(feed_initializer_fn : unit -> unit Lwt.t)
     (runtime_cfg : Config.runtime_cfg) (* Add runtime_cfg *)
     (core_cfg : Core.config) =        (* Keep core_cfg *)
   (* Coordinator: launch the three main fibers and supervise them *)
-  let feed_fut = supervise "feed" (fun () -> feed_initializer_fn ()) in
+  let feed_fut = supervise "feed" feed_initializer_fn in
   let strat_fut = supervise "strategy" (fun () -> grid_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in 
   let router_fut = supervise "router" (fun () -> router.start core_cfg ~cmd_buffer ~exec_buffer) in
 

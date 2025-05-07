@@ -10,7 +10,8 @@ let setup_logging () =
   Lwt_log.add_rule "engine.router" Lwt_log_core.Debug;   
   Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info;   
   Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Debug;
-  Lwt_log.add_rule "engine.strategy" Lwt_log_core.Info;         
+  Lwt_log.add_rule "engine.strategy" Lwt_log_core.Info; 
+  Lwt_log.add_rule "engine.supervisor" Lwt_log_core.Info;        
   (* Allow Info for router *) 
   Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
 

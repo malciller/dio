@@ -16,15 +16,11 @@
   tls-lwt
   conduit-lwt-unix
 
-  ;; rest of your deps
   dune
   decimal
   lwt lwt_ppx
   yojson ppx_deriving_yojson
-  caqti caqti-driver-sqlite3
   websocket-lwt-unix cohttp-lwt-unix
-  cmdliner
-  prometheus
   alcotest alcotest-lwt
   dotenv
   cstruct))
