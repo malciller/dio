@@ -43,23 +43,16 @@ type market_event =
 
 (* --- Engine Configuration & Component Types --- *) 
 
-(* Engine Configuration *) 
-type config = {
-  ws_host: string;
-  ws_port: int;
-  ws_path: string;
-  symbols: string list;
-  auth_token: string option;
-}
+(* Engine Configuration type has been moved to Config.ml *)
 
 (* Type for strategy component - Updated start signature *) 
 type grid_strategy = {
-  start: Config.runtime_cfg -> config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
+  start: Config.runtime_cfg -> Config.engine_config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
 
 (* Type for router component *) 
 type router = {
-  start: config -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
+  start: Config.engine_config -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
 
 (* Response type for order operations *)

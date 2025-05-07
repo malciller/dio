@@ -390,7 +390,7 @@ module State = struct
     | _ -> Lwt.return_unit
 
   (* Initialize order state from exchange - uses core_cfg for symbols *)
-  let initialize_orders (core_cfg : Core.config) =
+  let initialize_orders (core_cfg : Config.engine_config) =
     (* Initialize all configured symbols to false *) 
     List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) core_cfg.symbols;
     
@@ -434,7 +434,7 @@ module State = struct
 end
 
 (* Updated signature for start function *)
-let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Core.config) ~tick_buffer ~cmd_buffer ~exec_buffer =
+let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
   (* Log the runtime config to use the variable *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     (Printf.sprintf "Strategy received runtime_cfg: %s" 

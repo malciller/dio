@@ -19,7 +19,7 @@ let float_of_qty qty =
   float_of_string (Primitives.Qty.to_string qty)
 
 (* WebSocket connection setup *)
-let connect (cfg : Core.config) =
+let connect (cfg : Config.engine_config) =
   let ctx = Lazy.force Conduit_lwt_unix.default_ctx in
   let host = "ws-auth.kraken.com" in
   let port = cfg.ws_port in
@@ -315,7 +315,7 @@ let rec start_loop state token ~on_event =
             Lwt.return_unit
 
 (* Public interface for router - REVISED *)
-let handle_router_command (cfg : Core.config) cmd exec_buffer : unit Lwt.t =
+let handle_router_command (cfg : Config.engine_config) cmd exec_buffer : unit Lwt.t =
   let section = Lwt_log_core.Section.make "kraken_ws_exec" in
   match !connection_state with
   | Some state ->

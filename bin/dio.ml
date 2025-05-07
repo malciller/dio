@@ -16,18 +16,18 @@ let setup_logging () =
   Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
 
 (* Read and parse config file *)
-let read_config config_path : (Config.runtime_cfg * Core.config, string) result = (* Return both configs *)
+let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)
   try
     let json = Yojson.Safe.from_file config_path in
     let runtime_cfg = Config.runtime_cfg_of_yojson_exn json in
     (* Convert runtime_cfg to Core.config *)
     let symbols = List.map (fun asset -> asset.Config.symbol) runtime_cfg.assets in
     let core_cfg = { (* Rename to core_cfg for clarity *)
-      Core.ws_host = "ws.kraken.com";
-      Core.ws_port = 443;
-      Core.ws_path = "/v2";
-      Core.symbols;
-      Core.auth_token = None; (* Will be set later from .env *)
+      Config.ws_host = "ws.kraken.com";
+      Config.ws_port = 443;
+      Config.ws_path = "/v2";
+      Config.symbols;
+      Config.auth_token = None; (* Will be set later from .env *)
     } in
     Ok (runtime_cfg, core_cfg) (* Return tuple *)
   with

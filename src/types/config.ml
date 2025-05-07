@@ -13,3 +13,12 @@ type runtime_cfg = {
   debounce_ms : int;
   queues_cap  : int;
 } [@@deriving yojson { exn = true }]
+
+type engine_config = {
+  ws_host: string;
+  ws_port: int;
+  ws_path: string;
+  symbols: string list;
+  auth_token: string option;
+}
+

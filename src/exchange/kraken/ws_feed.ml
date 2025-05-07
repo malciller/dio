@@ -163,7 +163,7 @@ let execution_report_to_market_event (report : Common.execution_report) : Core.m
       Some (Core.Ack { order_id; client_id; state; ts })
 
 (* Connection Setup *)
-let connect (cfg : Core.config) is_auth =
+let connect (cfg : Config.engine_config) is_auth =
   let port = cfg.ws_port in
   let ctx = Lazy.force Conduit_lwt_unix.default_ctx in
   let connect_host = if is_auth then "ws-auth.kraken.com" else cfg.ws_host in
@@ -204,7 +204,7 @@ let custom_subscribe_message_to_yojson (msg : Common.subscribe_message) : Json.t
   )
 
 (* Subscription Messages *)
-let make_subscribe_message ?req_id (cfg : Core.config) channel =
+let make_subscribe_message ?req_id (cfg : Config.engine_config) channel =
   let params = match channel with
     | `Ticker -> 
         Common.Ticker {
@@ -233,7 +233,7 @@ let make_subscribe_message ?req_id (cfg : Core.config) channel =
   let content = custom_subscribe_message_to_yojson msg |> Json.to_string in
   Frame.create ~content ()
 
-let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
+let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
       Lwt.catch
@@ -339,7 +339,7 @@ let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
         (Printf.sprintf "Received unhandled opcode: %s" (Frame.Opcode.to_string opcode))
 
 (* Helper function to process a single order item's state from executions channel *)
-let process_execution_order_item_state (order_json : Json.t) (cfg : Core.config) (context_msg_type : string) =
+let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engine_config) (context_msg_type : string) =
   (* context_msg_type is "snapshot" or "update", for logging context *)
   let order_id = safe_string order_json "order_id" "" in
   let item_exec_type = safe_string order_json "exec_type" "" in
@@ -444,7 +444,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Core.config)
           if List.mem item_exec_type ["new"; "amended"; "restated"; "status"; "pending_new"] then log_open_orders () else Lwt.return_unit
       | _ -> Lwt.return_unit (* Skip non-buy/untracked symbol or unknown side *)
 
-let handle_auth_frame conn (cfg: Core.config) frame ~on_execution =
+let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
       let json = Json.from_string frame.content in
@@ -569,7 +569,7 @@ let handle_auth_frame conn (cfg: Core.config) frame ~on_execution =
 let get_open_buy_orders () : (string, order) Hashtbl.t = open_buy_orders
 
 (* Main Feed Functions *)
-let start (cfg : Core.config) ~on_tick =
+let start (cfg : Config.engine_config) ~on_tick =
   let rec loop conn =
     Websocket_lwt_unix.read conn >>= fun frame ->
     handle_public_frame conn cfg frame ~on_tick >>= fun () ->
@@ -582,7 +582,7 @@ let start (cfg : Core.config) ~on_tick =
   Websocket_lwt_unix.write conn subscribe_instrument_msg >>= fun () -> (* Send instrument subscription *)
   loop conn
 
-let start_executions (cfg : Core.config) ~on_execution =
+let start_executions (cfg : Config.engine_config) ~on_execution =
   (* Using global 'section' now *)
   match cfg.auth_token with
   | None -> Lwt.fail_with "Authentication token required for executions feed"

@@ -6,7 +6,7 @@ open Types
 
 (* 1. Define the WebSocket Interface using Core.config *)
 module type WS = sig
-  type config = Core.config (* Use the central config type *)
+  type config = Config.engine_config (* Use the central config type *)
 
   val start : config -> on_tick:(Event.tick -> unit Lwt.t) -> unit Lwt.t
   val start_executions : config -> on_execution:(Core.market_event list -> unit Lwt.t) -> unit Lwt.t
@@ -17,7 +17,7 @@ end
 module Make (W : WS) = struct
   let section = Lwt_log_core.Section.make "engine.feed"
 
-  let start (cfg : Core.config) ~on_tick =
+  let start (cfg : Config.engine_config) ~on_tick =
     let rec retry_loop () =
       Lwt.catch
         (fun () -> W.start cfg ~on_tick) (* W.start expects Core.config *)
@@ -28,7 +28,7 @@ module Make (W : WS) = struct
     in
     retry_loop ()
 
-  let start_executions (cfg : Core.config) ~on_execution =
+  let start_executions (cfg : Config.engine_config) ~on_execution =
     match cfg.auth_token with
     | Some _ ->
         let rec retry_loop () =
@@ -47,8 +47,8 @@ end
 
 (* 3. Define the production implementation using the real Kraken Ws_feed *)
 (* Kraken.Ws_feed now uses Core.config, matching the WS signature *)
-module Kraken_ws : WS with type config = Core.config = struct
-  type config = Core.config (* Satisfy signature constraint *)
+module Kraken_ws : WS with type config = Config.engine_config = struct
+  type config = Config.engine_config (* Satisfy signature constraint *)
 
   (* Map functions, coercing return type *)
   let start cfg ~on_tick : unit Lwt.t =

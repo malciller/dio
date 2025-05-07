@@ -30,7 +30,7 @@ end
 (* Mock implementation matching the Engine.Feed.WS interface *) 
 module Mock_kraken_ws_feed : Engine.Feed.WS = struct (* Declare implementation of the signature *) 
   (* Use the config type defined in the WS interface (which is Core.config) *) 
-  type config = Core.config (* Use Core.config directly *) 
+  type config = Config.engine_config (* Use Core.config directly *) 
 
   let start (cfg: config) ~on_tick = 
     let _ = cfg.auth_token in 
@@ -55,11 +55,11 @@ module Mock_feed = Engine.Feed.Make(Mock_kraken_ws_feed)
 (* REMOVED dummy references *) 
 
 (* --- Test Fixtures & Helpers --- *) 
-let test_config_no_auth : Core.config = { (* Use explicit Core.config *) 
+let test_config_no_auth : Config.engine_config = { (* Use explicit Core.config *) 
   ws_host = "localhost"; ws_port = 8080; ws_path = "/test";
   symbols = ["BTC/USD"]; auth_token = None;
 }
-let test_config_with_auth : Core.config = {
+let test_config_with_auth : Config.engine_config = {
   ws_host = "localhost"; ws_port = 8080; ws_path = "/test";
   symbols = ["BTC/USD"]; auth_token = Some "test_token";
 }

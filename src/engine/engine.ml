@@ -25,7 +25,7 @@ let push_execs_to_buffer exec_buffer events =
 
 (* Adapter function that starts both feed streams using ring buffers *)
 (* This function only needs the core connection/symbol/token info *)
-let start_feed (core_cfg: Core.config) (tick_buffer: Event.tick Ringbuffer.t) (exec_buffer: Core.market_event Ringbuffer.t) =
+let start_feed (core_cfg: Config.engine_config) (tick_buffer: Event.tick Ringbuffer.t) (exec_buffer: Core.market_event Ringbuffer.t) =
   (* Use the helper functions as callbacks *) 
   let feed_promise = Feed.Prod.start core_cfg ~on_tick:(push_tick_to_buffer tick_buffer) in
   let executions_promise = Feed.Prod.start_executions core_cfg ~on_execution:(push_execs_to_buffer exec_buffer) in
@@ -33,7 +33,7 @@ let start_feed (core_cfg: Core.config) (tick_buffer: Event.tick Ringbuffer.t) (e
 
 (* Main run function that orchestrates all components *)
 (* Updated signature to accept both runtime_cfg and core_cfg *)
-let run ~grid_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Core.config) =
+let run ~grid_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config) =
   (* Create the ring buffers *)
   (* TODO: Potentially use runtime_cfg.queues_cap here? For now, keep fixed size. *)
   let tick_buffer = Ringbuffer.create 1024 in
