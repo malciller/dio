@@ -1,52 +1,8 @@
 (* src/exchange/kraken/ws_exec.ml *)
 open Lwt.Infix
 open Websocket
+open Common
 open Types
-
-
-(* Type definitions for Kraken WS v2 API messages *)
-type add_order_params = {
-  order_type: string;
-  side: string;
-  order_qty: float;
-  symbol: string;
-  limit_price: float;
-  time_in_force: string;
-  post_only: bool;
-  cl_ord_id: string;
-} [@@deriving yojson]
-
-type add_order_request = {
-  method_: string; [@key "method"]
-  params: add_order_params;
-  token: string;
-  req_id: int option; [@yojson.option]
-} [@@deriving yojson]
-
-(* NEW: Types for Amend Order *) 
-type amend_order_params = {
-  order_id: string;      (* Kraken order ID *)
-  order_qty: float;     (* New quantity *)
-  limit_price: float;   (* New limit price *)
-  post_only: bool;       (* Must be true *)
-} [@@deriving yojson]
-
-type amend_order_request = {
-  method_: string; [@key "method"]
-  params: amend_order_params;
-  token: string;
-  req_id: int option; [@yojson.option]
-} [@@deriving yojson]
-
-(* Connection state *)
-type state = {
-  conn: Websocket_lwt_unix.conn;
-  mutable next_req_id: int;
-  mutable req_to_client: (int, string) Hashtbl.t;
-  mutable response_promises: (int, Core.order_response Lwt.u) Hashtbl.t;
-  cmd_queue: Core.order_cmd Queue.t;
-  cmd_cond: unit Lwt_condition.t;
-}
 
 (* Global connection state *)
 let connection_state = ref None
