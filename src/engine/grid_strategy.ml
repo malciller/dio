@@ -26,9 +26,16 @@ module State = struct
 
   (* Check if we have any open orders for a symbol *)
   let has_open_orders symbol =
-    Hashtbl.fold (fun _ (order : K.Common.order) has_orders -> (* USE NEW TYPE *)
-      has_orders || String.equal order.order_symbol symbol (* Use field from K.order *)
-    ) open_orders false
+    let has_buy = ref false in
+    let has_sell = ref false in
+    Hashtbl.iter (fun _ (order : K.Common.order) ->
+      if String.equal order.order_symbol symbol then
+        match order.side with
+        | Some Core.Buy -> has_buy := true
+        | Some Core.Sell -> has_sell := true
+        | None -> ()
+    ) open_orders;
+    !has_buy && !has_sell (* Returns true only if both a buy and a sell exist *)
 
   (* Get latest price info for a symbol *)
   let get_price symbol = Hashtbl.find_opt price_info symbol
