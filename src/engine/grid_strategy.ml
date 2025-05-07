@@ -468,7 +468,7 @@ module State = struct
                 Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval)
               in
               let expected_total_spread_pct = 2.0 *. configured_grid_interval_pct in
-              let tolerance_pct = 0.1 (* Tolerance for comparison, e.g., 0.1% *) in
+              let tolerance_pct = 0.02 (* Tolerance for comparison, e.g., 0.1% *) in
               let diff_pct = abs_float (actual_spread_pct_of_mid -. expected_total_spread_pct) in
 
               if diff_pct <= tolerance_pct then
@@ -485,44 +485,51 @@ module State = struct
 
                 if new_target_buy_price_float >= current_market_price_float then
                   Lwt_log_core.warning ~section
-                    (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND. Proposed new buy price (%.8f) for order %s is at or above current market price (%.8f)."
+                    (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND (Above Market). Proposed new buy price (%.8f) for order %s is at or above current market price (%.8f)."
                       symbol new_target_buy_price_float highest_buy_order.order_id current_market_price_float)
                 else
-                  (* Safe to amend *)
+                  (* Safe to amend, check precision and if new price is actually different *)
                   match K.get_precisions symbol with
                   | None ->
                       Lwt_log_core.error ~section
-                        (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND. Could not get price precision for symbol %s to amend order %s."
+                        (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND (No Precision). Could not get price precision for symbol %s to amend order %s."
                           symbol symbol highest_buy_order.order_id)
-                  | Some (price_prec, _) ->
+                  | Some (price_prec, qty_prec) ->
                       let new_buy_price_primitive =
                         Primitives.Price.of_string_exn ~scale:price_prec
                           (Printf.sprintf "%.*f" price_prec new_target_buy_price_float)
                       in
-                      (* Quantity remains the same as the existing highest buy order *)
-                      let existing_qty_primitive =
-                         match K.get_precisions symbol with
-                           | Some (_, qty_prec) -> Primitives.Qty.of_string_exn ~scale:qty_prec (Printf.sprintf "%.*f" qty_prec highest_buy_order.qty)
-                           | None -> Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" highest_buy_order.qty) (* Fallback, should ideally not happen if instruments are loaded *)
+                      let existing_buy_price_primitive = (* Convert existing float price to primitive for accurate comparison *)
+                        Primitives.Price.of_string_exn ~scale:price_prec
+                          (Printf.sprintf "%.*f" price_prec highest_buy_order.limit_price)
                       in
 
-                      let amend_cmd = Core.Amend {
-                        dst = "kraken";
-                        order_id = highest_buy_order.order_id;
-                        symbol = symbol;
-                        new_price = new_buy_price_primitive;
-                        new_qty = existing_qty_primitive;
-                        ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-                      } in
-
-                      if Ringbuffer.push cmd_buffer amend_cmd then
-                        Lwt_log_core.info ~section
-                          (Printf.sprintf "Grid Verify [%s]: FAILED & AMENDING. Amending buy order %s from %.8f to new target price %.8f (MinSell: %.8f, Market: %.8f, Target Spread: %.2f%%)."
-                            symbol highest_buy_order.order_id max_buy_price_float new_target_buy_price_float min_sell_price_float current_market_price_float expected_total_spread_pct)
-                      else
+                      if Stdlib.compare new_buy_price_primitive existing_buy_price_primitive = 0 then
                         Lwt_log_core.warning ~section
-                          (Printf.sprintf "Grid Verify [%s]: FAILED & AMEND FAILED. Command buffer full. Could not amend order %s to %.8f."
-                            symbol highest_buy_order.order_id new_target_buy_price_float)
+                          (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND (Identical Price). Proposed new buy price %.8f (primitive %s) for order %s is identical to existing price %.8f (primitive %s) after precision formatting."
+                            symbol new_target_buy_price_float (Primitives.Price.to_string new_buy_price_primitive) highest_buy_order.order_id highest_buy_order.limit_price (Primitives.Price.to_string existing_buy_price_primitive))
+                      else
+                        (* Prices are different after formatting, proceed with amend *)
+                        let existing_qty_primitive =
+                           Primitives.Qty.of_string_exn ~scale:qty_prec (Printf.sprintf "%.*f" qty_prec highest_buy_order.qty)
+                        in
+                        let amend_cmd = Core.Amend {
+                          dst = "kraken";
+                          order_id = highest_buy_order.order_id;
+                          symbol = symbol;
+                          new_price = new_buy_price_primitive;
+                          new_qty = existing_qty_primitive;
+                          ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+                        } in
+
+                        if Ringbuffer.push cmd_buffer amend_cmd then
+                          Lwt_log_core.info ~section
+                            (Printf.sprintf "Grid Verify [%s]: FAILED & AMENDING. Amending buy order %s from %.8f (primitive %s) to new target price %.8f (primitive %s) (MinSell: %.8f, Market: %.8f, Target Spread: %.2f%%)."
+                              symbol highest_buy_order.order_id highest_buy_order.limit_price (Primitives.Price.to_string existing_buy_price_primitive) new_target_buy_price_float (Primitives.Price.to_string new_buy_price_primitive) min_sell_price_float current_market_price_float expected_total_spread_pct)
+                        else
+                          Lwt_log_core.warning ~section
+                            (Printf.sprintf "Grid Verify [%s]: FAILED & AMEND FAILED (Buffer Full). Command buffer full. Could not amend order %s to %.8f."
+                              symbol highest_buy_order.order_id new_target_buy_price_float)
         else
           Lwt_log_core.info ~section
             (Printf.sprintf "Grid Verify [%s]: Skipping, not enough buy/sell orders to form a grid (Buys: %d, Sells: %d)."
