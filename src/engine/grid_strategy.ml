@@ -201,8 +201,8 @@ module State = struct
           (Printf.sprintf "Checking orders for %s - Current Price: %.8f, Grid Interval: %.2f%%, Max Distance: %.2f%%" 
             tick.symbol current_price_float grid_pct max_distance_pct) >>= fun () ->
         
-        (* Get all open buy orders for this symbol *)
-        let orders = Hashtbl.to_seq_values (K.get_open_buy_orders ()) |> List.of_seq in
+        (* Get all open orders for this symbol *)
+        let orders = Hashtbl.to_seq_values (K.get_all_open_orders ()) |> List.of_seq in
         
         (* Log how many orders we're checking *)
         Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
@@ -288,7 +288,7 @@ module State = struct
 
   (* Sync our open orders with exchange's state *)
   let sync_open_orders runtime_cfg cmd_buffer () =
-    let exchange_orders = K.get_open_buy_orders () in
+    let exchange_orders = K.get_all_open_orders () in
     (* Track which orders were updated *)
     let updated_symbols = Hashtbl.create 16 in
     
@@ -395,7 +395,7 @@ module State = struct
     List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) core_cfg.symbols;
     
     (* Fetch existing orders *) 
-    let exchange_orders = K.get_open_buy_orders () in
+    let exchange_orders = K.get_all_open_orders () in
     Hashtbl.clear open_orders;
     (* Process each order and collect logging promises *)
     let log_promises = Hashtbl.fold (fun order_id (order : K.order) promises -> (* USE NEW TYPE *)
@@ -419,10 +419,121 @@ module State = struct
     Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
       (Printf.sprintf "Initialized %d open orders from exchange" (Hashtbl.length open_orders))
 
+  let verify_grid_spacing (runtime_cfg : Config.runtime_cfg) (symbol : string) (cmd_buffer : Core.order_cmd Ringbuffer.t) (current_market_price_float : float) : unit Lwt.t =
+    let section = Lwt_log_core.Section.make "engine.strategy.grid_verify" in
+    match List.find_opt (fun (asset : Config.asset_cfg) -> String.equal asset.symbol symbol) runtime_cfg.assets with
+    | None ->
+        Lwt_log_core.warning ~section
+          (Printf.sprintf "Grid Verify [%s]: No asset config found." symbol)
+    | Some asset_cfg ->
+        let open_orders_for_symbol =
+          Hashtbl.to_seq_values open_orders
+          |> List.of_seq
+          |> List.filter (fun (o : K.order) -> String.equal o.order_symbol symbol)
+        in
+
+        let buy_orders = List.filter (fun (o : K.order) -> o.side = Some Core.Buy) open_orders_for_symbol in
+        let sell_orders = List.filter (fun (o : K.order) -> o.side = Some Core.Sell) open_orders_for_symbol in
+
+        if List.length buy_orders > 0 && List.length sell_orders > 0 then
+          let highest_buy_order =
+            List.fold_left (fun (acc : K.order) (curr : K.order) ->
+              if curr.limit_price > acc.limit_price then curr else acc
+            ) (List.hd buy_orders) (List.tl buy_orders)
+          in
+          let lowest_sell_order =
+            List.fold_left (fun (acc : K.order) (curr : K.order) ->
+              if curr.limit_price < acc.limit_price then curr else acc
+            ) (List.hd sell_orders) (List.tl sell_orders)
+          in
+
+          let max_buy_price_float = highest_buy_order.limit_price in
+          let min_sell_price_float = lowest_sell_order.limit_price in
+
+          if min_sell_price_float <= max_buy_price_float then
+            Lwt_log_core.warning ~section
+              (Printf.sprintf "Grid Verify [%s]: Lowest sell (%.8f) is not strictly above highest buy (%.8f). Cannot reliably calculate spread percentage."
+                symbol min_sell_price_float max_buy_price_float)
+          else
+            let actual_spread_value = min_sell_price_float -. max_buy_price_float in
+            let p_mid_reference = (min_sell_price_float +. max_buy_price_float) /. 2.0 in
+
+            if p_mid_reference <= 0.0 then
+              Lwt_log_core.warning ~section
+                (Printf.sprintf "Grid Verify [%s]: Midpoint reference price (%.8f) is zero or negative. Cannot calculate spread percentage."
+                  symbol p_mid_reference)
+            else
+              let actual_spread_pct_of_mid = (actual_spread_value /. p_mid_reference) *. 100.0 in
+              let configured_grid_interval_pct =
+                Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval)
+              in
+              let expected_total_spread_pct = 2.0 *. configured_grid_interval_pct in
+              let tolerance_pct = 0.1 (* Tolerance for comparison, e.g., 0.1% *) in
+              let diff_pct = abs_float (actual_spread_pct_of_mid -. expected_total_spread_pct) in
+
+              if diff_pct <= tolerance_pct then
+                Lwt_log_core.info ~section
+                  (Printf.sprintf "Grid Verify [%s]: PASSED. MaxBuy: %.8f, MinSell: %.8f. Actual Spread: %.4f%% (of mid %.8f). Expected Total Spread: %.4f%%. Diff: %.4f%%."
+                    symbol max_buy_price_float min_sell_price_float actual_spread_pct_of_mid p_mid_reference expected_total_spread_pct diff_pct)
+              else
+                (* Grid check FAILED, attempt to amend the highest buy order *)
+                Lwt_log_core.warning ~section
+                  (Printf.sprintf "Grid Verify [%s]: FAILED. MaxBuy: %.8f, MinSell: %.8f. Actual Spread: %.4f%% (of mid %.8f). Expected Total Spread: %.4f%%. Diff: %.4f%% (Tolerance: %.2f%%). Attempting to amend highest buy order."
+                    symbol max_buy_price_float min_sell_price_float actual_spread_pct_of_mid p_mid_reference expected_total_spread_pct diff_pct tolerance_pct) >>= fun () ->
+
+                let new_target_buy_price_float = min_sell_price_float *. (1.0 -. (expected_total_spread_pct /. 100.0)) in
+
+                if new_target_buy_price_float >= current_market_price_float then
+                  Lwt_log_core.warning ~section
+                    (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND. Proposed new buy price (%.8f) for order %s is at or above current market price (%.8f)."
+                      symbol new_target_buy_price_float highest_buy_order.order_id current_market_price_float)
+                else
+                  (* Safe to amend *)
+                  match K.get_precisions symbol with
+                  | None ->
+                      Lwt_log_core.error ~section
+                        (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND. Could not get price precision for symbol %s to amend order %s."
+                          symbol symbol highest_buy_order.order_id)
+                  | Some (price_prec, _) ->
+                      let new_buy_price_primitive =
+                        Primitives.Price.of_string_exn ~scale:price_prec
+                          (Printf.sprintf "%.*f" price_prec new_target_buy_price_float)
+                      in
+                      (* Quantity remains the same as the existing highest buy order *)
+                      let existing_qty_primitive =
+                         match K.get_precisions symbol with
+                           | Some (_, qty_prec) -> Primitives.Qty.of_string_exn ~scale:qty_prec (Printf.sprintf "%.*f" qty_prec highest_buy_order.qty)
+                           | None -> Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" highest_buy_order.qty) (* Fallback, should ideally not happen if instruments are loaded *)
+                      in
+
+                      let amend_cmd = Core.Amend {
+                        dst = "kraken";
+                        order_id = highest_buy_order.order_id;
+                        symbol = symbol;
+                        new_price = new_buy_price_primitive;
+                        new_qty = existing_qty_primitive;
+                        ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+                      } in
+
+                      if Ringbuffer.push cmd_buffer amend_cmd then
+                        Lwt_log_core.info ~section
+                          (Printf.sprintf "Grid Verify [%s]: FAILED & AMENDING. Amending buy order %s from %.8f to new target price %.8f (MinSell: %.8f, Market: %.8f, Target Spread: %.2f%%)."
+                            symbol highest_buy_order.order_id max_buy_price_float new_target_buy_price_float min_sell_price_float current_market_price_float expected_total_spread_pct)
+                      else
+                        Lwt_log_core.warning ~section
+                          (Printf.sprintf "Grid Verify [%s]: FAILED & AMEND FAILED. Command buffer full. Could not amend order %s to %.8f."
+                            symbol highest_buy_order.order_id new_target_buy_price_float)
+        else
+          Lwt_log_core.info ~section
+            (Printf.sprintf "Grid Verify [%s]: Skipping, not enough buy/sell orders to form a grid (Buys: %d, Sells: %d)."
+              symbol (List.length buy_orders) (List.length sell_orders))
+
   let get_open_orders () : open_order list =
-    let buy_orders = K.get_open_buy_orders () in
-    let orders = Hashtbl.to_seq_values buy_orders |> List.of_seq in
-    List.filter_map (fun (order : K.order) -> (* USE NEW TYPE *)
+    let all_feed_orders = K.get_all_open_orders () in
+    let orders = Hashtbl.to_seq_values all_feed_orders |> List.of_seq in
+    List.filter_map (fun (order : K.order) -> 
+      (* You might want to add filtering here if this function is supposed to return only specific types of orders,
+         otherwise, it will return all orders (buy and sell) fetched from the feed. *)
       Some {
           order_id = order.order_id;
           symbol = order.order_symbol;
@@ -499,6 +610,9 @@ let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Config.engine_config) ~
                 Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
                   (Printf.sprintf "Skipping order creation for %s - already has orders" tick.symbol) >>= fun () ->
                 Lwt.return_unit) >>= fun () ->
+              (* Verify grid spacing after potential order adjustments or creations *)
+              let current_price_for_verify = Float.of_string (Primitives.Price.to_string tick.current_price) in
+              State.verify_grid_spacing runtime_cfg tick.symbol cmd_buffer current_price_for_verify >>= fun () ->
               loop ()
             ) else (
               (* Price unchanged, state not updated, just loop *)

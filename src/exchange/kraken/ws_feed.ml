@@ -61,7 +61,7 @@ type order = {
 }
 
 (* Order Tracking - Define Hashtables after 'order' type *)
-let open_buy_orders : (string, order) Hashtbl.t = Hashtbl.create 16
+let all_open_orders : (string, order) Hashtbl.t = Hashtbl.create 16
 let pending_orders : (string, order) Hashtbl.t = Hashtbl.create 16
 
 let format_order_log order action =
@@ -80,7 +80,7 @@ let format_order_log order action =
     order.limit_price
 
 let log_open_orders () =
-  let orders = Hashtbl.to_seq_values open_buy_orders |> List.of_seq in
+  let orders = Hashtbl.to_seq_values all_open_orders |> List.of_seq in
   debug_log (Printf.sprintf "Open orders (%d):" (List.length orders)) >>= fun () ->
   Lwt_list.iter_s (fun (order: order) ->
     debug_log (format_order_log order "OPEN")
@@ -167,16 +167,16 @@ let connect (cfg : Config.engine_config) is_auth =
   let port = cfg.ws_port in
   let ctx = Lazy.force Conduit_lwt_unix.default_ctx in
   let connect_host = if is_auth then "ws-auth.kraken.com" else cfg.ws_host in
-  let path = "/v2" in
+    let path = "/v2" in
   let uri = Uri.of_string (Printf.sprintf "wss://%s:%d%s" connect_host port path) in
 
   Lwt_unix.getaddrinfo connect_host (string_of_int port) [Unix.(AI_FAMILY PF_INET)] >>= fun addrs ->
-  match addrs with
-  | { Unix.ai_addr = Unix.ADDR_INET (ip_addr_from_dns, _); _ } :: _ ->
-      let ip_to_use = Ipaddr.of_string_exn (Unix.string_of_inet_addr ip_addr_from_dns) in
+    match addrs with
+    | { Unix.ai_addr = Unix.ADDR_INET (ip_addr_from_dns, _); _ } :: _ ->
+        let ip_to_use = Ipaddr.of_string_exn (Unix.string_of_inet_addr ip_addr_from_dns) in
       let tls_config = `Hostname connect_host, `IP ip_to_use, `Port port in
-      let endpoint = `TLS tls_config in
-      Websocket_lwt_unix.connect ~ctx endpoint uri
+        let endpoint = `TLS tls_config in
+        Websocket_lwt_unix.connect ~ctx endpoint uri
   | _ -> Lwt.fail_with (Printf.sprintf "Failed to resolve host: %s" connect_host)
 
 (* Custom Yojson converter for channel_params *)
@@ -365,19 +365,19 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
 
   match item_exec_type with
   | "canceled" ->
-      (match Hashtbl.find_opt open_buy_orders order_id with
+      (match Hashtbl.find_opt all_open_orders order_id with
       | Some existing_order ->
           let symbol = existing_order.order_symbol in
           debug_log (format_order_log existing_order ("CANCELED" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
           handle_order_cancellation order_id symbol >>= fun () ->
-          Hashtbl.remove open_buy_orders order_id;
+          Hashtbl.remove all_open_orders order_id;
           Hashtbl.remove pending_orders order_id;
           log_open_orders ()
       | None -> Lwt.return_unit)
   | "filled" | "expired" -> (* Handles items explicitly marked as "filled" or "expired" *)
-      (match Hashtbl.find_opt open_buy_orders order_id with
+      (match Hashtbl.find_opt all_open_orders order_id with
       | Some existing_order ->
-          Hashtbl.remove open_buy_orders order_id;
+          Hashtbl.remove all_open_orders order_id;
           Hashtbl.remove pending_orders order_id;
           debug_log (format_order_log existing_order (String.uppercase_ascii item_exec_type ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
           log_open_orders ()
@@ -386,7 +386,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
       let symbol =
         match item_exec_type, symbol_opt with
         | ("amended" | "new"), _ -> (* Prioritize existing order's symbol for consistency *)
-            let existing_opt = if item_exec_type = "new" then Hashtbl.find_opt pending_orders order_id else Hashtbl.find_opt open_buy_orders order_id in
+            let existing_opt = if item_exec_type = "new" then Hashtbl.find_opt pending_orders order_id else Hashtbl.find_opt all_open_orders order_id in
             (match existing_opt with Some o -> o.order_symbol | None -> Option.value symbol_opt ~default:"")
         | _, Some s -> s
         | _, None -> ""
@@ -394,24 +394,24 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
       let side_opt =
         match item_exec_type with
         | ("amended" | "new") ->
-            let existing_opt = if item_exec_type = "new" then Hashtbl.find_opt pending_orders order_id else Hashtbl.find_opt open_buy_orders order_id in
+            let existing_opt = if item_exec_type = "new" then Hashtbl.find_opt pending_orders order_id else Hashtbl.find_opt all_open_orders order_id in
             (match existing_opt with Some o -> o.side | None -> parse_order_side (Option.value side_str_opt ~default:""))
         | _ -> parse_order_side (Option.value side_str_opt ~default:"")
       in
 
-      match side_opt with
-      | Some Core.Buy when List.exists (fun s -> String.equal s symbol) cfg.symbols ->
+      (* Only process if the symbol is in our configured list *)
+      if List.exists (fun s -> String.equal s symbol) cfg.symbols then
           let status = kraken_status_to_core_state order_status_str in
           let limit_price =
             match item_exec_type with
             | "new" -> (match Hashtbl.find_opt pending_orders order_id with Some o -> o.limit_price | None -> Option.value limit_price_opt ~default:0.0)
-            | "amended" -> (match Hashtbl.find_opt open_buy_orders order_id with Some o -> Option.value limit_price_opt ~default:o.limit_price | None -> Option.value limit_price_opt ~default:0.0)
+            | "amended" -> (match Hashtbl.find_opt all_open_orders order_id with Some o -> Option.value limit_price_opt ~default:o.limit_price | None -> Option.value limit_price_opt ~default:0.0)
             | _ -> Option.value limit_price_opt ~default:0.0
           in
           let qty =
             match item_exec_type with
             | "new" -> (match Hashtbl.find_opt pending_orders order_id with Some o -> o.qty | None -> Option.value order_qty_opt ~default:0.0)
-            | "amended" -> (match Hashtbl.find_opt open_buy_orders order_id with Some o -> Option.value order_qty_opt ~default:o.qty | None -> Option.value order_qty_opt ~default:0.0)
+            | "amended" -> (match Hashtbl.find_opt all_open_orders order_id with Some o -> Option.value order_qty_opt ~default:o.qty | None -> Option.value order_qty_opt ~default:0.0)
             | _ -> Option.value order_qty_opt ~default:0.0
           in
           let order : order = {
@@ -423,26 +423,27 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
             match item_exec_type with
             | "pending_new" -> Hashtbl.replace pending_orders order_id order; Lwt.return (format_order_log order ("PENDING" ^ suffix))
             | "new" ->
-                Hashtbl.replace open_buy_orders order_id order;
+                Hashtbl.replace all_open_orders order_id order;
                 Hashtbl.remove pending_orders order_id;
                 Lwt.return (format_order_log order ("NEW" ^ suffix))
             | "trade" ->
                 let last_qty_val = Option.value last_qty_opt ~default:0.0 in
                 let last_price_val = Option.value last_price_opt ~default:0.0 in
                 if status = Core.Open then (* If order is still open (e.g. partially_filled) *)
-                  (Hashtbl.replace open_buy_orders order_id order; (* Update order state, possibly remaining qty if reflected in 'qty' field *)
+                  (Hashtbl.replace all_open_orders order_id order; (* Changed to all_open_orders *)
                    Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Order remains open)" suffix last_qty_val order.order_symbol last_price_val))
                 else (* If trade results in Filled or other terminal state *)
-                  (Hashtbl.remove open_buy_orders order_id;
+                  (Hashtbl.remove all_open_orders order_id; (* Changed to all_open_orders *)
                    Hashtbl.remove pending_orders order_id;
                    Lwt.return (Printf.sprintf "[ORDER FILL%s] %f %s at %.2f (Order now terminal)" suffix last_qty_val order.order_symbol last_price_val))
-            | "amended" -> Hashtbl.replace open_buy_orders order_id order; Lwt.return (format_order_log order ("AMENDED" ^ suffix))
-            | "restated" | "status" -> Hashtbl.replace open_buy_orders order_id order; Lwt.return (format_order_log order ((String.uppercase_ascii item_exec_type) ^ suffix))
+            | "amended" -> Hashtbl.replace all_open_orders order_id order; Lwt.return (format_order_log order ("AMENDED" ^ suffix))
+            | "restated" | "status" -> Hashtbl.replace all_open_orders order_id order; Lwt.return (format_order_log order ((String.uppercase_ascii item_exec_type) ^ suffix))
             | _ -> Lwt.return (format_order_log order (("UPDATE (" ^ item_exec_type ^ ")" ) ^ suffix))
           in
           debug_log log_msg_lwt >>= fun () ->
           if List.mem item_exec_type ["new"; "amended"; "restated"; "status"; "pending_new"] then log_open_orders () else Lwt.return_unit
-      | _ -> Lwt.return_unit (* Skip non-buy/untracked symbol or unknown side *)
+      else
+        Lwt.return_unit (* Skip untracked symbol *)
 
 let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
   match frame.Websocket.Frame.opcode with
@@ -476,7 +477,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                       if Lwt.state executions_snapshot_processed = Lwt.Sleep then (
                           Lwt_log_core.info ~section "Execution snapshot processed, resolving executions_snapshot_processed promise" >>= fun () ->
                           Lwt.wakeup_later resolve_executions_snapshot_processed ();
-                          Lwt.return_unit
+                      Lwt.return_unit
                       ) else Lwt.return_unit
                   | Some "update" ->
                       (* Step 1: Generate market events *)
@@ -506,21 +507,21 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                               | ("trade" | "filled"), Some qty_f, Some price_f, Some side when qty_f > 0.0 ->
                                   (try
                                      Some (Core.Fill { symbol; order_id; client_id; price=(float_to_price ~scale:price_prec price_f); qty=(float_to_qty ~scale:qty_prec qty_f); side; ts })
-                                   with ex ->
-                                     Lwt_log_core.error ~section (Printf.sprintf "Failed converting Fill data for update %s: %s" order_id (Printexc.to_string ex)) |> Lwt.ignore_result;
+                               with ex -> 
+                                 Lwt_log_core.error ~section (Printf.sprintf "Failed converting Fill data for update %s: %s" order_id (Printexc.to_string ex)) |> Lwt.ignore_result; 
                                      Some (Core.Ack { order_id; client_id; state = core_state; ts }))
                               | _ -> (* For any other exec_type or if not a valid trade for Fill, generate Ack *)
                                   Some (Core.Ack { order_id; client_id; state = core_state; ts })
                       ) data_json_list in
 
                       (* Step 2: Call on_execution *)
-                      let* () =
+                      let* () = 
                         if market_events <> [] then (
                           debug_log (Printf.sprintf "Calling on_execution with %d events from update" (List.length market_events)) >>= fun () ->
                           on_execution market_events
                         ) else Lwt.return_unit (* Removed redundant log for no events for brevity *)
                       in
-
+                      
                       (* Step 3: Update Internal State *)
                       Lwt_list.iter_s (fun order_json ->
                           process_execution_order_item_state order_json cfg "update"
@@ -565,8 +566,8 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
            (Frame.Opcode.to_string frame.Websocket.Frame.opcode)) >>= fun () ->
       Lwt.return_unit
 
-(* Getter for open orders (used by Strategy) - Updated Type *)
-let get_open_buy_orders () : (string, order) Hashtbl.t = open_buy_orders
+(* Getter for open orders (used by Strategy) - Updated Type and Name *)
+let get_all_open_orders () : (string, order) Hashtbl.t = all_open_orders
 
 (* Main Feed Functions *)
 let start (cfg : Config.engine_config) ~on_tick =

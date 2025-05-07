@@ -57,7 +57,7 @@ module Kraken_ws : WS with type config = Config.engine_config = struct
   let start_executions cfg ~on_execution : unit Lwt.t =
     (Kraken.Ws_feed.start_executions cfg ~on_execution : unit Lwt.t)
 
-  let get_open_buy_orders = Kraken.Ws_feed.get_open_buy_orders
+  let get_open_buy_orders = Kraken.Ws_feed.get_all_open_orders
 end
 
 (* 4. Instantiate the production Feed module *)
