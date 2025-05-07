@@ -79,10 +79,10 @@ let main () =
             Lwt.return_unit >>= fun () ->
 
             (* Create strategy and router modules *)
-            let grid_strategy : Types.Core.grid_strategy = { 
+            let grid_strategy : Core.grid_strategy = { 
               start = Grid_strategy.start 
             } in
-            let router : Types.Core.router = {
+            let router : Core.router = {
               start = Router.start 
             } in
 

@@ -1,7 +1,6 @@
 open Alcotest
 open Types
 
-module P = Primitives          (* shorter alias *)
 
 (* Helper: round-trip via Yojson ------------------------------------- *)
 let json_round_trip ~pp to_json of_json v =
@@ -12,8 +11,8 @@ let json_round_trip ~pp to_json of_json v =
       failf "decoding failed: %s" e
 
 (* ------------------------------------------------------------------ *)
-let price = P.Price.of_string_exn ~scale:2
-let qty   = P.Qty.  of_string_exn ~scale:8
+let price = Primitives.Price.of_string_exn ~scale:2
+let qty   = Primitives.Qty.  of_string_exn ~scale:8
 
 (* Sample values ----------------------------------------------------- *)
 let add_cmd =

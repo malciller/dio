@@ -4,11 +4,9 @@
 (* test/feed/test_feed.ml *)
 open Alcotest_lwt
 open Lwt.Infix
+open Types
 
 
-open Types.Event
-open Types.Core
-open Types.Primitives
 
 
 (* Initialize RNG ... *) 
@@ -31,8 +29,8 @@ end
 
 (* Mock implementation matching the Engine.Feed.WS interface *) 
 module Mock_kraken_ws_feed : Engine.Feed.WS = struct (* Declare implementation of the signature *) 
-  (* Use the config type defined in the WS interface (which is Types.Core.config) *) 
-  type config = Types.Core.config (* Use Core.config directly *) 
+  (* Use the config type defined in the WS interface (which is Core.config) *) 
+  type config = Core.config (* Use Core.config directly *) 
 
   let start (cfg: config) ~on_tick = 
     let _ = cfg.auth_token in 
@@ -57,11 +55,11 @@ module Mock_feed = Engine.Feed.Make(Mock_kraken_ws_feed)
 (* REMOVED dummy references *) 
 
 (* --- Test Fixtures & Helpers --- *) 
-let test_config_no_auth : Types.Core.config = { (* Use explicit Types.Core.config *) 
+let test_config_no_auth : Core.config = { (* Use explicit Core.config *) 
   ws_host = "localhost"; ws_port = 8080; ws_path = "/test";
   symbols = ["BTC/USD"]; auth_token = None;
 }
-let test_config_with_auth : Types.Core.config = {
+let test_config_with_auth : Core.config = {
   ws_host = "localhost"; ws_port = 8080; ws_path = "/test";
   symbols = ["BTC/USD"]; auth_token = Some "test_token";
 }
@@ -101,13 +99,13 @@ let test_callbacks_passed_down _switch () =
   Mock_feed.start_executions test_config_with_auth ~on_execution:on_exec_test >>= fun () ->
 
   (* Manually invoke the callbacks stored by the mock *) 
-  let sample_exec = [ Ack { order_id = "o"; client_id = "c"; state = Open; ts = 0L } ] in (* List of events *) 
+  let sample_exec = [ Core.Ack { order_id = "o"; client_id = "c"; state = Open; ts = 0L } ] in (* List of events *) 
 
   (* Create a dummy tick for the type check, even though we don't use its value *) 
   let dummy_tick_for_callback = 
-    let bid = Price.of_string_exn ~scale:1 "1" in
-    let ask = Price.of_string_exn ~scale:1 "1" in
-    { src="test"; symbol="X"; bid; ask; current_price = Price.midpoint bid ask; ts=0L }
+    let bid = Primitives.Price.of_string_exn ~scale:1 "1" in
+    let ask = Primitives.Price.of_string_exn ~scale:1 "1" in
+    { Event.src="test"; symbol="X"; bid; ask; current_price = Primitives.Price.midpoint bid ask; ts=0L }
   in
 
   !(Mock_state.last_on_tick_callback) dummy_tick_for_callback >>= fun () ->

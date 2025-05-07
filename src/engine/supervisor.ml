@@ -1,7 +1,6 @@
 (* src/engine/supervisor.ml *)
-open Lwt.Infix  (* for >>= *)
-open Types (* For Event.tick *)
-
+open Lwt.Infix 
+open Types 
 (* Supervision helper: restart a fiber on failure, with logging and delay *)
 let supervise name fiber_fun =
   let section = Lwt_log_core.Section.make ("engine.supervisor." ^ name) in

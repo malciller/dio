@@ -390,7 +390,7 @@ module State = struct
     | _ -> Lwt.return_unit
 
   (* Initialize order state from exchange - uses core_cfg for symbols *)
-  let initialize_orders (core_cfg : Types.Core.config) =
+  let initialize_orders (core_cfg : Core.config) =
     (* Initialize all configured symbols to false *) 
     List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) core_cfg.symbols;
     

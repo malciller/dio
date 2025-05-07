@@ -1,7 +1,6 @@
 open Lwt.Syntax (* enable let* syntax *)
 open Alcotest_lwt
-
-(* Remove open Types.Core *)
+open Types
 
 (* Define default scales *)
 let default_price_scale = 8
@@ -11,16 +10,16 @@ let default_qty_scale = 8
 let create_add_cmd 
     ?(dst = "kraken") 
     ?(symbol = "BTC/USD") 
-    ?(side = Types.Core.Buy) (* Fully qualify *)
+    ?(side = Core.Buy) (* Fully qualify *)
     ?(price_str = "50000.0") 
     ?(qty_str = "0.1") 
-    ?(tif = Types.Core.GTC) (* Add default TIF, fully qualified *)
+    ?(tif = Core.GTC) (* Add default TIF, fully qualified *)
     ?(client_id = "test_client_id_1")
     ?(tags = [`Manual]) 
-    () : Types.Core.order_cmd = (* Fully qualify, corrected type *)
-  let price = Types.Primitives.Price.of_string_exn ~scale:default_price_scale price_str in 
-  let qty = Types.Primitives.Qty.of_string_exn ~scale:default_qty_scale qty_str in 
-  Types.Core.Add { dst; symbol; side; price; qty; tif; client_id; tags } 
+    () : Core.order_cmd = (* Fully qualify, corrected type *)
+  let price = Primitives.Price.of_string_exn ~scale:default_price_scale price_str in 
+  let qty = Primitives.Qty.of_string_exn ~scale:default_qty_scale qty_str in 
+  Core.Add { dst; symbol; side; price; qty; tif; client_id; tags } 
 
 (* --- Test Cases --- *)
 
@@ -68,8 +67,8 @@ let test_expired_add_order _ () =
 
 (* Test that different Add orders are not marked as duplicates *)
 let test_different_add_orders _ () =
-   let cmd1 = create_add_cmd ~side:Types.Core.Buy ~client_id:"diff_buy_1" () in (* Fully qualify *)
-   let cmd2 = create_add_cmd ~side:Types.Core.Sell ~client_id:"diff_sell_1" () in (* Fully qualify *)
+   let cmd1 = create_add_cmd ~side:Core.Buy ~client_id:"diff_buy_1" () in (* Fully qualify *)
+   let cmd2 = create_add_cmd ~side:Core.Sell ~client_id:"diff_sell_1" () in (* Fully qualify *)
    let key1 = Router.OrderCache.make_order_key cmd1 in
    let key2 = Router.OrderCache.make_order_key cmd2 in
 

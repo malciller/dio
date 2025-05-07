@@ -4,7 +4,7 @@ open Types
 
 
 
-(* 1. Define the WebSocket Interface using Types.Core.config *)
+(* 1. Define the WebSocket Interface using Core.config *)
 module type WS = sig
   type config = Core.config (* Use the central config type *)
 
@@ -46,7 +46,7 @@ module Make (W : WS) = struct
 end
 
 (* 3. Define the production implementation using the real Kraken Ws_feed *)
-(* Kraken.Ws_feed now uses Types.Core.config, matching the WS signature *)
+(* Kraken.Ws_feed now uses Core.config, matching the WS signature *)
 module Kraken_ws : WS with type config = Core.config = struct
   type config = Core.config (* Satisfy signature constraint *)
 

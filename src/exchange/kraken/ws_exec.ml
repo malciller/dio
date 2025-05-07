@@ -43,8 +43,8 @@ type state = {
   conn: Websocket_lwt_unix.conn;
   mutable next_req_id: int;
   mutable req_to_client: (int, string) Hashtbl.t;
-  mutable response_promises: (int, Types.Core.order_response Lwt.u) Hashtbl.t;
-  cmd_queue: Types.Core.order_cmd Queue.t;
+  mutable response_promises: (int, Core.order_response Lwt.u) Hashtbl.t;
+  cmd_queue: Core.order_cmd Queue.t;
   cmd_cond: unit Lwt_condition.t;
 }
 
@@ -58,13 +58,13 @@ let get_next_req_id state =
   id
 
 let float_of_price price =
-  float_of_string (Types.Primitives.Price.to_string price)
+  float_of_string (Primitives.Price.to_string price)
 
 let float_of_qty qty =
-  float_of_string (Types.Primitives.Qty.to_string qty)
+  float_of_string (Primitives.Qty.to_string qty)
 
 (* WebSocket connection setup *)
-let connect (cfg : Types.Core.config) =
+let connect (cfg : Core.config) =
   let ctx = Lazy.force Conduit_lwt_unix.default_ctx in
   let host = "ws-auth.kraken.com" in
   let port = cfg.ws_port in
@@ -79,7 +79,7 @@ let send_message state msg =
   Websocket_lwt_unix.write state.conn (Frame.create ~content ())
 
 (* Order placement - MODIFIED *)
-let send_order_command state token (cmd : Types.Core.order_cmd) : unit Lwt.t =
+let send_order_command state token (cmd : Core.order_cmd) : unit Lwt.t =
   let section = Lwt_log_core.Section.make "kraken_ws_exec" in
   match cmd with
   | Add { symbol; side; price; qty; client_id; _ } ->
@@ -243,7 +243,7 @@ let handle_message state msg ~on_event =
                if Hashtbl.mem state.response_promises req_id then (
                  Lwt_log_core.debug ~section (Printf.sprintf "Found matching promise for req_id: %d" req_id) >>= fun () ->
                  (* Construct the response record manually *) 
-                 let response : Types.Core.order_response = {
+                 let response : Core.order_response = {
                    success = Option.value success_opt ~default:false; (* Assume false if 'success' field missing *) 
                    error = error_opt;
                    result = Yojson.Safe.Util.(member "result" json |> to_option (fun x -> x)); (* Get result if present *) 
@@ -270,7 +270,7 @@ let handle_message state msg ~on_event =
                             Lwt_log_core.debug ~section (Printf.sprintf "Received Add Ack for order %s (client_id %s)" order_id cid) >>= fun () -> 
 
                             let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
-                            let ack = Types.Core.Ack { order_id; client_id = cid; state = Types.Core.Open; ts } in
+                            let ack = Core.Ack { order_id; client_id = cid; state = Core.Open; ts } in
                             on_event ack
                         | None -> Lwt_log_core.warning ~section (Printf.sprintf "No client_id found for req_id %d when processing Add Order Ack" req_id))
                    | None -> Lwt_log_core.warning ~section "Successful response but no result data"
@@ -360,7 +360,7 @@ let rec start_loop state token ~on_event =
             Lwt.return_unit
 
 (* Public interface for router - REVISED *)
-let handle_router_command (cfg : Types.Core.config) cmd exec_buffer : unit Lwt.t =
+let handle_router_command (cfg : Core.config) cmd exec_buffer : unit Lwt.t =
   let section = Lwt_log_core.Section.make "kraken_ws_exec" in
   match !connection_state with
   | Some state ->
@@ -397,7 +397,7 @@ let handle_router_command (cfg : Types.Core.config) cmd exec_buffer : unit Lwt.t
           
           (* Define on_event here *) 
           let on_event event = 
-            let _ = Types.Ringbuffer.push exec_buffer event in
+            let _ = Ringbuffer.push exec_buffer event in
             Lwt.return_unit
           in
           
