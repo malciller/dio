@@ -18,20 +18,28 @@ module Make (W : WS) = struct
   let section = Lwt_log_core.Section.make "engine.feed"
 
   let start (cfg : Core.config) ~on_tick =
-    Lwt.catch
-      (fun () -> W.start cfg ~on_tick) (* W.start expects Core.config *)
-      (fun exn ->
-        Lwt_log_core.error_f ~section "Error starting public feed: %s" (Printexc.to_string exn) >>= fun () ->
-        Lwt.fail exn)
+    let rec retry_loop () =
+      Lwt.catch
+        (fun () -> W.start cfg ~on_tick) (* W.start expects Core.config *)
+        (fun exn ->
+          Lwt_log_core.error_f ~section "Error starting public feed: %s. Retrying in 5s..." (Printexc.to_string exn) >>= fun () ->
+          Lwt_unix.sleep 5.0 >>= fun () ->
+          retry_loop ())
+    in
+    retry_loop ()
 
   let start_executions (cfg : Core.config) ~on_execution =
     match cfg.auth_token with
     | Some _ ->
-        Lwt.catch
-          (fun () -> W.start_executions cfg ~on_execution) (* W.start_executions expects Core.config *)
-          (fun exn ->
-            Lwt_log_core.error_f ~section "Error starting execution feed: %s" (Printexc.to_string exn) >>= fun () ->
-            Lwt.fail exn)
+        let rec retry_loop () =
+          Lwt.catch
+            (fun () -> W.start_executions cfg ~on_execution) (* W.start_executions expects Core.config *)
+            (fun exn ->
+              Lwt_log_core.error_f ~section "Error starting execution feed: %s. Retrying in 5s..." (Printexc.to_string exn) >>= fun () ->
+              Lwt_unix.sleep 5.0 >>= fun () ->
+              retry_loop ())
+        in
+        retry_loop ()
     | None ->
         Lwt_log_core.warning ~section "Auth token not found, skipping execution feed." >>= fun () ->
         Lwt.return_unit
