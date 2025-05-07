@@ -50,21 +50,11 @@ let parse_order_side = function
   | "sell" -> Some Core.Sell
   | _ -> None
 
-type order = {
-  order_id : string;
-  client_id : string option; (* Mapped from userref *)
-  order_symbol : string;
-  side : Core.side option;
-  status : Core.order_state;
-  limit_price : float;
-  qty: float; (* Mapped from vol *)
-}
-
 (* Order Tracking - Define Hashtables after 'order' type *)
-let all_open_orders : (string, order) Hashtbl.t = Hashtbl.create 16
-let pending_orders : (string, order) Hashtbl.t = Hashtbl.create 16
+let all_open_orders : (string, Common.order) Hashtbl.t = Hashtbl.create 16
+let pending_orders : (string, Common.order) Hashtbl.t = Hashtbl.create 16
 
-let format_order_log order action =
+let format_order_log (order : Common.order) action =
   Printf.sprintf "[ORDER %s] ID: %s, Symbol: %s, Side: %s, Status: %s, Price: %.8f"
     action order.order_id order.order_symbol
     (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown")
@@ -82,7 +72,7 @@ let format_order_log order action =
 let log_open_orders () =
   let orders = Hashtbl.to_seq_values all_open_orders |> List.of_seq in
   debug_log (Printf.sprintf "Open orders (%d):" (List.length orders)) >>= fun () ->
-  Lwt_list.iter_s (fun (order: order) ->
+  Lwt_list.iter_s (fun (order: Common.order) ->
     debug_log (format_order_log order "OPEN")
   ) orders
 
@@ -414,7 +404,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
             | "amended" -> (match Hashtbl.find_opt all_open_orders order_id with Some o -> Option.value order_qty_opt ~default:o.qty | None -> Option.value order_qty_opt ~default:0.0)
             | _ -> Option.value order_qty_opt ~default:0.0
           in
-          let order : order = {
+          let order : Common.order = {
             order_id; client_id = userref_opt; order_symbol = symbol;
             side = side_opt; status; limit_price; qty;
           } in
@@ -567,7 +557,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
       Lwt.return_unit
 
 (* Getter for open orders (used by Strategy) - Updated Type and Name *)
-let get_all_open_orders () : (string, order) Hashtbl.t = all_open_orders
+let get_all_open_orders () : (string, Common.order) Hashtbl.t = all_open_orders
 
 (* Main Feed Functions *)
 let start (cfg : Config.engine_config) ~on_tick =

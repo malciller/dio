@@ -2,7 +2,7 @@
 open Lwt.Infix  (* for >>= *)
 open Types 
 
-module K = Kraken.Ws_feed (* To get open orders *)
+module K = Kraken (* To get open orders *)
 
 (* Module-level state *)
 module State = struct
@@ -10,7 +10,7 @@ module State = struct
   let price_info : (string, Event.tick) Hashtbl.t = Hashtbl.create 16
 
   (* Track our open orders - USE NEW TYPE *)
-  let open_orders : (string, K.order) Hashtbl.t = Hashtbl.create 16
+  let open_orders : (string, K.Common.order) Hashtbl.t = Hashtbl.create 16
   
   (* Track whether we've initialized orders for each symbol *)
   let initialized_symbols : (string, bool) Hashtbl.t = Hashtbl.create 16
@@ -26,7 +26,7 @@ module State = struct
 
   (* Check if we have any open orders for a symbol *)
   let has_open_orders symbol =
-    Hashtbl.fold (fun _ (order : K.order) has_orders -> (* USE NEW TYPE *)
+    Hashtbl.fold (fun _ (order : K.Common.order) has_orders -> (* USE NEW TYPE *)
       has_orders || String.equal order.order_symbol symbol (* Use field from K.order *)
     ) open_orders false
 
@@ -35,7 +35,7 @@ module State = struct
 
   (* Create a new order command *)
   let create_order ~symbol ~side ~price ~qty =
-    match K.get_precisions symbol with
+    match K.Ws_feed.get_precisions symbol with
     | Some (price_prec, qty_prec) ->
         let price_str = Primitives.Price.to_string price in
         let qty_str = Primitives.Qty.to_string qty in
@@ -113,7 +113,7 @@ module State = struct
                 let base_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
                 let sell_mult_float = Float.of_string (Primitives.Fixed.to_string asset_cfg.sell_mult) in
                 let sell_qty_float = base_qty_float *. sell_mult_float in
-                let sell_qty = match K.get_precisions symbol with
+                let sell_qty = match K.Ws_feed.get_precisions symbol with
                   | Some (_, qty_prec) ->
                       Primitives.Qty.of_string_exn ~scale:qty_prec
                         (Printf.sprintf "%.*f" qty_prec sell_qty_float)
@@ -202,14 +202,14 @@ module State = struct
             tick.symbol current_price_float grid_pct max_distance_pct) >>= fun () ->
         
         (* Get all open orders for this symbol *)
-        let orders = Hashtbl.to_seq_values (K.get_all_open_orders ()) |> List.of_seq in
+        let orders = Hashtbl.to_seq_values (K.Ws_feed.get_all_open_orders ()) |> List.of_seq in
         
         (* Log how many orders we're checking *)
         Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
           (Printf.sprintf "Found %d open orders to check" (List.length orders)) >>= fun () ->
         
         (* Process each order *)
-        Lwt_list.iter_s (fun (order : K.order) ->
+        Lwt_list.iter_s (fun (order : K.Common.order) ->
           (* Log each order we're examining *)
           Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
             (Printf.sprintf "Examining order %s: symbol=%s side=%s price=%.8f" 
@@ -231,7 +231,7 @@ module State = struct
              (* If price difference exceeds 2x grid interval, adjust the order *)
              if price_diff_pct > max_distance_pct then
                let new_price_float = current_price_float *. (1.0 -. grid_pct /. 100.0) in
-               let new_price = match K.get_precisions tick.symbol with
+               let new_price = match K.Ws_feed.get_precisions tick.symbol with
                  | Some (price_prec, _) ->
                      Primitives.Price.of_string_exn ~scale:price_prec
                        (Printf.sprintf "%.*f" price_prec new_price_float)
@@ -288,12 +288,12 @@ module State = struct
 
   (* Sync our open orders with exchange's state *)
   let sync_open_orders runtime_cfg cmd_buffer () =
-    let exchange_orders = K.get_all_open_orders () in
+    let exchange_orders = K.Ws_feed.get_all_open_orders () in
     (* Track which orders were updated *)
     let updated_symbols = Hashtbl.create 16 in
     
     (* Remove orders that no longer exist on exchange *)
-    Hashtbl.iter (fun order_id (order : K.order) ->
+    Hashtbl.iter (fun order_id (order : K.Common.order) ->
       if not (Hashtbl.mem exchange_orders order_id) then (
         Hashtbl.add updated_symbols order.order_symbol true;
         Hashtbl.remove open_orders order_id
@@ -301,7 +301,7 @@ module State = struct
     ) open_orders;
     
     (* Add/update orders from exchange *)
-    Hashtbl.iter (fun order_id (order : K.order) ->
+    Hashtbl.iter (fun order_id (order : K.Common.order) ->
       match Hashtbl.find_opt open_orders order_id with
       | Some existing_order ->
           (* Check if order was modified *)
@@ -334,7 +334,7 @@ module State = struct
     match event with
     | Core.Fill { order_id; symbol; price; qty; side; _ } ->
         begin match Hashtbl.find_opt open_orders order_id with
-        | Some (order : K.order) ->
+        | Some (order : K.Common.order) ->
             let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
             let order_side_str = 
               match order.side with
@@ -395,10 +395,10 @@ module State = struct
     List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) core_cfg.symbols;
     
     (* Fetch existing orders *) 
-    let exchange_orders = K.get_all_open_orders () in
+    let exchange_orders = K.Ws_feed.get_all_open_orders () in
     Hashtbl.clear open_orders;
     (* Process each order and collect logging promises *)
-    let log_promises = Hashtbl.fold (fun order_id (order : K.order) promises -> (* USE NEW TYPE *)
+    let log_promises = Hashtbl.fold (fun order_id (order : K.Common.order) promises -> (* USE NEW TYPE *)
       let log_promise = 
         let symbol_str = order.order_symbol in (* Use field from K.order *)
         if symbol_str <> "N/A" && List.mem symbol_str core_cfg.symbols then ( (* Check against core_cfg.symbols *) 
@@ -429,20 +429,20 @@ module State = struct
         let open_orders_for_symbol =
           Hashtbl.to_seq_values open_orders
           |> List.of_seq
-          |> List.filter (fun (o : K.order) -> String.equal o.order_symbol symbol)
+          |> List.filter (fun (o : K.Common.order) -> String.equal o.order_symbol symbol)
         in
 
-        let buy_orders = List.filter (fun (o : K.order) -> o.side = Some Core.Buy) open_orders_for_symbol in
-        let sell_orders = List.filter (fun (o : K.order) -> o.side = Some Core.Sell) open_orders_for_symbol in
+        let buy_orders = List.filter (fun (o : K.Common.order) -> o.side = Some Core.Buy) open_orders_for_symbol in
+        let sell_orders = List.filter (fun (o : K.Common.order) -> o.side = Some Core.Sell) open_orders_for_symbol in
 
         if List.length buy_orders > 0 && List.length sell_orders > 0 then
           let highest_buy_order =
-            List.fold_left (fun (acc : K.order) (curr : K.order) ->
+            List.fold_left (fun (acc : K.Common.order) (curr : K.Common.order) ->
               if curr.limit_price > acc.limit_price then curr else acc
             ) (List.hd buy_orders) (List.tl buy_orders)
           in
           let lowest_sell_order =
-            List.fold_left (fun (acc : K.order) (curr : K.order) ->
+            List.fold_left (fun (acc : K.Common.order) (curr : K.Common.order) ->
               if curr.limit_price < acc.limit_price then curr else acc
             ) (List.hd sell_orders) (List.tl sell_orders)
           in
@@ -473,8 +473,8 @@ module State = struct
 
               if diff_pct <= tolerance_pct then
                 Lwt_log_core.info ~section
-                  (Printf.sprintf "Grid Verify [%s]: PASSED. MaxBuy: %.8f, MinSell: %.8f. Actual Spread: %.4f%% (of mid %.8f). Expected Total Spread: %.4f%%. Diff: %.4f%%."
-                    symbol max_buy_price_float min_sell_price_float actual_spread_pct_of_mid p_mid_reference expected_total_spread_pct diff_pct)
+                  (Printf.sprintf "Grid Verify [%s]: PASSED."
+                    symbol)
               else
                 (* Grid check FAILED, attempt to amend the highest buy order *)
                 Lwt_log_core.warning ~section
@@ -489,11 +489,11 @@ module State = struct
                       symbol new_target_buy_price_float highest_buy_order.order_id current_market_price_float)
                 else
                   (* Safe to amend, check precision and if new price is actually different *)
-                  match K.get_precisions symbol with
+                  match K.Ws_feed.get_precisions symbol with
                   | None ->
                       Lwt_log_core.error ~section
-                        (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND (No Precision). Could not get price precision for symbol %s to amend order %s."
-                          symbol symbol highest_buy_order.order_id)
+                        (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND (No Precision)."
+                          symbol)
                   | Some (price_prec, qty_prec) ->
                       let new_buy_price_primitive =
                         Primitives.Price.of_string_exn ~scale:price_prec
@@ -506,8 +506,8 @@ module State = struct
 
                       if Stdlib.compare new_buy_price_primitive existing_buy_price_primitive = 0 then
                         Lwt_log_core.warning ~section
-                          (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND (Identical Price). Proposed new buy price %.8f (primitive %s) for order %s is identical to existing price %.8f (primitive %s) after precision formatting."
-                            symbol new_target_buy_price_float (Primitives.Price.to_string new_buy_price_primitive) highest_buy_order.order_id highest_buy_order.limit_price (Primitives.Price.to_string existing_buy_price_primitive))
+                          (Printf.sprintf "Grid Verify [%s]: FAILED & NO AMEND (Identical Price)."
+                            symbol)
                       else
                         (* Prices are different after formatting, proceed with amend *)
                         let existing_qty_primitive =
@@ -536,9 +536,9 @@ module State = struct
               symbol (List.length buy_orders) (List.length sell_orders))
 
   let get_open_orders () : open_order list =
-    let all_feed_orders = K.get_all_open_orders () in
+    let all_feed_orders = K.Ws_feed.get_all_open_orders () in
     let orders = Hashtbl.to_seq_values all_feed_orders |> List.of_seq in
-    List.filter_map (fun (order : K.order) -> 
+    List.filter_map (fun (order : K.Common.order) -> 
       (* You might want to add filtering here if this function is supposed to return only specific types of orders,
          otherwise, it will return all orders (buy and sell) fetched from the feed. *)
       Some {
@@ -561,14 +561,14 @@ let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Config.engine_config) ~
   (* Wait for the execution snapshot to be processed *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     "Waiting for execution snapshot from Kraken..." >>= fun () ->
-  K.wait_for_snapshot () >>= fun () ->
+  K.Ws_feed.wait_for_snapshot () >>= fun () ->
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     "Execution snapshot received, initializing strategy state..." >>= fun () ->
 
   (* Wait for instrument data to be loaded *) 
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
     "Waiting for instrument data from Kraken..." >>= fun () ->
-  K.wait_for_instruments () >>= fun () ->
+  K.Ws_feed.wait_for_instruments () >>= fun () ->
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
     "Instrument data received." >>= fun () ->
 

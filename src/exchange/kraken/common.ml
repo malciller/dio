@@ -191,6 +191,17 @@ type state = {
 
 
 
+type order = {
+  order_id : string;
+  client_id : string option; (* Mapped from userref *)
+  order_symbol : string;
+  side : Core.side option;
+  status : Core.order_state;
+  limit_price : float;
+  qty: float; (* Mapped from vol *)
+}
+
+
 let nonce () =
   let ms = Int64.of_float (Unix.gettimeofday () *. 1000.) in
   Int64.to_string ms
