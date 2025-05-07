@@ -295,7 +295,7 @@ let kraken_side_to_core_side = function
 
 let kraken_status_to_core_state status : Core.order_state = (* Explicit return type *)
   match status with
-  | "new" | "pending_new" | "amended" | "restated" | "status" -> Open
+  | "new" | "pending_new" | "amended" | "restated" | "status" | "partially_filled" -> Open (* Add partially_filled here *)
   | "filled" -> Filled
   | "canceled" | "expired" -> Canceled
   | "rejected" -> Rejected
@@ -834,8 +834,14 @@ let handle_auth_frame conn (cfg: Core.config) frame ~on_execution =
                                         Lwt.return (format_order_log order "NEW")
                                     | "trade" -> 
                                         let last_qty = Option.value last_qty_opt ~default:0.0 in 
-                                        let last_price = Option.value last_price_opt ~default:0.0 in 
-                                        Lwt.return (Printf.sprintf "[ORDER FILL] %f %s at %.2f" last_qty order.order_symbol last_price)
+                                        let last_price = Option.value last_price_opt ~default:0.0 in
+                                        (* For trade/partial fill, keep the order in open_buy_orders *)
+                                        (match order_status_str with
+                                        | "partially_filled" ->
+                                            Hashtbl.replace open_buy_orders order_id order;
+                                            Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL] %f %s at %.2f (Order remains open)" last_qty order.order_symbol last_price)
+                                        | _ ->
+                                            Lwt.return (Printf.sprintf "[ORDER FILL] %f %s at %.2f" last_qty order.order_symbol last_price))
                                     | "amended" ->
                                         let existing_order_opt = Hashtbl.find_opt open_buy_orders order_id in
                                         debug_log (Printf.sprintf "[CACHE UPDATE] %s Before amendment - Order %s: %.8f" 
