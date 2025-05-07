@@ -7,27 +7,15 @@ module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
 open Types
 
-(* Add at the top of the file, after module imports *)
-let snapshot_processed, resolve_snapshot_processed = Lwt.task ()
-let instruments_loaded, resolve_instruments_loaded = Lwt.task () (* New promise for instruments *)
+(* Define the logging section once at the top *)
+let section = Lwt_log_core.Section.make "kraken_ws_feed"
 
-(* Flags to track snapshot completion *)
-let executions_snapshot_done = ref false
-let open_orders_snapshot_done = ref false
-
-(* Function to check and resolve the main snapshot promise *) 
-let check_and_resolve_snapshot_promise () =
-  let section = Lwt_log_core.Section.make "kraken_ws_feed" in (* Define section here *) 
-  if !executions_snapshot_done && !open_orders_snapshot_done then (
-    if Lwt.state snapshot_processed = Lwt.Sleep then (
-      Lwt_log_core.info ~section "Both execution and openOrders snapshots processed, resolving main snapshot promise" >>= fun () ->
-      Lwt.wakeup_later resolve_snapshot_processed ();
-      Lwt.return_unit
-    ) else Lwt.return_unit (* Already resolved *)
-  ) else Lwt.return_unit (* Not all snapshots done yet *)
+(* Simplified promise setup for snapshots *)
+let executions_snapshot_processed, resolve_executions_snapshot_processed = Lwt.task ()
+let instruments_loaded, resolve_instruments_loaded = Lwt.task ()
 
 (* Expose a function to get the snapshot promise *)
-let wait_for_snapshot () = snapshot_processed
+let wait_for_snapshot () = executions_snapshot_processed
 (* Expose a function to get the instruments promise *)
 let wait_for_instruments () = instruments_loaded
 
@@ -43,8 +31,6 @@ let get_price_precision symbol : int option =
   | Some (price_prec, _) -> Some price_prec
   | None -> None
 
-
-
 (* Utility Functions *)
 let float_to_price ~scale f =
   let s = Printf.sprintf "%.*f" scale f in
@@ -53,8 +39,6 @@ let float_to_price ~scale f =
 let float_to_qty ~scale f =
   let s = Printf.sprintf "%.*f" scale f in
   Primitives.Qty.of_string_exn ~scale s
-
-let section = Lwt_log_core.Section.make "kraken_ws_feed"
 
 let safe_string json key default = JsonUtil.(member key json |> to_string_option |> Option.value ~default)
 let safe_float json key default = JsonUtil.(member key json |> to_float_option |> Option.value ~default)
@@ -65,7 +49,6 @@ let parse_order_side = function
   | "buy" -> Some Core.Buy
   | "sell" -> Some Core.Sell
   | _ -> None
-
 
 type order = {
   order_id : string;
@@ -164,12 +147,13 @@ let execution_report_to_market_event (report : Common.execution_report) : Core.m
   let ts = kraken_ts_to_core_ts report.timestamp in
   let state = kraken_status_to_core_state report.order_status in
   let symbol_opt = report.symbol in
+  let price_prec, qty_prec = match symbol_opt with Some sym -> Option.value (get_precisions sym) ~default:(8,8) | None -> (8,8) in
 
   match report.exec_type, report.last_qty, report.last_price, kraken_side_to_core_side report.side, symbol_opt with
   | ("trade" | "filled"), Some qty_f, Some price_f, Some side, Some symbol when qty_f > 0.0 ->
       begin try
-        let price = float_to_price ~scale:8 price_f in
-        let qty = float_to_qty ~scale:8 qty_f in
+        let price = float_to_price ~scale:price_prec price_f in
+        let qty = float_to_qty ~scale:qty_prec qty_f in
         Some (Core.Fill { symbol; order_id; client_id; price; qty; side; ts })
       with ex ->
         Lwt_log_core.error ~section (Printf.sprintf "Failed to convert Fill data for order %s: %s" order_id (Printexc.to_string ex)) |> ignore;
@@ -182,27 +166,18 @@ let execution_report_to_market_event (report : Common.execution_report) : Core.m
 let connect (cfg : Core.config) is_auth =
   let port = cfg.ws_port in
   let ctx = Lazy.force Conduit_lwt_unix.default_ctx in
+  let connect_host = if is_auth then "ws-auth.kraken.com" else cfg.ws_host in
+  let path = "/v2" in
+  let uri = Uri.of_string (Printf.sprintf "wss://%s:%d%s" connect_host port path) in
 
-  if is_auth then
-    (* Authenticated connection logic based on provided example *) 
-    let host = "ws-auth.kraken.com" in
-    let uri = Uri.of_string (Printf.sprintf "wss://%s:%d/v2" host port) in (* Use /v2 path *)
-    let tls_config = `Hostname host, `IP (Ipaddr.of_string_exn "104.16.248.94"), `Port port in
-    let endpoint = `TLS tls_config in
-    Websocket_lwt_unix.connect ~ctx endpoint uri
-  else 
-    (* Public connection logic (existing) *) 
-    let host = cfg.ws_host in
-    let path = "/v2" in
-    let uri = Uri.of_string (Printf.sprintf "wss://%s:%d%s" host port path) in
-    Lwt_unix.getaddrinfo host (string_of_int port) [Unix.(AI_FAMILY PF_INET)] >>= fun addrs ->
-    match addrs with
-    | { Unix.ai_addr = Unix.ADDR_INET (ip_addr_from_dns, _); _ } :: _ ->
-        let ip_to_use = Ipaddr.of_string_exn (Unix.string_of_inet_addr ip_addr_from_dns) in
-        let tls_config = `Hostname host, `IP ip_to_use, `Port port in
-        let endpoint = `TLS tls_config in
-        Websocket_lwt_unix.connect ~ctx endpoint uri
-    | _ -> Lwt.fail_with "Failed to resolve public host" 
+  Lwt_unix.getaddrinfo connect_host (string_of_int port) [Unix.(AI_FAMILY PF_INET)] >>= fun addrs ->
+  match addrs with
+  | { Unix.ai_addr = Unix.ADDR_INET (ip_addr_from_dns, _); _ } :: _ ->
+      let ip_to_use = Ipaddr.of_string_exn (Unix.string_of_inet_addr ip_addr_from_dns) in
+      let tls_config = `Hostname connect_host, `IP ip_to_use, `Port port in
+      let endpoint = `TLS tls_config in
+      Websocket_lwt_unix.connect ~ctx endpoint uri
+  | _ -> Lwt.fail_with (Printf.sprintf "Failed to resolve host: %s" connect_host)
 
 (* Custom Yojson converter for channel_params *)
 let custom_channel_params_to_yojson = function
@@ -258,9 +233,7 @@ let make_subscribe_message ?req_id (cfg : Core.config) channel =
   let content = custom_subscribe_message_to_yojson msg |> Json.to_string in
   Frame.create ~content ()
 
-
 let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
-  let section = Lwt_log_core.Section.make "kraken_ws_feed" in
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
       Lwt.catch
@@ -287,9 +260,10 @@ let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
                       Lwt_list.iter_s
                         (fun (ticker : Common.ticker_data) ->
                           let symbol = ticker.symbol in
+                          let price_prec, _ (*qty_prec not needed for ticker bid/ask*) = Option.value (get_precisions symbol) ~default:(8, 8) in
                           let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
-                          let bid_price = float_to_price ~scale:8 ticker.bid in
-                          let ask_price = float_to_price ~scale:8 ticker.ask in
+                          let bid_price = float_to_price ~scale:price_prec ticker.bid in
+                          let ask_price = float_to_price ~scale:price_prec ticker.ask in
                           let current_price = Primitives.Price.midpoint bid_price ask_price in
                           let tick_event : Event.tick = {
                             src = "kraken";
@@ -319,7 +293,7 @@ let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
                   Lwt.return_unit
               | Some "instrument" ->
                   begin match Common.instrument_response_of_yojson json with
-                  | Ok { type_ = ("snapshot" | "update"); data = { pairs; _ }; _ } ->
+                  | Ok { type_ = msg_type_str; data = { pairs; _ }; _ } when msg_type_str = "snapshot" || msg_type_str = "update"->
                       Lwt_list.iter_s
                         (fun (pair : Common.pair_data) ->
                           if List.mem pair.symbol cfg.symbols then
@@ -331,12 +305,11 @@ let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
                             Lwt.return_unit)
                         pairs
                       >>= fun () ->
-                      if Lwt.state instruments_loaded = Lwt.Sleep then
+                      if msg_type_str = "snapshot" && Lwt.state instruments_loaded = Lwt.Sleep then (
                         Lwt_log_core.info ~section "Instrument snapshot processed, resolving instruments promise" >>= fun () ->
                         Lwt.wakeup_later resolve_instruments_loaded ();
                         Lwt.return_unit
-                      else
-                        Lwt.return_unit
+                      ) else Lwt.return_unit
                   | Ok _ ->
                       Lwt_log_core.warning ~section (Printf.sprintf "Unexpected instrument data format: %s" frame.content)
                   | Error err ->
@@ -365,7 +338,111 @@ let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
       Lwt_log_core.warning ~section
         (Printf.sprintf "Received unhandled opcode: %s" (Frame.Opcode.to_string opcode))
 
+(* Helper function to process a single order item's state from executions channel *)
+let process_execution_order_item_state (order_json : Json.t) (cfg : Core.config) (context_msg_type : string) =
+  (* context_msg_type is "snapshot" or "update", for logging context *)
+  let order_id = safe_string order_json "order_id" "" in
+  let item_exec_type = safe_string order_json "exec_type" "" in
+  let order_status_str = safe_string order_json "order_status" "" in
+  let symbol_opt = JsonUtil.(member "symbol" order_json |> to_string_option) in
+  let side_str_opt = JsonUtil.(member "side" order_json |> to_string_option) in
+  let limit_price_opt = JsonUtil.(member "limit_price" order_json |> to_float_option) in
+  let last_price_opt = JsonUtil.(member "last_price" order_json |> to_float_option) in
+  let last_qty_opt = JsonUtil.(member "last_qty" order_json |> to_float_option) in
+  let order_qty_opt = JsonUtil.(member "order_qty" order_json |> to_float_option) in
+  let userref_opt = JsonUtil.(member "userref" order_json |> to_int_option |> Option.map string_of_int) in
 
+  (* Detailed log for easier debugging of incoming data for state changes *)
+  debug_log (Printf.sprintf "[StateProc:%s] ID:%s, ExecType:%s, Status:%s, Symbol:%s, Side:%s, UserRef:%s, LimitPx:%s, OrderQty:%s, LastPx:%s, LastQty:%s"
+    (String.capitalize_ascii context_msg_type) order_id item_exec_type order_status_str
+    (Option.value symbol_opt ~default:"N/A") (Option.value side_str_opt ~default:"N/A")
+    (Option.value userref_opt ~default:"N/A")
+    (Option.map string_of_float limit_price_opt |> Option.value ~default:"N/A")
+    (Option.map string_of_float order_qty_opt |> Option.value ~default:"N/A")
+    (Option.map string_of_float last_price_opt |> Option.value ~default:"N/A")
+    (Option.map string_of_float last_qty_opt |> Option.value ~default:"N/A")
+  ) >>= fun () ->
+
+  match item_exec_type with
+  | "canceled" ->
+      (match Hashtbl.find_opt open_buy_orders order_id with
+      | Some existing_order ->
+          let symbol = existing_order.order_symbol in
+          debug_log (format_order_log existing_order ("CANCELED" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
+          handle_order_cancellation order_id symbol >>= fun () ->
+          Hashtbl.remove open_buy_orders order_id;
+          Hashtbl.remove pending_orders order_id;
+          log_open_orders ()
+      | None -> Lwt.return_unit)
+  | "filled" | "expired" -> (* Handles items explicitly marked as "filled" or "expired" *)
+      (match Hashtbl.find_opt open_buy_orders order_id with
+      | Some existing_order ->
+          Hashtbl.remove open_buy_orders order_id;
+          Hashtbl.remove pending_orders order_id;
+          debug_log (format_order_log existing_order (String.uppercase_ascii item_exec_type ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
+          log_open_orders ()
+      | None -> Lwt.return_unit)
+  | _ -> (* Handles "new", "pending_new", "amended", "restated", "status", "trade", etc. *)
+      let symbol =
+        match item_exec_type, symbol_opt with
+        | ("amended" | "new"), _ -> (* Prioritize existing order's symbol for consistency *)
+            let existing_opt = if item_exec_type = "new" then Hashtbl.find_opt pending_orders order_id else Hashtbl.find_opt open_buy_orders order_id in
+            (match existing_opt with Some o -> o.order_symbol | None -> Option.value symbol_opt ~default:"")
+        | _, Some s -> s
+        | _, None -> ""
+      in
+      let side_opt =
+        match item_exec_type with
+        | ("amended" | "new") ->
+            let existing_opt = if item_exec_type = "new" then Hashtbl.find_opt pending_orders order_id else Hashtbl.find_opt open_buy_orders order_id in
+            (match existing_opt with Some o -> o.side | None -> parse_order_side (Option.value side_str_opt ~default:""))
+        | _ -> parse_order_side (Option.value side_str_opt ~default:"")
+      in
+
+      match side_opt with
+      | Some Core.Buy when List.exists (fun s -> String.equal s symbol) cfg.symbols ->
+          let status = kraken_status_to_core_state order_status_str in
+          let limit_price =
+            match item_exec_type with
+            | "new" -> (match Hashtbl.find_opt pending_orders order_id with Some o -> o.limit_price | None -> Option.value limit_price_opt ~default:0.0)
+            | "amended" -> (match Hashtbl.find_opt open_buy_orders order_id with Some o -> Option.value limit_price_opt ~default:o.limit_price | None -> Option.value limit_price_opt ~default:0.0)
+            | _ -> Option.value limit_price_opt ~default:0.0
+          in
+          let qty =
+            match item_exec_type with
+            | "new" -> (match Hashtbl.find_opt pending_orders order_id with Some o -> o.qty | None -> Option.value order_qty_opt ~default:0.0)
+            | "amended" -> (match Hashtbl.find_opt open_buy_orders order_id with Some o -> Option.value order_qty_opt ~default:o.qty | None -> Option.value order_qty_opt ~default:0.0)
+            | _ -> Option.value order_qty_opt ~default:0.0
+          in
+          let order : order = {
+            order_id; client_id = userref_opt; order_symbol = symbol;
+            side = side_opt; status; limit_price; qty;
+          } in
+          let* log_msg_lwt =
+            let suffix = if context_msg_type = "snapshot" then " (Snapshot)" else "" in
+            match item_exec_type with
+            | "pending_new" -> Hashtbl.replace pending_orders order_id order; Lwt.return (format_order_log order ("PENDING" ^ suffix))
+            | "new" ->
+                Hashtbl.replace open_buy_orders order_id order;
+                Hashtbl.remove pending_orders order_id;
+                Lwt.return (format_order_log order ("NEW" ^ suffix))
+            | "trade" ->
+                let last_qty_val = Option.value last_qty_opt ~default:0.0 in
+                let last_price_val = Option.value last_price_opt ~default:0.0 in
+                if status = Core.Open then (* If order is still open (e.g. partially_filled) *)
+                  (Hashtbl.replace open_buy_orders order_id order; (* Update order state, possibly remaining qty if reflected in 'qty' field *)
+                   Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Order remains open)" suffix last_qty_val order.order_symbol last_price_val))
+                else (* If trade results in Filled or other terminal state *)
+                  (Hashtbl.remove open_buy_orders order_id;
+                   Hashtbl.remove pending_orders order_id;
+                   Lwt.return (Printf.sprintf "[ORDER FILL%s] %f %s at %.2f (Order now terminal)" suffix last_qty_val order.order_symbol last_price_val))
+            | "amended" -> Hashtbl.replace open_buy_orders order_id order; Lwt.return (format_order_log order ("AMENDED" ^ suffix))
+            | "restated" | "status" -> Hashtbl.replace open_buy_orders order_id order; Lwt.return (format_order_log order ((String.uppercase_ascii item_exec_type) ^ suffix))
+            | _ -> Lwt.return (format_order_log order (("UPDATE (" ^ item_exec_type ^ ")" ) ^ suffix))
+          in
+          debug_log log_msg_lwt >>= fun () ->
+          if List.mem item_exec_type ["new"; "amended"; "restated"; "status"; "pending_new"] then log_open_orders () else Lwt.return_unit
+      | _ -> Lwt.return_unit (* Skip non-buy/untracked symbol or unknown side *)
 
 let handle_auth_frame conn (cfg: Core.config) frame ~on_execution =
   match frame.Websocket.Frame.opcode with
@@ -373,361 +450,87 @@ let handle_auth_frame conn (cfg: Core.config) frame ~on_execution =
       let json = Json.from_string frame.content in
       Lwt.catch
         (fun () ->
-          (* First, check if this is a subscription response by looking at the 'method' field *)
           match JsonUtil.(member "method" json |> to_string_option) with
           | Some "subscribe" ->
-              (* Handle subscription response manually *)
               let success = JsonUtil.(member "success" json |> to_bool_option |> Option.value ~default:false) in
               let req_id_opt = JsonUtil.(member "req_id" json |> to_int_option) in
               let error_opt = JsonUtil.(member "error" json |> to_string_option) in
               let req_id_str = Option.map string_of_int req_id_opt |> Option.value ~default:"N/A" in
-
-              (if not success then
-                  begin match error_opt with
-                  | Some err -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s" req_id_str err)
-                  | None -> Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s) with unknown error: %s" req_id_str frame.content)
-                  end
-               else
-                 Lwt.return_unit
-              ) >>= fun () ->
-              Lwt.return_unit
-          | _ ->
-              (* Handle data messages by channel *)
+              if not success then
+                let err_msg = Option.value error_opt ~default:("unknown error, payload: " ^ frame.content) in
+                Lwt_log_core.error ~section (Printf.sprintf "Auth subscription failed (req_id=%s): %s" req_id_str err_msg)
+              else
+                let channel_subscribed = JsonUtil.(member "result" json |> member "channel" |> to_string_option |> Option.value ~default:"N/A") in
+                Lwt_log_core.info ~section (Printf.sprintf "Auth subscription successful (req_id=%s, channel=%s)" req_id_str channel_subscribed)
+          | _ -> (* Handle data messages *)
               let channel_opt = JsonUtil.(member "channel" json |> to_string_option) in
               match channel_opt with
               | Some "executions" ->
-                  let msg_type = JsonUtil.(member "type" json |> to_string_option) in
-                  let data_json = JsonUtil.(member "data" json |> to_list) in
-                  (* Process based on message type: snapshot or update *)
-                  begin match msg_type with
+                  let msg_type_opt = JsonUtil.(member "type" json |> to_string_option) in
+                  let data_json_list = JsonUtil.(member "data" json |> to_list) in
+                  begin match msg_type_opt with
                   | Some "snapshot" ->
-                      (* Snapshot: Only update internal state, do NOT generate events *)
                       Lwt_list.iter_s (fun order_json ->
-                          (* Manual Field Extraction *)
-                          let order_id = safe_string order_json "order_id" "" in
-                          let exec_type = safe_string order_json "exec_type" "" in
-                          let order_status_str = safe_string order_json "order_status" "" in
-                          let symbol_opt = JsonUtil.(member "symbol" order_json |> to_string_option) in
-                          let side_str_opt = JsonUtil.(member "side" order_json |> to_string_option) in
-                          let limit_price_opt = JsonUtil.(member "limit_price" order_json |> to_float_option) in
-                          let last_price_opt = JsonUtil.(member "last_price" order_json |> to_float_option) in
-                          let last_qty_opt = JsonUtil.(member "last_qty" order_json |> to_float_option) in
-                          let _order_qty_opt = JsonUtil.(member "order_qty" order_json |> to_float_option) in (* Extract order_qty (unused here) *)
-                          
-                         
-                          (* Internal State Update Logic *)
-                          match exec_type with
-                          | "canceled" ->
-                              (match Hashtbl.find_opt open_buy_orders order_id with
-                              | Some existing_order ->
-                                  let symbol = existing_order.order_symbol in 
-                                  debug_log (format_order_log existing_order "CANCELED (Snapshot)") >>= fun () ->
-                                  handle_order_cancellation order_id symbol >>= fun () ->
-                                  Hashtbl.remove open_buy_orders order_id;
-                                  Hashtbl.remove pending_orders order_id; 
-                                  log_open_orders ()
-                              | None -> Lwt.return_unit)
-                          | "filled" | "expired" ->
-                              (match Hashtbl.find_opt open_buy_orders order_id with
-                              | Some existing_order ->
-                                  Hashtbl.remove open_buy_orders order_id;
-                                  Hashtbl.remove pending_orders order_id;
-                                  debug_log (format_order_log existing_order (exec_type ^ " (Snapshot)")) >>= fun () ->
-                                  log_open_orders ()
-                              | None -> Lwt.return_unit)
-                          | _ ->
-                              let symbol =
-                                match exec_type, symbol_opt with
-                                | "amended", _ ->
-                                    (match Hashtbl.find_opt open_buy_orders order_id with 
-                                    | Some o -> o.order_symbol 
-                                    | None -> Option.value symbol_opt ~default:"")
-                                | "new", _ ->
-                                    (match Hashtbl.find_opt pending_orders order_id with 
-                                    | Some o -> o.order_symbol 
-                                    | None -> Option.value symbol_opt ~default:"")
-                                | _, Some s -> s 
-                                | _, None -> ""
-                              in
-                              let side_opt =
-                                match exec_type with
-                                | "amended" -> 
-                                    (match Hashtbl.find_opt open_buy_orders order_id with 
-                                    | Some o -> o.side 
-                                    | None -> parse_order_side (Option.value side_str_opt ~default:""))
-                                | "new" -> 
-                                    (match Hashtbl.find_opt pending_orders order_id with 
-                                    | Some o -> o.side 
-                                    | None -> parse_order_side (Option.value side_str_opt ~default:""))
-                                | _ -> parse_order_side (Option.value side_str_opt ~default:"")
-                              in
-                              match side_opt with
-                              | Some Core.Buy when List.exists (fun s -> String.equal s symbol) cfg.symbols ->
-                                  let status = kraken_status_to_core_state order_status_str in
-                                  let limit_price = 
-                                    match exec_type with
-                                    | "new" -> 
-                                        (match Hashtbl.find_opt pending_orders order_id with 
-                                        | Some o -> o.limit_price 
-                                        | None -> Option.value limit_price_opt ~default:0.0)
-                                    | "amended" -> 
-                                        (match Hashtbl.find_opt open_buy_orders order_id with 
-                                        | Some o -> Option.value limit_price_opt ~default:o.limit_price 
-                                        | None -> Option.value limit_price_opt ~default:0.0)
-                                    | _ -> Option.value limit_price_opt ~default:0.0
-                                  in
-                                  let qty = (* Get quantity, prioritize existing if amending/new, else use snapshot *)
-                                    match exec_type with
-                                    | "new" ->
-                                        (match Hashtbl.find_opt pending_orders order_id with
-                                        | Some o -> o.qty (* Use qty from pending order *)
-                                        | None -> Option.value _order_qty_opt ~default:0.0)
-                                    | "amended" ->
-                                        (match Hashtbl.find_opt open_buy_orders order_id with
-                                        | Some o -> Option.value _order_qty_opt ~default:o.qty (* Use new qty, fallback to existing *)
-                                        | None -> Option.value _order_qty_opt ~default:0.0)
-                                    | _ -> Option.value _order_qty_opt ~default:0.0 (* Use snapshot qty for other types *)
-                                  in
-                                  let order = { 
-                                    order_id; 
-                                    client_id = None; (* FIXME: Parse userref? *) 
-                                    order_symbol = symbol; 
-                                    side = side_opt; 
-                                    status; 
-                                    limit_price;
-                                    qty = qty; (* Use parsed/retrieved quantity *)
-                                  } in
-                                  let* log_msg_lwt = match exec_type with
-                                    | "pending_new" -> 
-                                        Hashtbl.replace pending_orders order_id order; 
-                                        Lwt.return (format_order_log order "PENDING (Snapshot)")
-                                    | "new" -> 
-                                        Hashtbl.replace open_buy_orders order_id order; 
-                                        Hashtbl.remove pending_orders order_id; 
-                                        Lwt.return (format_order_log order "NEW (Snapshot)")
-                                    | "trade" -> 
-                                        let last_qty = Option.value last_qty_opt ~default:0.0 in 
-                                        let last_price = Option.value last_price_opt ~default:0.0 in 
-                                        Lwt.return (Printf.sprintf "[ORDER FILL (Snapshot)] %f %s at %.2f" last_qty order.order_symbol last_price)
-                                    | "amended" ->
-                                        Hashtbl.replace open_buy_orders order_id order;
-                                        Lwt.return (format_order_log order "AMENDED (Snapshot)")
-                                    | "restated" -> 
-                                        Hashtbl.replace open_buy_orders order_id order; 
-                                        Lwt.return (format_order_log order "STATUS (Snapshot)")
-                                    | "status" -> 
-                                        Hashtbl.replace open_buy_orders order_id order; 
-                                        Lwt.return (format_order_log order "STATUS (Snapshot)")
-                                    | _ -> 
-                                        Lwt.return (format_order_log order ("UPDATE (Snapshot):" ^ exec_type))
-                                  in
-                                  debug_log log_msg_lwt >>= fun () ->
-                                  if List.mem exec_type ["new"; "amended"; "restated"] then log_open_orders () else Lwt.return_unit
-                              | _ -> Lwt.return_unit (* Skip non-buy/untracked or unknown side *)
-                      ) data_json >>= fun () ->
-                      (* Signal that snapshot is processed *)
-                      Lwt_log_core.info ~section "Execution snapshot processed, resolving snapshot promise" >>= fun () ->
-                      Lwt.wakeup_later resolve_snapshot_processed ();
-                      Lwt.return_unit
+                          process_execution_order_item_state order_json cfg "snapshot"
+                      ) data_json_list >>= fun () ->
+                      if Lwt.state executions_snapshot_processed = Lwt.Sleep then (
+                          Lwt_log_core.info ~section "Execution snapshot processed, resolving executions_snapshot_processed promise" >>= fun () ->
+                          Lwt.wakeup_later resolve_executions_snapshot_processed ();
+                          Lwt.return_unit
+                      ) else Lwt.return_unit
                   | Some "update" ->
-                      (* Update: Generate events AND update internal state *)
-                      (* Step 1: Generate events *)
+                      (* Step 1: Generate market events *)
                       let market_events = List.filter_map (fun order_json ->
-                          (* Manual Field Extraction *)
                           let order_id = safe_string order_json "order_id" "" in
-                          let exec_type = safe_string order_json "exec_type" "" in
+                          let item_exec_type = safe_string order_json "exec_type" "" in
                           let order_status_str = safe_string order_json "order_status" "" in
                           let symbol_opt = JsonUtil.(member "symbol" order_json |> to_string_option) in
                           let side_str_opt = JsonUtil.(member "side" order_json |> to_string_option) in
                           let last_price_opt = JsonUtil.(member "last_price" order_json |> to_float_option) in
                           let last_qty_opt = JsonUtil.(member "last_qty" order_json |> to_float_option) in
-                          let _order_qty_opt = JsonUtil.(member "order_qty" order_json |> to_float_option) in (* Extract order_qty (unused here) *)
                           let timestamp_str = safe_string order_json "timestamp" "" in
-                          
-                          (* Log extracted data for update item event generation *)
-                          debug_log (Printf.sprintf "[EventGenUpdate] ID: %s, Type: %s, Status: %s, Symbol: %s, Side: %s, LastQty: %s, LastPx: %s"
-                            order_id exec_type order_status_str 
-                            (Option.value symbol_opt ~default:"N/A") 
-                            (Option.value side_str_opt ~default:"N/A")
-                            (Option.map string_of_float last_qty_opt |> Option.value ~default:"N/A")
-                            (Option.map string_of_float last_price_opt |> Option.value ~default:"N/A")) |> Lwt.ignore_result;
-                          
-                          (* Market Event Generation Logic *)
-                          let client_id = "kraken:" ^ order_id in
+                          let userref_opt = JsonUtil.(member "userref" order_json |> to_int_option |> Option.map string_of_int) in
+
+                          let client_id = Option.value userref_opt ~default:("kraken:" ^ order_id) in
                           let ts = kraken_ts_to_core_ts timestamp_str in
-                          let state = kraken_status_to_core_state order_status_str in
-                          match exec_type, last_qty_opt, last_price_opt, kraken_side_to_core_side side_str_opt, symbol_opt with
-                          | ("trade" | "filled"), Some qty_f, Some price_f, Some side, Some symbol when qty_f > 0.0 ->
-                              (try 
-                                 Some (Core.Fill { symbol; order_id; client_id; price=(float_to_price ~scale:8 price_f); qty=(float_to_qty ~scale:8 qty_f); side; ts }) 
-                               with ex -> 
-                                 Lwt_log_core.error ~section (Printf.sprintf "Failed converting Fill data for update %s: %s" order_id (Printexc.to_string ex)) |> Lwt.ignore_result; 
-                                 Some (Core.Ack { order_id; client_id; state; ts }))
-                          | ("canceled" | "expired" | "rejected"), _, _, _, _ ->
-                              Some (Core.Ack { order_id; client_id; state; ts }) (* Generate Ack for terminal states *)
-                          | _ -> None (* Ignore other exec_types for event generation *)
-                      ) data_json in
-                      
-                      (* Step 2: Call on_execution if events were generated *)
-                      let* () = 
+                          let core_state = kraken_status_to_core_state order_status_str in
+
+                          match symbol_opt with
+                          | None -> (* Cannot generate event without symbol for Fill *)
+                              if List.mem item_exec_type ["canceled"; "expired"; "rejected"] || core_state != Core.Open then
+                                Some (Core.Ack { order_id; client_id; state = core_state; ts })
+                              else None
+                          | Some symbol ->
+                              let price_prec, qty_prec = Option.value (get_precisions symbol) ~default:(8, 8) in
+                              match item_exec_type, last_qty_opt, last_price_opt, kraken_side_to_core_side side_str_opt with
+                              | ("trade" | "filled"), Some qty_f, Some price_f, Some side when qty_f > 0.0 ->
+                                  (try
+                                     Some (Core.Fill { symbol; order_id; client_id; price=(float_to_price ~scale:price_prec price_f); qty=(float_to_qty ~scale:qty_prec qty_f); side; ts })
+                                   with ex ->
+                                     Lwt_log_core.error ~section (Printf.sprintf "Failed converting Fill data for update %s: %s" order_id (Printexc.to_string ex)) |> Lwt.ignore_result;
+                                     Some (Core.Ack { order_id; client_id; state = core_state; ts }))
+                              | _ -> (* For any other exec_type or if not a valid trade for Fill, generate Ack *)
+                                  Some (Core.Ack { order_id; client_id; state = core_state; ts })
+                      ) data_json_list in
+
+                      (* Step 2: Call on_execution *)
+                      let* () =
                         if market_events <> [] then (
                           debug_log (Printf.sprintf "Calling on_execution with %d events from update" (List.length market_events)) >>= fun () ->
                           on_execution market_events
-                        ) else (
-                          debug_log (Printf.sprintf "No market events generated from update message.")
-                        )
+                        ) else Lwt.return_unit (* Removed redundant log for no events for brevity *)
                       in
-                      
+
                       (* Step 3: Update Internal State *)
                       Lwt_list.iter_s (fun order_json ->
-                          (* Manual Field Extraction *)
-                          let order_id = safe_string order_json "order_id" "" in
-                          let exec_type = safe_string order_json "exec_type" "" in
-                          let order_status_str = safe_string order_json "order_status" "" in
-                          let symbol_opt = JsonUtil.(member "symbol" order_json |> to_string_option) in
-                          let side_str_opt = JsonUtil.(member "side" order_json |> to_string_option) in
-                          let limit_price_opt = JsonUtil.(member "limit_price" order_json |> to_float_option) in
-                          let last_price_opt = JsonUtil.(member "last_price" order_json |> to_float_option) in
-                          let last_qty_opt = JsonUtil.(member "last_qty" order_json |> to_float_option) in
-                          let _order_qty_opt = JsonUtil.(member "order_qty" order_json |> to_float_option) in (* Extract order_qty (unused here) *)
-                          
-                          (* Log extracted data for state update from update item *)
-                          debug_log (Printf.sprintf "[StateUpdateFromUpdate] ID: %s, Type: %s, Status: %s, Symbol: %s, Side: %s"
-                            order_id exec_type order_status_str 
-                            (Option.value symbol_opt ~default:"N/A") 
-                            (Option.value side_str_opt ~default:"N/A")) >>= fun () ->
-                          
-                          (* Internal State Update Logic *)
-                          match exec_type with
-                          | "canceled" ->
-                              (match Hashtbl.find_opt open_buy_orders order_id with
-                              | Some existing_order ->
-                                  let symbol = existing_order.order_symbol in 
-                                  debug_log (format_order_log existing_order "CANCELED") >>= fun () ->
-                                  handle_order_cancellation order_id symbol >>= fun () ->
-                                  Hashtbl.remove open_buy_orders order_id;
-                                  Hashtbl.remove pending_orders order_id; 
-                                  log_open_orders ()
-                              | None -> Lwt.return_unit)
-                          | "filled" | "expired" ->
-                              (match Hashtbl.find_opt open_buy_orders order_id with
-                              | Some existing_order ->
-                                  Hashtbl.remove open_buy_orders order_id;
-                                  Hashtbl.remove pending_orders order_id;
-                                  debug_log (format_order_log existing_order exec_type) >>= fun () ->
-                                  log_open_orders ()
-                              | None -> Lwt.return_unit)
-                          | _ ->
-                              let symbol =
-                                match exec_type, symbol_opt with
-                                | "amended", _ -> 
-                                    (match Hashtbl.find_opt open_buy_orders order_id with 
-                                    | Some o -> o.order_symbol 
-                                    | None -> Option.value symbol_opt ~default:"")
-                                | "new", _ -> 
-                                    (match Hashtbl.find_opt pending_orders order_id with 
-                                    | Some o -> o.order_symbol 
-                                    | None -> Option.value symbol_opt ~default:"")
-                                | _, Some s -> s 
-                                | _, None -> ""
-                              in
-                              let side_opt =
-                                match exec_type with
-                                | "amended" -> 
-                                    (match Hashtbl.find_opt open_buy_orders order_id with 
-                                    | Some o -> o.side 
-                                    | None -> parse_order_side (Option.value side_str_opt ~default:""))
-                                | "new" -> 
-                                    (match Hashtbl.find_opt pending_orders order_id with 
-                                    | Some o -> o.side 
-                                    | None -> parse_order_side (Option.value side_str_opt ~default:""))
-                                | _ -> parse_order_side (Option.value side_str_opt ~default:"")
-                              in
-                              match side_opt with
-                              | Some Buy when List.exists (fun s -> String.equal s symbol) cfg.symbols ->
-                                  let status = kraken_status_to_core_state order_status_str in
-                                  let limit_price = 
-                                    match exec_type with
-                                    | "new" -> 
-                                        (match Hashtbl.find_opt pending_orders order_id with 
-                                        | Some o -> o.limit_price 
-                                        | None -> Option.value limit_price_opt ~default:0.0)
-                                    | "amended" -> 
-                                        (match Hashtbl.find_opt open_buy_orders order_id with 
-                                        | Some o -> Option.value limit_price_opt ~default:o.limit_price 
-                                        | None -> Option.value limit_price_opt ~default:0.0)
-                                    | _ -> Option.value limit_price_opt ~default:0.0
-                                  in
-                                  let qty = (* Get quantity, prioritize existing if amending/new, else use update *)
-                                    match exec_type with
-                                    | "new" ->
-                                        (match Hashtbl.find_opt pending_orders order_id with
-                                        | Some o -> o.qty (* Use qty from pending order *)
-                                        | None -> Option.value _order_qty_opt ~default:0.0)
-                                    | "amended" ->
-                                        (match Hashtbl.find_opt open_buy_orders order_id with
-                                        | Some o -> Option.value _order_qty_opt ~default:o.qty (* Use new qty, fallback to existing *)
-                                        | None -> Option.value _order_qty_opt ~default:0.0)
-                                    | _ -> Option.value _order_qty_opt ~default:0.0 (* Use update qty for other types *)
-                                  in
-                                  let order = { 
-                                    order_id; 
-                                    client_id = None; (* FIXME: Parse userref? *) 
-                                    order_symbol = symbol; 
-                                    side = side_opt; 
-                                    status; 
-                                    limit_price;
-                                    qty = qty; (* Use parsed/retrieved quantity *)
-                                  } in
-                                  let* log_msg_lwt = match exec_type with
-                                    | "pending_new" -> 
-                                        Hashtbl.replace pending_orders order_id order; 
-                                        Lwt.return (format_order_log order "PENDING")
-                                    | "new" -> 
-                                        Hashtbl.replace open_buy_orders order_id order; 
-                                        Hashtbl.remove pending_orders order_id; 
-                                        Lwt.return (format_order_log order "NEW")
-                                    | "trade" -> 
-                                        let last_qty = Option.value last_qty_opt ~default:0.0 in 
-                                        let last_price = Option.value last_price_opt ~default:0.0 in
-                                        (* For trade/partial fill, keep the order in open_buy_orders *)
-                                        (match order_status_str with
-                                        | "partially_filled" ->
-                                            Hashtbl.replace open_buy_orders order_id order;
-                                            Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL] %f %s at %.2f (Order remains open)" last_qty order.order_symbol last_price)
-                                        | _ ->
-                                            Lwt.return (Printf.sprintf "[ORDER FILL] %f %s at %.2f" last_qty order.order_symbol last_price))
-                                    | "amended" ->
-                                        let existing_order_opt = Hashtbl.find_opt open_buy_orders order_id in
-                                        debug_log (Printf.sprintf "[CACHE UPDATE] %s Before amendment - Order %s: %.8f" 
-                                          symbol order_id (match existing_order_opt with None -> 0.0 | Some o -> o.limit_price)) >>= fun () ->
-                                        Hashtbl.replace open_buy_orders order_id order;
-                                        debug_log (Printf.sprintf "[CACHE UPDATE] After amendment - Order %s: %.8f" 
-                                          order_id order.limit_price) >>= fun () ->
-                                        (match Hashtbl.find_opt open_buy_orders order_id with 
-                                        | Some vo -> debug_log (Printf.sprintf "[CACHE VERIFY] Order %s price %.8f" vo.order_id vo.limit_price) 
-                                        | None -> debug_log (Printf.sprintf "[CACHE ERROR] Order %s not found after update" order_id)) >>= fun () ->
-                                        Lwt.return (format_order_log order "AMENDED")
-                                    | "restated" -> 
-                                        Hashtbl.replace open_buy_orders order_id order; 
-                                        let reason = safe_string order_json "reason" "unknown" in 
-                                        Lwt.return (Printf.sprintf "[ORDER RESTATED] %s: %s" order_id reason)
-                                    | "status" -> 
-                                        Hashtbl.replace open_buy_orders order_id order; 
-                                        Lwt.return (format_order_log order "STATUS")
-                                    | _ -> 
-                                        Lwt.return (format_order_log order ("UPDATE:" ^ exec_type))
-                                  in
-                                  debug_log log_msg_lwt >>= fun () ->
-                                  if List.mem exec_type ["new"; "amended"; "restated"] then log_open_orders () else Lwt.return_unit
-                              | _ -> Lwt.return_unit (* Skip non-buy/untracked or unknown side *)
-                      ) data_json
+                          process_execution_order_item_state order_json cfg "update"
+                      ) data_json_list
                   | Some other_type ->
-                      Lwt_log_core.warning ~section (Printf.sprintf "Unknown execution message type: %s" other_type)
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unknown execution message type: %s. Payload: %s" other_type frame.content)
                   | None ->
-                      Lwt_log_core.warning ~section (Printf.sprintf "Message type is missing in execution message")
+                      Lwt_log_core.warning ~section (Printf.sprintf "Message type is missing in execution message. Payload: %s" frame.content)
                   end
-              | Some "status" ->
+              | Some "status" -> (* Existing status handling *)
                   begin match Common.status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
                       Lwt.return_unit
@@ -780,7 +583,7 @@ let start (cfg : Core.config) ~on_tick =
   loop conn
 
 let start_executions (cfg : Core.config) ~on_execution =
-  let section = Lwt_log_core.Section.make "kraken_ws_auth" in
+  (* Using global 'section' now *)
   match cfg.auth_token with
   | None -> Lwt.fail_with "Authentication token required for executions feed"
   | Some _ ->
