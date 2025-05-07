@@ -5,7 +5,6 @@ open Websocket
 open Lwt.Syntax
 module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
-open Common
 open Types
 
 (* Add at the top of the file, after module imports *)
@@ -159,7 +158,7 @@ let kraken_status_to_core_state status : Core.order_state = (* Explicit return t
       Lwt_log_core.warning ~section (Printf.sprintf "Unhandled Kraken order status: %s, mapping to Rejected" status) |> ignore;
       Rejected
 
-let execution_report_to_market_event (report : execution_report) : Core.market_event option =
+let execution_report_to_market_event (report : Common.execution_report) : Core.market_event option =
   let order_id = report.order_id in
   let client_id = "kraken:" ^ order_id in
   let ts = kraken_ts_to_core_ts report.timestamp in
@@ -207,7 +206,7 @@ let connect (cfg : Core.config) is_auth =
 
 (* Custom Yojson converter for channel_params *)
 let custom_channel_params_to_yojson = function
-  | Ticker { symbol; snapshot; event_trigger } ->
+  | Common.Ticker { symbol; snapshot; event_trigger } ->
       `Assoc (
         [("channel", `String "ticker"); ("symbol", `List (List.map (fun s -> `String s) symbol)); ("snapshot", `Bool snapshot)] @
         (match event_trigger with
@@ -223,7 +222,7 @@ let custom_channel_params_to_yojson = function
       `Assoc [("channel", `String "instrument"); ("snapshot", `Bool snapshot)]
 
 (* Custom Yojson converter for subscribe_message *)
-let custom_subscribe_message_to_yojson (msg : subscribe_message) : Json.t =
+let custom_subscribe_message_to_yojson (msg : Common.subscribe_message) : Json.t =
   `Assoc (
     [("method", `String msg.method_); ("params", custom_channel_params_to_yojson msg.params)] @
     (match msg.req_id with None -> [] | Some id -> [("req_id", `Int id)])
@@ -233,7 +232,7 @@ let custom_subscribe_message_to_yojson (msg : subscribe_message) : Json.t =
 let make_subscribe_message ?req_id (cfg : Core.config) channel =
   let params = match channel with
     | `Ticker -> 
-        Ticker {
+        Common.Ticker {
           symbol = cfg.symbols;
           snapshot = true;
           event_trigger = Some "trades";
@@ -252,9 +251,9 @@ let make_subscribe_message ?req_id (cfg : Core.config) channel =
         }
   in
   let msg = {
-    method_ = "subscribe";
-    params;
-    req_id;
+    Common.method_ = "subscribe";
+    Common.params;
+    Common.req_id;
   } in
   let content = custom_subscribe_message_to_yojson msg |> Json.to_string in
   Frame.create ~content ()
@@ -283,10 +282,10 @@ let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
               (* Handle data messages by channel *)
               match JsonUtil.(member "channel" json |> to_string_option) with
               | Some "ticker" ->
-                  begin match ticker_response_of_yojson json with
+                  begin match Common.ticker_response_of_yojson json with
                   | Ok { type_ = ("snapshot" | "update"); data = ticker_list; _ } ->
                       Lwt_list.iter_s
-                        (fun (ticker : ticker_data) ->
+                        (fun (ticker : Common.ticker_data) ->
                           let symbol = ticker.symbol in
                           let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
                           let bid_price = float_to_price ~scale:8 ticker.bid in
@@ -308,7 +307,7 @@ let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
                       Lwt_log_core.error ~section (Printf.sprintf "Failed to parse ticker: %s. Payload: %s" err frame.content)
                   end
               | Some "status" ->
-                  begin match status_response_of_yojson json with
+                  begin match Common.status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
                       Lwt_log_core.debug ~section "Received valid status message"
                   | Ok _ ->
@@ -319,10 +318,10 @@ let handle_public_frame conn (cfg : Core.config) frame ~on_tick =
               | Some "heartbeat" ->
                   Lwt.return_unit
               | Some "instrument" ->
-                  begin match instrument_response_of_yojson json with
+                  begin match Common.instrument_response_of_yojson json with
                   | Ok { type_ = ("snapshot" | "update"); data = { pairs; _ }; _ } ->
                       Lwt_list.iter_s
-                        (fun (pair : pair_data) ->
+                        (fun (pair : Common.pair_data) ->
                           if List.mem pair.symbol cfg.symbols then
                             let () = Hashtbl.replace instrument_precisions pair.symbol (pair.price_precision, pair.qty_precision) in
                             Lwt_log_core.debug ~section
@@ -729,7 +728,7 @@ let handle_auth_frame conn (cfg: Core.config) frame ~on_execution =
                       Lwt_log_core.warning ~section (Printf.sprintf "Message type is missing in execution message")
                   end
               | Some "status" ->
-                  begin match status_response_of_yojson json with
+                  begin match Common.status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
                       Lwt.return_unit
                   | Ok _ ->

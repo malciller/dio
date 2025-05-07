@@ -1,7 +1,6 @@
 (* src/exchange/kraken/ws_exec.ml *)
 open Lwt.Infix
 open Websocket
-open Common
 open Types
 
 (* Global connection state *)
@@ -9,8 +8,8 @@ let connection_state = ref None
 
 (* Helper functions *)
 let get_next_req_id state =
-  let id = state.next_req_id in
-  state.next_req_id <- id + 1;
+  let id = state.Common.next_req_id in
+  state.Common.next_req_id <- id + 1;
   id
 
 let float_of_price price =
@@ -32,7 +31,7 @@ let connect (cfg : Core.config) =
 (* Message sending *)
 let send_message state msg =
   let content = Yojson.Safe.to_string msg in
-  Websocket_lwt_unix.write state.conn (Frame.create ~content ())
+  Websocket_lwt_unix.write state.Common.conn (Frame.create ~content ())
 
 (* Order placement - MODIFIED *)
 let send_order_command state token (cmd : Core.order_cmd) : unit Lwt.t =
@@ -40,7 +39,7 @@ let send_order_command state token (cmd : Core.order_cmd) : unit Lwt.t =
   match cmd with
   | Add { symbol; side; price; qty; client_id; _ } ->
       let req_id = get_next_req_id state in
-      Hashtbl.add state.req_to_client req_id client_id;
+      Hashtbl.add state.Common.req_to_client req_id client_id;
 
       (* --- PRICE FORMATTING using Instrument Precision --- *)
       let price_string =
@@ -196,7 +195,7 @@ let handle_message state msg ~on_event =
            match req_id_opt with
            | Some req_id ->
                Lwt_log_core.debug ~section (Printf.sprintf "Manually parsed req_id: %d" req_id) >>= fun () ->
-               if Hashtbl.mem state.response_promises req_id then (
+               if Hashtbl.mem state.Common.response_promises req_id then (
                  Lwt_log_core.debug ~section (Printf.sprintf "Found matching promise for req_id: %d" req_id) >>= fun () ->
                  (* Construct the response record manually *) 
                  let response : Core.order_response = {
@@ -205,8 +204,8 @@ let handle_message state msg ~on_event =
                    result = Yojson.Safe.Util.(member "result" json |> to_option (fun x -> x)); (* Get result if present *) 
                  } in
 
-                 let resolver = Hashtbl.find state.response_promises req_id in
-                 Hashtbl.remove state.response_promises req_id;
+                 let resolver = Hashtbl.find state.Common.response_promises req_id in
+                 Hashtbl.remove state.Common.response_promises req_id;
                  Lwt.wakeup resolver response;
                  Lwt_log_core.debug ~section "Woke up promise" >>= fun () ->
 
@@ -218,8 +217,8 @@ let handle_message state msg ~on_event =
                          | Some id -> id
                          | None -> "unknown_order_id"
                        in
-                       let client_id = Hashtbl.find_opt state.req_to_client req_id in
-                       Hashtbl.remove state.req_to_client req_id;
+                       let client_id = Hashtbl.find_opt state.Common.req_to_client req_id in
+                       Hashtbl.remove state.Common.req_to_client req_id;
                        (match client_id with
                         | Some cid ->
                             (* REMOVED: client_id_to_order_id mapping storage *) 
@@ -255,7 +254,7 @@ let handle_message state msg ~on_event =
 let rec start_loop state token ~on_event =
   let section = Lwt_log_core.Section.make "kraken_ws_exec" in
   (* Check internal queue first (non-blocking) *) 
-  match Queue.take_opt state.cmd_queue with
+  match Queue.take_opt state.Common.cmd_queue with
   | Some cmd ->
       (* Process command from internal queue *) 
       Lwt_log_core.debug ~section "Processing command from internal queue" >>= fun () ->
@@ -322,8 +321,8 @@ let handle_router_command (cfg : Core.config) cmd exec_buffer : unit Lwt.t =
   | Some state ->
       (* Connection exists, enqueue command and signal *) 
       Lwt_log_core.debug ~section "Connection exists, enqueuing command..." >>= fun () ->
-      Queue.push cmd state.cmd_queue;
-      Lwt_condition.signal state.cmd_cond ();
+      Queue.push cmd state.Common.cmd_queue;
+      Lwt_condition.signal state.Common.cmd_cond ();
       Lwt.return_unit (* Return unit Lwt.t *)
 
   | None ->
@@ -336,12 +335,12 @@ let handle_router_command (cfg : Core.config) cmd exec_buffer : unit Lwt.t =
           connect cfg >>= fun conn ->
           (* Create initial state *) 
           let initial_state = { 
-            conn; 
-            next_req_id = 1;
-            req_to_client = Hashtbl.create 16;
-            response_promises = Hashtbl.create 16;
-            cmd_queue = Queue.create ();
-            cmd_cond = Lwt_condition.create ();
+            Common.conn; 
+            Common.next_req_id = 1;
+            Common.req_to_client = Hashtbl.create 16;
+            Common.response_promises = Hashtbl.create 16;
+            Common.cmd_queue = Queue.create ();
+            Common.cmd_cond = Lwt_condition.create ();
           } in
           (* Set global state SYNCHRONOUSLY *) 
           connection_state := Some initial_state;

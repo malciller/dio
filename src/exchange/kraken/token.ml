@@ -2,7 +2,6 @@
 open Lwt.Infix
 open Cohttp_lwt_unix
 open Yojson.Safe
-open Common
 
 let endpoint = "https://api.kraken.com"
 
@@ -27,9 +26,9 @@ let get_api_credentials_from_env () =
 let get_token () =
   let api_key, api_secret = get_api_credentials_from_env () in
   let path = "/0/private/GetWebSocketsToken" in
-  let nonce = nonce () in
+  let nonce = Common.nonce () in
   let body_str = "nonce=" ^ nonce in (* Form-encoded body *) 
-  let signature = sign ~secret:api_secret ~path ~body:body_str ~nonce in (* Sign form body *) 
+  let signature = Common.sign ~secret:api_secret ~path ~body:body_str ~nonce in (* Sign form body *) 
   let headers = Cohttp.Header.add_list (Cohttp.Header.init ()) [
     ("API-Key", api_key);
     ("API-Sign", signature);
