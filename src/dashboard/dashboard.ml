@@ -152,11 +152,14 @@ let row_of_asset asset =
   in
   let buy_perc_str = 
     match current_price_opt, closest_buy_for_info with
-    | Some cp_prim, Some buy_p_float when buy_p_float > 0.0 ->
+    | Some cp_prim, Some buy_p_float ->
         let current_f = Float.of_string (Primitives.Price.to_string cp_prim) in
-        let diff = ((current_f -. buy_p_float) /. buy_p_float) *. 100.0 in
-        I.string style_primary_text (Printf.sprintf " (%+.2f%%)" diff)
-    | _ -> I.empty
+        if current_f > 0.0 then (
+           (* Calculate diff of buy relative to current price *) 
+          let diff = ((buy_p_float -. current_f) /. current_f) *. 100.0 in
+          I.string style_primary_text (Printf.sprintf " (%+.2f%%)" diff)
+        ) else I.empty (* Avoid division by zero if current price is 0 *)
+    | _ -> I.empty (* Handle cases where current or buy price is missing *)
   in
   let sell_perc_str = 
     match current_price_opt, closest_sell_for_info with
