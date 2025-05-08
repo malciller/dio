@@ -33,7 +33,7 @@ let header =
   let key_bracket_style = style_keybinding_bracket in
   let key_text_style = style_keybinding_text in
 
-  let line0 = I.string art_style "     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓    " in
+  let line0 = I.string art_style "     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓    " in
   let line1 = I.hcat [
                 I.string art_style         "     ┃  ██████╗ ██╗ ██████╗   ";
                 I.string text_style         "ALGORITHMIC TRADING";
@@ -62,7 +62,7 @@ let header =
                 I.string art_style         "┃    ";
               ]
   in
-  let line6 = I.string art_style "     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛    " in
+  let line6 = I.string art_style "     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛    " in
 
   I.vcat [line0; line1; line2; line3; line4; line5; line6]
   |> I.pad ~l:2 ~t:1
