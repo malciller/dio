@@ -27,50 +27,10 @@ let spr_sell_order    = I.string style_sell_order_text "\u{2191}"   (* ↑ Sleek
 let spr_price_now     = I.string (style_current_price_text ++ A.st A.bold) "\u{25C7}" (* ◇ Open Diamond, bold, no blink *)
 
 
-let header = 
-  let art_style = style_header_title_art in 
-  let text_style = style_header_info_text in 
-  let key_bracket_style = style_keybinding_bracket in
-  let key_text_style = style_keybinding_text in
-
-  let line0 = I.string art_style "     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓    " in
-  let line1 = I.hcat [
-                I.string art_style         "     ┃  ██████╗ ██╗ ██████╗   ";
-                I.string text_style         "ALGORITHMIC TRADING";
-                I.string art_style         " ┃    ";
-              ]
-  in
-  let line2 = I.string art_style "     ┃  ██╔══██╗██║██╔═══██╗  ═══════════════════ ┃    " in
-  let line3 = I.hcat [
-                I.string art_style         "     ┃  ██║  ██║██║██║   ██║  ";
-                I.string text_style         "DIOPHANT SOLUTIONS "; (* Note space based on original visual *)
-                I.string art_style         " ┃    ";
-              ]
-  in
-  let line4 = I.string art_style "     ┃  ██║  ██║██║██║   ██║  ═══════════════════ ┃    " in
-  let line5_keys = I.hcat [
-                     I.string key_bracket_style "["; I.string key_text_style "L"; I.string key_bracket_style "]";
-                     I.string text_style        "ogs ";
-                     I.string key_bracket_style "│";
-                     I.string key_bracket_style        " ["; I.string key_text_style "Q"; I.string key_bracket_style "]";
-                     I.string text_style        "uit     ";
-                   ]
-  in
-  let line5 = I.hcat [
-                I.string art_style         "     ┃  ██████╔╝██║╚██████╔╝  ";
-                line5_keys;
-                I.string art_style         "┃    ";
-              ]
-  in
-  let line6 = I.string art_style "     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛    " in
-
-  I.vcat [line0; line1; line2; line3; line4; line5; line6]
-  |> I.pad ~l:2 ~t:1
-
 (* ─── helpers ─────────────────────────────────────────────── *)
 let fmt_runtime start =
   let secs = int_of_float (Unix.gettimeofday () -. start) in
-  Printf.sprintf "⟨ %02dh:%02dm:%02ds ⟩"
+  Printf.sprintf "%02dh:%02dm:%02ds"
     (secs / 3600) (secs mod 3600 / 60) (secs mod 60)
 
 let get_term_dimensions () =
@@ -279,18 +239,79 @@ let render state =
   let open I in
   let term_height, term_width = get_term_dimensions () in
   let content_width = term_width - 4 in
-  let runtime_display =
-    string (style_primary_text ++ A.st A.bold) 
-      ("Runtime: " ^ fmt_runtime Stats.start_ts)
-    |> I.pad ~t:1 ~l:2 
-  in
-  let asset_rows = List.map row_of_asset 
-    (M.fold (fun asset _ acc -> asset :: acc) !Stats.pending_orders [] |> List.sort compare_assets)
-  in
-  let horiz_border_char_str = "\u{2501}" 
-  in
+
+  let horiz_border_char_str = "\u{2501}" in
   let create_horizontal_fill width char_str =
     String.concat "" (List.init (max 0 width) (fun _ -> char_str))
+  in
+
+  let header =
+    let art_style = style_header_title_art in
+    let text_style = style_header_info_text in
+    let key_bracket_style = style_keybinding_bracket in
+    let key_text_style = style_keybinding_text in
+
+    let line0 = I.string art_style "     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓    " in
+    let line1 = I.hcat [
+                  I.string art_style         "     ┃  ██████╗ ██╗ ██████╗   ";
+                  I.string text_style         "ALGORITHMIC TRADING";
+                  I.string art_style         " ┃    ";
+                ]
+    in
+    let line2 = I.string art_style "     ┃  ██╔══██╗██║██╔═══██╗  ═══════════════════ ┃    " in
+    let line3 = I.hcat [
+                  I.string art_style         "     ┃  ██║  ██║██║██║   ██║  ";
+                  I.string text_style         "DIOPHANT SOLUTIONS "; (* Note space based on original visual *)
+                  I.string art_style         " ┃    ";
+                ]
+    in
+    let line4 = I.string art_style "     ┃  ██║  ██║██║██║   ██║  ═══════════════════ ┃    " in
+    let line5_keys = I.hcat [
+                       I.string key_bracket_style "["; I.string key_text_style "L"; I.string key_bracket_style "]";
+                       I.string text_style        "ogs ";
+                       I.string key_bracket_style "│";
+                       I.string key_bracket_style        " ["; I.string key_text_style "Q"; I.string key_bracket_style "]";
+                       I.string text_style        "uit     ";
+                     ]
+    in
+    let line5 = I.hcat [
+                  I.string art_style         "     ┃  ██████╔╝██║╚██████╔╝  ";
+                  line5_keys;
+                  I.string art_style         "┃    ";
+                ]
+    in
+
+    let runtime_str = fmt_runtime Stats.start_ts in
+    let runtime_img = I.string (style_primary_text ++ A.st A.bold) runtime_str in
+    let runtime_width = I.width runtime_img in
+    let line6 =
+      (* Required width = 5 (pad) + 1 (┗) + Runtime(W) + 1 (┛) = W + 7 *)
+      let required_width_for_line = runtime_width + 7 in
+      if term_width >= required_width_for_line then
+        (* Total space available for dashes *)
+        let total_dash_space = term_width - required_width_for_line in
+        (* Calculate dashes before: roughly half, minus 10, ensuring non-negative *)
+        let dashes_before_count = max 0 ((total_dash_space / 2) - 30) in
+        (* Dashes after fill the remaining space *)
+        let dashes_after_count = max 0 ((total_dash_space / 2) + 1 ) in
+
+        I.hcat [
+          I.string A.empty "     "; (* 5 spaces padding *)
+          I.string art_style "\u{2517}"; (* "┗" *)
+          I.string art_style (create_horizontal_fill dashes_before_count horiz_border_char_str); (* Dashes before *)
+          runtime_img; (* Runtime timestamp *)
+          I.string art_style (create_horizontal_fill dashes_after_count horiz_border_char_str); (* Dashes after *)
+          I.string art_style "\u{251B}" (* "┛" *)
+        ]
+      else (* Not enough space for padding + runtime + essential borders *)
+        I.empty (* Draw nothing for this line *)
+    in
+
+    I.vcat [line0; line1; line2; line3; line4; line5; line6]
+  in
+
+  let asset_rows = List.map row_of_asset 
+    (M.fold (fun asset _ acc -> asset :: acc) !Stats.pending_orders [] |> List.sort compare_assets)
   in
   let diogrid_label_text = " DioGrid " in
   let diogrid_label_style = style_header_border ++ A.st A.bold in (* Or your preferred style *)
@@ -332,11 +353,10 @@ let render state =
   in
   let header_height = height header in
   let new_asset_rows_height = height asset_rows_section_with_boxing in
-  let runtime_display_height = height runtime_display in
-  let logs_height = 
+  let logs_height =
     if state.show_logs then
-      let height_of_content_above_logs = header_height + new_asset_rows_height + runtime_display_height in
-      max 0 (term_height - height_of_content_above_logs - 3) 
+      let height_of_content_above_logs = header_height + new_asset_rows_height in
+      max 0 (term_height - height_of_content_above_logs - 3)
     else 0
   in
   let logs_section_image = 
@@ -386,13 +406,11 @@ let render state =
         cropped_logs_content
   in
   vcat [
-    runtime_display;      (* Runtime display now at the top *)
-    void content_width 1; (* Padding below runtime, before header *)
-    header;                 
-    asset_rows_section_with_boxing;   
-    void content_width 1; (* Spacer between asset_rows_section and logs_section_image or bottom *)
-    logs_section_image;   
-    void content_width 1; (* Bottom padding *)
+    header;
+    asset_rows_section_with_boxing;
+    void content_width 1;
+    logs_section_image;
+    void content_width 1;
   ]
 
 (* ─── loop ────────────────────────────────────────────────── *)
