@@ -15,7 +15,7 @@
     {
       "symbol": "TRX/USD",
       "qty": "55.0",
-      "grid_interval": "1.5",
+      "grid_interval": "2.5",
       "sell_mult": "0.999"
     },
     {

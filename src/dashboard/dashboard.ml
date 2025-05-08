@@ -289,10 +289,26 @@ let render state =
   let create_horizontal_fill width char_str =
     String.concat "" (List.init (max 0 width) (fun _ -> char_str))
   in
+  let diogrid_label_text = " DioGrid " in
+  let diogrid_label_style = style_header_border ++ A.st A.bold in (* Or your preferred style *)
+  let diogrid_label_img = I.string diogrid_label_style diogrid_label_text in
+  let diogrid_label_width = I.width diogrid_label_img in
   let top_asset_box_line = 
     match asset_rows with 
     | [] -> I.empty 
-    | _ -> I.string style_header_border (Printf.sprintf "\u{250F}%s\u{2513}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))
+    | _ -> 
+        (* Characters: ┏ (1), ━ (1), Label (variable), ━ (1), ┓ (1) = Label_width + 4 minimum *)
+        let min_space_for_labeled_border = diogrid_label_width + 4 in
+        if term_width >= min_space_for_labeled_border then
+          let fill_width = term_width - diogrid_label_width - 4 in (* Space for ━ characters after label *)
+          I.hcat [
+            I.string style_header_border "\u{250F}\u{2501}"; (* "┏━" *)
+            diogrid_label_img;
+            I.string style_header_border (create_horizontal_fill fill_width horiz_border_char_str);
+            I.string style_header_border "\u{2513}"; (* "┓" *)
+          ]
+        else (* Fallback to a simple line if not enough space *)
+          I.string style_header_border (Printf.sprintf "\u{250F}%s\u{2513}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))
   in
   let inter_asset_box_line = 
     I.string style_header_border (Printf.sprintf "\u{2523}%s\u{252B}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))

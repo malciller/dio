@@ -475,7 +475,7 @@ module State = struct
                 Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval)
               in
               let expected_total_spread_pct = 2.0 *. configured_grid_interval_pct in
-              let tolerance_pct = 0.05 (* Tolerance for comparison, e.g., 0.1% *) in
+              let tolerance_pct = 0.025 (* Tolerance for comparison, e.g., 0.1% *) in
               let diff_pct = abs_float (actual_spread_pct_of_mid -. expected_total_spread_pct) in
 
               if diff_pct <= tolerance_pct then
