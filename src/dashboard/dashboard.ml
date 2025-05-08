@@ -52,7 +52,7 @@ let header =
                      I.string key_bracket_style "["; I.string key_text_style "L"; I.string key_bracket_style "]";
                      I.string text_style        "ogs ";
                      I.string key_bracket_style "│";
-                     I.string text_style        " ["; I.string key_text_style "Q"; I.string key_bracket_style "]";
+                     I.string key_bracket_style        " ["; I.string key_text_style "Q"; I.string key_bracket_style "]";
                      I.string text_style        "uit     ";
                    ]
   in
