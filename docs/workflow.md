@@ -1,33 +1,71 @@
-<!-- Mermaid.js Diagram - https://mermaid.live ; copy from below the comment, and paste into viewer. -->
+<!-- Go to https://mermaid.live/edit and paste below comment into viewer -->
 
 graph TD
     A[bin/dio.ml] --> A1[main]
-    A1 --> A2[setup_logging]
-    A1 --> A3[read_config]
-    A1 --> A4[Dotenv.export]
-    A1 --> A5[Kraken.Token.get_token]
-    A5 --> A5a[load_env_file]
-    A5 --> A5b[get_api_credentials]
-    A5 --> A5c[sign request]
-    A5 --> A5d[POST /0/private/GetWebSocketsToken]
-    A1 --> A6[create strategy]
-    A1 --> A7[create router]
-    A1 --> B[Engine.run]
-    A3 -->|kraken_grid_config.json| A8[runtime_cfg: assets, debounce_ms, queues_cap]
-    A3 -->|kraken_grid_config.json| A9[core_cfg: ws_host, ws_port, ws_path, symbols, auth_token]
-    A4 -->|.env| A5
-    A5 -->|auth_token| A9
-    A6 -->|strategy| B
-    A7 -->|router| B
-    A8 -->|runtime_cfg| B
-    A9 -->|core_cfg| B
-    B --> B1[create buffers with queues_cap]
+    A1 --> A2[Arg.parse]
+    A2 -->|set mode_dash| A3[setup_logging]
+    A2 -->|mode_dash=true| A4[dashboard_mode]
+    A2 -->|mode_dash=false| A5[start_engine_logic]
+    A3 --> A3a[create default_logger]
+    A3a -->|mode_dash=true| A3b[Dashboard logger with timestamps]
+    A3a -->|mode_dash=false| A3c[Stdout logger]
+    A3 --> A3d[add logging rules: engine.*, kraken_ws_exec]
+    A5 --> A6[read_config]
+    A6 -->|kraken_grid_config.json| A7[runtime_cfg: assets, debounce_ms, queues_cap]
+    A6 -->|kraken_grid_config.json| A8[engine_config: ws_host, ws_port, ws_path, symbols, auth_token, kraken_api_key, kraken_api_secret]
+    A6 --> A9[Sys.getenv KRAKEN_API_KEY, KRAKEN_API_SECRET]
+    A5 --> A10[Dotenv.export]
+    A10 -->|.env| A11[Kraken.Token.get_token]
+    A11 --> A11a[load_env_file]
+    A11 --> A11b[get_api_credentials]
+    A11 --> A11c[sign request]
+    A11 --> A11d[POST /0/private/GetWebSocketsToken]
+    A11 -->|auth_token| A8
+    A5 --> A12[create grid_strategy]
+    A5 --> A13[create router]
+    A5 --> A14[Engine.run]
+    A7 -->|runtime_cfg| A14
+    A8 -->|engine_config| A14
+    A12 -->|grid_strategy| A14
+    A13 -->|router| A14
+    A4 --> A4a[Dashboard.start]
+    A4a --> A4a1[create_term]
+    A4a --> A4a2[tick_loop]
+    A4a --> A4a3[input_loop]
+    A4a2 --> A4a4[render]
+    A4a3 -->|quit| A4d[on_quit callback]
+    A4a4 --> A4a5[stats_data]
+    A4a4 --> KY
+    A4 --> A4b[quit_promise]
+    A4 --> A4c[Lwt_unix.on_signal SIGINT]
+    A4d --> A4b
+    A4c --> A4b
+    A4b --> A4e[cleanup]
+    A4e --> A4f[Lwt.cancel engine_promise]
+    A4e --> A4g[Notty_lwt.Term.release]
+    A4 --> A5
+
+    A14 --> B[Engine.run]
+    B --> B1[create buffers]
     B1 --> G[tick_buffer: Ringbuffer.t]
     B1 --> H[cmd_buffer: Ringbuffer.t]
     B1 --> I[exec_buffer: Ringbuffer.t]
-    B --> B2[start_feed]
-    B --> C[Supervisor.start]
-    
+    B --> B2[Supervisor.start]
+    B2 -->|feed_initializer_fn| B3[start_feed]
+    B3 --> B4[Feed.Prod.start]
+    B3 --> B5[Feed.Prod.start_executions]
+    B4 -->|on_tick| B6[push_tick_to_buffer]
+    B5 -->|on_execution| B7[push_execs_to_buffer]
+    B6 -->|tick_event| G
+    B7 -->|market_event| I
+    B2 -->|runtime_cfg| C
+    B2 -->|engine_config| C
+    B2 -->|grid_strategy| C
+    B2 -->|router| C
+    B2 -->|tick_buffer| C
+    B2 -->|exec_buffer| C
+    B2 -->|cmd_buffer| C
+
     subgraph "Supervisor"
         C --> C1[feed_fut]
         C --> C2[strat_fut]
@@ -36,9 +74,9 @@ graph TD
         C2 --> E[Strategy]
         C3 --> F[Router]
         C -->|runtime_cfg| C2
-        C -->|core_cfg| C1
-        C -->|core_cfg| C2
-        C -->|core_cfg| C3
+        C -->|engine_config| C1
+        C -->|engine_config| C2
+        C -->|engine_config| C3
         C -->|tick_buffer| C2
         C -->|exec_buffer| C2
         C -->|cmd_buffer| C2
@@ -57,53 +95,54 @@ graph TD
     end
 
     subgraph "Feed Component"
-        D --> B2
-        B2 --> B3[push_tick_to_buffer]
-        B2 --> B4[push_execs_to_buffer]
-        B2 --> J1[Feed.Prod.start]
-        B2 --> J2[Feed.Prod.start_executions]
+        D --> B4
+        D --> B5
+        B4 --> B6
+        B5 --> B7
+        B6 -->|tick_event| G
+        B7 -->|market_event| I
+        B4 --> J1[Feed.Prod.start]
+        B5 --> J2[Feed.Prod.start_executions]
         J1 --> K[Public Feed]
         J2 --> J3[check auth_token]
         J3 -->|Some| L[Auth Feed]
         J3 -->|None| J4[log warning]
-        K -->|tick_event| B3
-        L -->|market_event| B4
-        B3 -->|tick_event| G
-        B4 -->|market_event| I
+        K -->|tick_event| B6
+        L -->|market_event| B7
 
         subgraph "Public Feed"
-            K --> KP[connect]
-            KP -->|wss://ws.kraken.com/v2| KQ[start]
-            KQ -->|subscribe ticker| KR[make_subscribe_message]
-            KQ -->|subscribe instrument| KR
-            KQ --> KS[handle_public_frame]
-            KR -->|Frame| KS
-            KS -->|ticker_data| KT[on_tick]
-            KS -->|instrument_data| KX[update instrument_precisions]
-            KS -->|heartbeat| KU[pong]
-            KS -->|status| KV[log_status]
-            KS -->|subscription_response| KZ[log_subscription]
-            KT -->|tick_event| B3
-            KX --> KY[instrument_precisions]
-            KX --> KZ2[resolve instruments_loaded]
+            K --> K1[retry_loop]
+            K1 --> K2[Lwt.catch]
+            K2 --> K3[Kraken.Ws_feed.start]
+            K2 --> K4[log error]
+            K4 --> K5[Lwt_unix.sleep 5s]
+            K5 --> K1
+            K3 --> K6[connect]
+            K3 --> K7[subscribe Ticker, Instrument]
+            K3 --> K8[handle_public_frame]
+            K6 --> K7
+            K7 --> K8
+            K8 -->|tick_event| B6
+            K8 -->|instrument_precisions| KY
+            K8 -->|instruments_loaded| KZ2
         end
 
         subgraph "Auth Feed"
-            L --> LP[connect]
-            LP -->|wss://ws-auth.kraken.com/v2| LQ[start_executions]
-            LQ -->|subscribe executions| LR[make_subscribe_message]
-            LQ --> LS[handle_auth_frame]
-            LR -->|Frame| LS
-            LS -->|execution_report snapshot| LT1[update orders]
-            LS -->|execution_report update| LT2[execution_report_to_market_event]
-            LT1 --> LV[open_buy_orders]
-            LT1 --> LW[pending_orders]
-            LT1 --> LZ2[resolve snapshot_processed]
-            LT2 --> LU[on_execution]
-            LU -->|market_event| B4
-            LS -->|heartbeat| LX[pong]
-            LS -->|status| LY[log_status]
-            LS -->|subscription_response| LZ[log_subscription]
+            L --> L1[retry_loop]
+            L1 --> L2[Lwt.catch]
+            L2 --> L3[Kraken.Ws_feed.start_executions]
+            L2 --> L4[log error]
+            L4 --> L5[Lwt_unix.sleep 5s]
+            L5 --> L1
+            L3 --> L6[connect]
+            L3 --> L7[subscribe Executions]
+            L3 --> L8[handle_auth_frame]
+            L6 --> L7
+            L7 --> L8
+            L8 -->|market_event| B7
+            L8 -->|open_buy_orders| LV
+            L8 -->|pending_orders| LW
+            L8 -->|snapshot_processed| LZ2
         end
     end
 
@@ -116,29 +155,37 @@ graph TD
         M1 --> M5[loop]
         M2 -->|snapshot_processed| M5
         M3 -->|instruments_loaded| M5
-        M4 -->|core_cfg| M5
+        M4 -->|engine_config| M5
         M5 --> M6[process exec_buffer]
         M5 --> M7[process tick_buffer]
         M6 --> M8[handle_execution]
-        M7 --> M9[update_price]
-        M7 --> M10[sync_open_orders]
-        M7 --> M11[check_and_adjust_orders]
-        M7 --> M12[create_initial_orders]
-        M8 --> M11
+        M7 --> M9[check price changed]
+        M9 -->|changed| M10[update_price]
+        M9 -->|changed| M11[sync_open_orders]
+        M9 -->|changed| M12[check_and_adjust_orders]
+        M9 -->|changed| M13[create_initial_orders]
+        M9 -->|changed| M16[verify_grid_spacing]
+        M9 -->|unchanged| M5
         M8 --> M12
-        M9 --> M13[price_info]
-        M10 --> LV
-        M11 --> LV
-        M12 --> M14[open_orders]
-        M12 --> M15[initialized_symbols]
-        M12 --> KY
+        M8 --> M13
+        M8 --> M14[open_orders]
+        M10 --> M15[price_info]
+        M11 --> M14
+        M11 --> M12
+        M12 --> M14
+        M12 -->|amend_cmds| H
+        M13 --> M14
+        M13 -->|add_cmds| H
+        M13 --> M17[initialized_symbols]
+        M13 --> KY
+        M16 -->|amend_cmds| H
         G -- ticks --> M7
         I -- execs --> M6
-        M8 -- order_cmds --> H
-        M11 -- order_cmds --> H
-        M12 -- order_cmds --> H
-        M8 --> M14
-        M10 --> M14
+        M4 --> M14
+        M4 --> M17
+        M11 --> LV
+        M12 --> LV
+        M16 --> LV
     end
 
     subgraph "Router Component"
@@ -147,46 +194,111 @@ graph TD
         N1 --> N2[cmd_loop]
         N2 --> N3[OrderCache.cleanup]
         N2 --> N4[OrderCache.is_duplicate]
-        N2 --> N5[Kraken.handle_order]
-        N4 --> N6[recent_orders]
-        N5 --> N7[Kraken.Ws_exec.handle_router_command]
-        N7 --> N8[connect]
-        N7 --> N9[enqueue cmd]
-        N7 --> N10[start_loop]
-        N8 -->|wss://ws-auth.kraken.com/v2| N10
-        N9 --> N11[cmd_queue]
-        N10 --> N12[send_order_command]
-        N10 --> N13[handle_message]
-        N12 --> KY
-        N13 -->|Ack| I
+        N2 --> N5[log command]
+        N2 --> N6[Kraken.handle_order]
+        N4 -->|duplicate| N7[log warning]
+        N4 -->|not duplicate| N5
+        N5 --> N6
+        N6 --> N8[Kraken.Kraken_exec.handle_router_command]
+        N8 --> N10[send_order_command]
+        N10 --> N11[REST POST]
+        N10 --> N12[on_event]
+        N3 --> N9[recent_orders]
+        N4 --> N9
+        N10 --> KY
+        N12 -->|market_event| I
         H -- cmds --> N2
-        N9 --> N11
-        N12 --> N11
-        N13 --> N11
     end
 
-    style A fill:#f9f,stroke:#333,stroke-width:2px
-    style A1 fill:#f9f,stroke:#333,stroke-width:1px
-    style A8 fill:#ffb,stroke:#333,stroke-width:2px
-    style A9 fill:#ffb,stroke:#333,stroke-width:2px
-    style B fill:#bbf,stroke:#333,stroke-width:2px
-    style C fill:#bbf,stroke:#333,stroke-width:2px
-    style G fill:#dfd,stroke:#333,stroke-width:2px
-    style H fill:#dfd,stroke:#333,stroke-width:2px
-    style I fill:#dfd,stroke:#333,stroke-width:2px
-    style J1 fill:#bbf,stroke:#333,stroke-width:1px
-    style J2 fill:#bbf,stroke:#333,stroke-width:1px
-    style J3 fill:#bbf,stroke:#333,stroke-width:1px
-    style J4 fill:#ffb,stroke:#333,stroke-width:1px
-    style K fill:#bbf,stroke:#333,stroke-width:1px
-    style L fill:#bbf,stroke:#333,stroke-width:1px
-    style LV fill:#ffb,stroke:#333,stroke-width:1px
-    style LW fill:#ffb,stroke:#333,stroke-width:1px
-    style KY fill:#ffb,stroke:#333,stroke-width:1px
-    style M fill:#bbf,stroke:#333,stroke-width:2px
-    style M13 fill:#ffb,stroke:#333,stroke-width:1px
-    style M14 fill:#ffb,stroke:#333,stroke-width:1px
-    style M15 fill:#ffb,stroke:#333,stroke-width:1px
-    style N fill:#bbf,stroke:#333,stroke-width:2px
-    style N6 fill:#ffb,stroke:#333,stroke-width:1px
-    style N11 fill:#ffb,stroke:#333,stroke-width:1px
+    style A fill:#333333,stroke:#000000,stroke-width:2px,color:#ffffff
+    style A1 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A2 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A3 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A4 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A5 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A7 fill:#a5f3fc,stroke:#000000,stroke-width:2px,color:#000000
+    style A8 fill:#a5f3fc,stroke:#000000,stroke-width:2px,color:#000000
+    style A14 fill:#1e3a8a,stroke:#000000,stroke-width:2px,color:#d1d5db
+    style B fill:#333333,stroke:#000000,stroke-width:2px,color:#ffffff
+    style C fill:#333333,stroke:#000000,stroke-width:2px,color:#ffffff
+    style G fill:#4b5563,stroke:#000000,stroke-width:2px,color:#ffffff
+    style H fill:#4b5563,stroke:#000000,stroke-width:2px,color:#ffffff
+    style I fill:#4b5563,stroke:#000000,stroke-width:2px,color:#ffffff
+    style J1 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style J2 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style J3 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style J4 fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style K fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style L fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style LV fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style LW fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style KY fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style KZ2 fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style LZ2 fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style M fill:#333333,stroke:#000000,stroke-width:2px,color:#ffffff
+    style M15 fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style M14 fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style M17 fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style N fill:#333333,stroke:#000000,stroke-width:2px,color:#ffffff
+    style N9 fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style N10 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style N11 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style N12 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A4a fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A4a1 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A4a2 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A4a3 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A4a4 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style A4a5 fill:#a5f3fc,stroke:#000000,stroke-width:1px,color:#000000
+    style D fill:#333333,stroke:#000000,stroke-width:2px,color:#ffffff
+    style E fill:#333333,stroke:#000000,stroke-width:2px,color:#ffffff
+    style F fill:#333333,stroke:#000000,stroke-width:2px,color:#ffffff
+    style B1 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style B2 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style B3 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style B4 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style B5 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style B6 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style B7 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style C1 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style C2 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style C3 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style C4 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style K1 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style K2 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style K3 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style K4 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style K5 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style K6 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style K7 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style K8 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style L1 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style L2 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style L3 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style L4 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style L5 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style L6 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style L7 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style L8 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M1 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M2 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M3 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M4 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M5 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M6 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M7 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M8 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M9 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M10 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M11 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M12 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M13 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style M16 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style N1 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style N2 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style N3 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style N4 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style N5 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style N6 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style N7 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
+    style N8 fill:#1e3a8a,stroke:#000000,stroke-width:1px,color:#d1d5db
