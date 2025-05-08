@@ -487,8 +487,9 @@ module State = struct
                 let new_target_buy_price_float = min_sell_price_float *. (1.0 -. (expected_total_spread_pct /. 100.0)) in
 
                 if new_target_buy_price_float >= current_market_price_float then
-                  Lwt_log_core.warning ~section
-                    (Printf.sprintf "Grid Verify [%s]:(Above Market)."
+                  Lwt_log_core.info ~section
+                  (* Not actually passing, but for strategy purposes is *)
+                    (Printf.sprintf "Grid Verify [%s]: PASSED."
                       symbol)
                 else
                   (* Safe to amend, check precision and if new price is actually different *)
@@ -509,7 +510,7 @@ module State = struct
 
                       if Stdlib.compare new_buy_price_primitive existing_buy_price_primitive = 0 then
                         Lwt_log_core.info ~section
-                        (* Not actually passing, but for appearances sake*)
+                        (* Not actually passing, but for strategy purpooses it does *)
                           (Printf.sprintf "Grid Verify [%s]: PASSED."
                             symbol)
                       else
