@@ -23,4 +23,5 @@
   websocket-lwt-unix cohttp-lwt-unix
   alcotest alcotest-lwt
   dotenv
-  cstruct))
+  cstruct
+  notty))

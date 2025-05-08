@@ -6,6 +6,7 @@ open Lwt.Syntax
 module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
 open Types
+open Dio_lib.Stats
 
 (* Define the logging section once at the top *)
 let section = Lwt_log_core.Section.make "kraken_ws_feed"
@@ -342,10 +343,22 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
   let order_qty_opt = JsonUtil.(member "order_qty" order_json |> to_float_option) in
   let userref_opt = JsonUtil.(member "userref" order_json |> to_int_option |> Option.map string_of_int) in
 
+  (* Added: Get symbol early for stats calls *)
+  let symbol_for_stats =
+      let existing_opt =
+        match item_exec_type with
+        | "new" -> Hashtbl.find_opt pending_orders order_id
+        | _ -> Hashtbl.find_opt all_open_orders order_id (* Use all_open_orders for others *)
+      in
+      match existing_opt with
+      | Some o -> Some o.order_symbol
+      | None -> symbol_opt (* Fallback to symbol from current message *)
+  in
+
   (* Detailed log for easier debugging of incoming data for state changes *)
   debug_log (Printf.sprintf "[StateProc:%s] ID:%s, ExecType:%s, Status:%s, Symbol:%s, Side:%s, UserRef:%s, LimitPx:%s, OrderQty:%s, LastPx:%s, LastQty:%s"
     (String.capitalize_ascii context_msg_type) order_id item_exec_type order_status_str
-    (Option.value symbol_opt ~default:"N/A") (Option.value side_str_opt ~default:"N/A")
+    (Option.value symbol_for_stats ~default:"N/A") (Option.value side_str_opt ~default:"N/A")
     (Option.value userref_opt ~default:"N/A")
     (Option.map string_of_float limit_price_opt |> Option.value ~default:"N/A")
     (Option.map string_of_float order_qty_opt |> Option.value ~default:"N/A")
@@ -355,23 +368,55 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
 
   match item_exec_type with
   | "canceled" ->
+      let%lwt was_in_pending_and_stat_handled =
+        match Hashtbl.find_opt pending_orders order_id with
+        | Some po ->
+            Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Calling dec_pending for %s (canceled/pending)" po.order_symbol) >>= fun () -> (* Added Log *)
+            dec_pending po.order_symbol;
+            Hashtbl.remove pending_orders order_id;
+            Lwt_log_core.debug ~section (format_order_log po ("CANCELED (from Pending State)" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
+            Lwt.return true
+        | None -> Lwt.return false
+      in
       (match Hashtbl.find_opt all_open_orders order_id with
       | Some existing_order ->
           let symbol = existing_order.order_symbol in
+          (* The dec_pending call based on symbol_for_stats (derived from all_open_orders) is removed here *)
+          Hashtbl.remove all_open_orders order_id;
+          (* Removal from pending_orders is handled above if it was pending *)
           debug_log (format_order_log existing_order ("CANCELED" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
           handle_order_cancellation order_id symbol >>= fun () ->
-          Hashtbl.remove all_open_orders order_id;
-          Hashtbl.remove pending_orders order_id;
           log_open_orders ()
-      | None -> Lwt.return_unit)
-  | "filled" | "expired" -> (* Handles items explicitly marked as "filled" or "expired" *)
+      | None -> (* Not in all_open_orders *)
+          if not was_in_pending_and_stat_handled then
+            Lwt_log_core.debug ~section (Printf.sprintf "[ORDER CANCELED UNKNOWN] ID: %s not found in open or pending." order_id)
+          else
+            Lwt.return_unit (* Was pending, stat handled, and not in all_open_orders. Log for pending cancel already occurred. *)
+      )
+  | "filled" | "expired" ->
+      let%lwt was_in_pending_and_stat_handled =
+        match Hashtbl.find_opt pending_orders order_id with
+        | Some po ->
+            Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Calling dec_pending for %s (filled/expired/pending)" po.order_symbol) >>= fun () -> (* Added Log *)
+            dec_pending po.order_symbol;
+            Hashtbl.remove pending_orders order_id;
+            Lwt_log_core.debug ~section (format_order_log po ((String.uppercase_ascii item_exec_type) ^ " (from Pending State)" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
+            Lwt.return true
+        | None -> Lwt.return false
+      in
       (match Hashtbl.find_opt all_open_orders order_id with
       | Some existing_order ->
+          (* The dec_pending call based on symbol_for_stats (derived from all_open_orders) is removed here *)
           Hashtbl.remove all_open_orders order_id;
-          Hashtbl.remove pending_orders order_id;
+          (* Removal from pending_orders is handled above if it was pending *)
           debug_log (format_order_log existing_order (String.uppercase_ascii item_exec_type ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
           log_open_orders ()
-      | None -> Lwt.return_unit)
+      | None -> (* Not in all_open_orders *)
+          if not was_in_pending_and_stat_handled then
+            Lwt_log_core.debug ~section (Printf.sprintf "[ORDER %s UNKNOWN] ID: %s not found in open or pending." (String.uppercase_ascii item_exec_type) order_id)
+          else
+            Lwt.return_unit (* Was pending, stat handled, and not in all_open_orders. Log for pending already occurred. *)
+      )
   | _ -> (* Handles "new", "pending_new", "amended", "restated", "status", "trade", etc. *)
       let symbol =
         match item_exec_type, symbol_opt with
@@ -411,21 +456,41 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
           let* log_msg_lwt =
             let suffix = if context_msg_type = "snapshot" then " (Snapshot)" else "" in
             match item_exec_type with
-            | "pending_new" -> Hashtbl.replace pending_orders order_id order; Lwt.return (format_order_log order ("PENDING" ^ suffix))
+            | "pending_new" ->
+                Hashtbl.replace pending_orders order_id order;
+                Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order is pending_new: Calling inc_pending for %s (%s)" order.order_symbol context_msg_type) >>= fun () ->
+                inc_pending order.order_symbol; (* Increment pending count *)
+                Lwt.return (format_order_log order ("PENDING" ^ suffix))
             | "new" ->
+                let was_pending_internally = Hashtbl.mem pending_orders order_id in
                 Hashtbl.replace all_open_orders order_id order;
                 Hashtbl.remove pending_orders order_id;
+
+                if was_pending_internally then (
+                  Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order moved from internal pending to new: Calling dec_pending for %s (%s)" order.order_symbol context_msg_type) |> Lwt.ignore_result;
+                  dec_pending order.order_symbol (* Was counted as 'pending_new', now it's 'new', so adjust. *)
+                );
+
+                (* Now, count it as an active/open order for pacdash visibility *)
+                Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order is new/open on exchange: Calling inc_pending for %s (%s)" order.order_symbol context_msg_type) |> Lwt.ignore_result;
+                inc_pending order.order_symbol;
+
                 Lwt.return (format_order_log order ("NEW" ^ suffix))
             | "trade" ->
+                Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Calling inc_trades for %s" order.order_symbol) >>= fun () -> (* Added Log *)
+                inc_trades order.order_symbol; (* Increment trade count *)
                 let last_qty_val = Option.value last_qty_opt ~default:0.0 in
                 let last_price_val = Option.value last_price_opt ~default:0.0 in
                 if status = Core.Open then (* If order is still open (e.g. partially_filled) *)
-                  (Hashtbl.replace all_open_orders order_id order; (* Changed to all_open_orders *)
+                  (Hashtbl.replace all_open_orders order_id order;
                    Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Order remains open)" suffix last_qty_val order.order_symbol last_price_val))
                 else (* If trade results in Filled or other terminal state *)
-                  (Hashtbl.remove all_open_orders order_id; (* Changed to all_open_orders *)
-                   Hashtbl.remove pending_orders order_id;
-                   Lwt.return (Printf.sprintf "[ORDER FILL%s] %f %s at %.2f (Order now terminal)" suffix last_qty_val order.order_symbol last_price_val))
+                  (* Check if it was pending before moving *)
+                  let was_pending = Hashtbl.mem pending_orders order_id in
+                  Hashtbl.remove all_open_orders order_id;
+                  Hashtbl.remove pending_orders order_id;
+                  if was_pending then dec_pending order.order_symbol; (* Decrement pending count *)
+                  Lwt.return (Printf.sprintf "[ORDER FILL%s] %f %s at %.2f (Order now terminal)" suffix last_qty_val order.order_symbol last_price_val)
             | "amended" -> Hashtbl.replace all_open_orders order_id order; Lwt.return (format_order_log order ("AMENDED" ^ suffix))
             | "restated" | "status" -> Hashtbl.replace all_open_orders order_id order; Lwt.return (format_order_log order ((String.uppercase_ascii item_exec_type) ^ suffix))
             | _ -> Lwt.return (format_order_log order (("UPDATE (" ^ item_exec_type ^ ")" ) ^ suffix))

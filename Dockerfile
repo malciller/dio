@@ -1,7 +1,7 @@
 # ────────────────────────────────────────────────────────────────────────────────
 # Dio – Dockerfile
 # Ubuntu 22.04 base image + OCaml 4.14.2 + full native build
-# Fixes “unknown scheme” by shipping /etc/services (via netbase package)
+# Fixes "unknown scheme" by shipping /etc/services (via netbase package)
 # ────────────────────────────────────────────────────────────────────────────────
 
 # 1.  Base image
@@ -9,7 +9,7 @@ FROM ubuntu:22.04
 ENV QEMU_CPU=host
 
 # 2.  System dependencies
-#     • netbase   → provides /etc/services so Conduit can resolve “https”
+#     • netbase   → provides /etc/services so Conduit can resolve "https"
 #     • libsqlite3-dev for caqti-driver-sqlite3
 RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
