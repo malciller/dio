@@ -282,7 +282,7 @@ let render state =
     in
 
     let runtime_str = fmt_runtime Stats.start_ts in
-    let runtime_img = I.string (style_primary_text ++ A.st A.bold) runtime_str in
+    let runtime_img = I.string (style_logs_accent_text ++ A.st A.bold) (Printf.sprintf " %s " runtime_str) in
     let runtime_width = I.width runtime_img in
     let line6 =
       (* Required width = 5 (pad) + 1 (┗) + Runtime(W) + 1 (┛) = W + 7 *)
@@ -314,7 +314,7 @@ let render state =
     (M.fold (fun asset _ acc -> asset :: acc) !Stats.pending_orders [] |> List.sort compare_assets)
   in
   let diogrid_label_text = " DioGrid " in
-  let diogrid_label_style = style_header_border ++ A.st A.bold in (* Or your preferred style *)
+  let diogrid_label_style = style_logs_accent_text ++ A.st A.bold in (* Or your preferred style *)
   let diogrid_label_img = I.string diogrid_label_style diogrid_label_text in
   let diogrid_label_width = I.width diogrid_label_img in
   let top_asset_box_line = 
@@ -362,7 +362,7 @@ let render state =
   let logs_section_image = 
     if not state.show_logs || logs_height <= 0 then void 0 0
     else
-      let logs_header_text = I.string (style_logs_accent_text ++ A.st A.bold) " LOGS " in
+      let logs_header_text = I.string (style_logs_accent_text ++ A.st A.bold) " Logs " in
       let logs_header_img = 
         hcat [
           I.string style_header_border "┏━"; logs_header_text;
