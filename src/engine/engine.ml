@@ -1,5 +1,5 @@
 (* src/engine/engine.ml *)
-open Types (* For Event.tick *)
+open Dio_types (* For Event.tick *)
 
 module Feed = Feed
 module Kraken = Kraken

@@ -1,5 +1,5 @@
 open Alcotest
-open Types
+open Dio_types
 
 
 (* Helper: round-trip via Yojson ------------------------------------- *)

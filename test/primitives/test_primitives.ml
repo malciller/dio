@@ -1,5 +1,5 @@
 open Alcotest
-open Types                            (* root module from dio.types *)
+open Dio_types                            (* root module from dio.types *)
 
 
 (* -------------------------------------------------------------------- *)

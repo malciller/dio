@@ -1,51 +1,79 @@
 open Lwt.Infix
 open Conduit_lwt_unix
-open Types
-open Dio_lib (* For Pacdash and Stats, and potentially Engine if it's moved into Dio lib *)
+open Dio_types
+open Dashboard (* For Dashboard and Stats, and potentially Engine if it's moved into Dio lib *)
+open Engine
+
+(* Move this declaration to the top *)
+let mode_dash = ref false
 
 (* Set up logging *)
 let setup_logging () =
+  (* These base rules apply to all logs before specific section rules are checked.
+     They will direct to whichever logger becomes the default. *)
   Lwt_log.add_rule "*" Lwt_log_core.Error;
   Lwt_log.add_rule "*" Lwt_log_core.Warning; 
-  (* Lwt_log.add_rule "engine.router" Lwt_log_core.Info;   
-  Lwt_log.add_rule "engine.router" Lwt_log_core.Debug;   
-  Lwt_log.add_rule "kraken_ws_feed" Lwt_log_core.Debug;
-  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info;   
-  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Debug;
-  Lwt_log.add_rule "engine.strategy" Lwt_log_core.Info; 
-  Lwt_log.add_rule "engine.strategy.grid_verify" Lwt_log_core.Info;
-  Lwt_log.add_rule "engine.supervisor" Lwt_log_core.Info;        
-  Lwt_log.add_rule "pacdash" Lwt_log_core.Info; *)
-  (* Allow Info for router *) 
-  Lwt_log_core.default := Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
+
+  let default_logger =
+    if !mode_dash then
+      (* Dashboard mode: logs are formatted and sent ONLY to Stats.dashboard_logs *)
+      Lwt_log_core.make
+        ~output:(fun section level messages ->
+          if List.length messages > 0 then
+            let first_message_string = List.hd messages in (* Lwt_log typically sends one message per call to output *)
+            let formatted_message = 
+              Printf.sprintf "[%s|%s] %s" 
+                (Lwt_log_core.Section.name section) 
+                (Lwt_log_core.string_of_level level) 
+                first_message_string
+            in
+            Stats.add_dashboard_log formatted_message;
+            Lwt.return_unit (* The output function must return unit Lwt.t *)
+          else
+            Lwt.return_unit
+        )
+        ~close:(fun () -> Lwt.return_unit) (* No underlying stdio logger to explicitly close here *)
+    else
+      (* Normal mode: logs go to stdout *)
+      Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
+  in
+
+  Lwt_log_core.default := default_logger;
+
+  (* Specific rules for log levels and sections.
+     These will now use the 'default_logger' configured above. *)
+  Lwt_log.add_rule "engine.*" Lwt_log_core.Info;
+  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info
+  
 
 (* Read and parse config file *)
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)
   try
     let json = Yojson.Safe.from_file config_path in
-    let runtime_cfg = Config.runtime_cfg_of_yojson_exn json in
-    (* Convert runtime_cfg to Core.config *)
-    let symbols = List.map (fun asset -> asset.Config.symbol) runtime_cfg.assets in
-    let core_cfg = { (* Rename to core_cfg for clarity *)
-      Config.ws_host = "ws.kraken.com";
-      Config.ws_port = 443;
-      Config.ws_path = "/v2";
-      Config.symbols;
-      Config.auth_token = None; (* Will be set later from .env *)
+    let runtime_cfg : Config.runtime_cfg = Config.runtime_cfg_of_yojson_exn json in
+    
+    (* Extract symbols for engine_config *)
+    (* asset is of type Config.asset_cfg, which has a 'symbol: Primitives.symbol' field. Primitives.symbol is string *)
+    let engine_symbols : string list = List.map (fun (asset: Config.asset_cfg) -> asset.symbol) runtime_cfg.assets in
+    
+    let engine_cfg : Config.engine_config = {
+      ws_host = "ws.kraken.com";
+      ws_port = 443;
+      ws_path = "/v2";
+      symbols = engine_symbols;
+      auth_token = None; (* Will be set later from .env *)
     } in
-    Ok (runtime_cfg, core_cfg) (* Return tuple *)
+    Ok (runtime_cfg, engine_cfg)
   with
   | Yojson.Json_error msg -> Error (Printf.sprintf "Invalid JSON in config file: %s" msg)
   | Sys_error msg -> Error (Printf.sprintf "Failed to read config file: %s" msg)
   | exn -> Error (Printf.sprintf "Unexpected error reading config: %s" (Printexc.to_string exn))
 
-let mode_dash = ref false
-
 (* Placeholder for any other existing command line arguments your application might have *)
 let your_other_args = []
 
 let specs = [
-  ("--pacdash", Arg.Set mode_dash, " Run Pac-Man-style dashboard")
+  ("--dashboard", Arg.Set mode_dash, " Run Pac-Man-style dashboard")
 ] @ your_other_args
 
 (* Renamed function to reflect it starts the core logic and returns a promise *)
@@ -94,9 +122,6 @@ let start_engine_logic () : unit Lwt.t =
     )
 
 let main () =
-  (* Initialize Logging FIRST *)
-  setup_logging ();
-
   (* Initialize the default RNG for crypto operations (TLS) using the Unix backend *)
   Mirage_crypto_rng_unix.use_default ();
 
@@ -109,66 +134,69 @@ let main () =
 
   Arg.parse specs (fun anon_arg -> Printf.eprintf "Warning: Ignoring anonymous argument: %s\n" anon_arg) "dio options";
 
+  (* Initialize Logging AFTER Arg.parse so mode_dash is set *)
+  setup_logging ();
+
   if !mode_dash then begin
-    (* Removed Lwt_log_core.default := Lwt_log_core.null; to allow logging in dash mode *)
-    let term_instance = Pacdash.start () in
     let quit_promise, resolve_quit = Lwt.wait () in
 
-    (* Start the engine logic and store the promise *)
-    let engine_promise = start_engine_logic () in
+    (* This ref is used by the new cleanup logic and callbacks *)
+    let cleanup_initiated = ref false in
+
+    (* Revised approach for cleanup to handle term_instance correctly *)
+    let term_instance_ref = ref None in
+    let final_engine_promise_ref = ref (Lwt.return_unit) in (* To store the actual engine promise *)
+
+    let dashboard_on_quit () =
+      if not !cleanup_initiated then (
+        Printf.eprintf "\\n[!] Dashboard requested exit. Signaling main loop...\\n%!";
+        Lwt.wakeup_later resolve_quit (); (* Signal the main loop to start cleanup *)
+      );
+      Lwt.return_unit
+    in
+
+    let term = Dashboard.start ~on_quit:dashboard_on_quit () in
+    term_instance_ref := Some term;
+
+    final_engine_promise_ref := start_engine_logic (); (* Start the engine *)
     Lwt.async (fun () -> 
-      Lwt.catch (fun () -> engine_promise) (fun ex -> 
+      Lwt.catch (fun () -> !final_engine_promise_ref) (fun ex -> 
         Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.main") 
           (Printf.sprintf "Engine task failed: %s" (Printexc.to_string ex))
+        >>= fun () -> 
+          if not !cleanup_initiated then Lwt.wakeup_later resolve_quit (); (* Also trigger cleanup on engine fail *)
+          Lwt.return_unit
       ) 
     );
 
-    (* Define a common cleanup function *)
-    let cleanup_initiated = ref false in
-    let cleanup_and_exit () =
-      if not !cleanup_initiated then (
-        cleanup_initiated := true;
-        Printf.eprintf "\\n[!] Exit requested, cleaning up...\\n%!";
-        Lwt.cancel engine_promise; 
-        (* Release terminal asynchronously *)
-        Lwt.async (fun () ->
-            Lwt.catch
-              (fun () -> Notty_lwt.Term.release term_instance)
-              (fun _ -> Lwt.return_unit) (* Ignore errors during release *)
-        );
-        (* Resolve the main loop promise to exit (schedule for later) *)
-        Lwt.wakeup_later resolve_quit ();
-      )
-    in
-
     (* Set up Lwt signal handler for Ctrl+C (SIGINT) *)
     let _sighandler_id = Lwt_unix.on_signal Sys.sigint (fun _signum ->
-        cleanup_and_exit ()
+        if not !cleanup_initiated then (
+          Printf.eprintf "\\n[!] SIGINT received, initiating exit...\\n%!";
+          Lwt.wakeup_later resolve_quit (); (* Signal the main loop to start cleanup *)
+        )
       )
     in
 
-    (* Also listen for any keyboard input to exit *)
-    Lwt.async (fun () ->
-      let rec wait_for_key () =
-        match%lwt Lwt_stream.get (Notty_lwt.Term.events term_instance) with
-        | Some (`Key _ | `Mouse _ | `Paste _) -> (* Any key, mouse, or paste event triggers exit *)
-            Printf.eprintf "\\n[!] Input event received, initiating exit...\\n%!";
-            cleanup_and_exit (); 
-            Lwt.return_unit (* Stop listening *)
-        | Some (`Resize _) -> 
-            (* Optional: Handle resize if needed, or just continue listening *)
-            wait_for_key () (* Continue listening for other input *)
-        | None -> 
-            (* Stream closed, might mean terminal was released *)
-            Printf.eprintf "\\n[!] Event stream closed, stopping input loop.\\n%!";
-            if not !cleanup_initiated then Lwt.wakeup_later resolve_quit (); (* Exit if not already doing so *)
-            Lwt.return_unit
-      in
-      wait_for_key ()
+    (* Main loop waits for quit_promise. Cleanup is performed after it resolves. *)
+    Lwt_main.run (
+      quit_promise >>= fun () ->
+      (* Actual cleanup sequence *)
+      if not !cleanup_initiated then (
+        cleanup_initiated := true; (* Mark cleanup as started here *)
+        Printf.eprintf "\\n[!] Main loop exiting, performing final cleanup...\\n%!";
+        Lwt.cancel !final_engine_promise_ref; 
+        (match !term_instance_ref with
+        | Some ti -> Notty_lwt.Term.release ti
+        | None -> Lwt.return_unit)
+        >>= fun () -> 
+          Printf.eprintf "[!] Cleanup complete. Exiting application.\n%!";
+          Lwt.return_unit
+      ) else (
+        Printf.eprintf "[!] Cleanup already handled or in progress. Exiting application.\n%!";
+        Lwt.return_unit
+      )
     );
-
-    (* Run main loop, waiting for quit_promise (resolved by cleanup function) *)
-    Lwt_main.run quit_promise;
 
   end else
     (* Run only the engine logic in normal mode *)

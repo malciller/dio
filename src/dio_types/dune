@@ -1,6 +1,6 @@
 (library
- (name types)
- (public_name dio.types)
+ (name dio_types)
+ (public_name dio.dio_types)
  (modules primitives core event config ringbuffer)
  (preprocess (pps ppx_deriving_yojson))
  (libraries decimal lwt yojson))

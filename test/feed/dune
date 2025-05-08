@@ -1,4 +1,4 @@
 (test
  (name test_feed)
- (libraries dio.types dio.engine alcotest alcotest-lwt lwt.unix mirage-crypto-rng.unix)
+ (libraries dio.dio_types dio.engine alcotest alcotest-lwt lwt.unix mirage-crypto-rng.unix)
  (preprocess (pps lwt_ppx)))

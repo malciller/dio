@@ -2,7 +2,7 @@
 
         (* brings Engine.Ringbuffer into scope *)
 
-open Types
+open Dio_types
 
 
 let test_buffer_push_pop _switch () =

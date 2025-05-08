@@ -1,7 +1,7 @@
 (* src/exchange/kraken/ws_exec.ml *)
 open Lwt.Infix
 open Websocket
-open Types
+open Dio_types
 
 (* Global connection state *)
 let connection_state = ref None
@@ -41,33 +41,26 @@ let send_order_command state token (cmd : Core.order_cmd) : unit Lwt.t =
       let req_id = get_next_req_id state in
       Hashtbl.add state.Common.req_to_client req_id client_id;
 
-      (* --- PRICE FORMATTING using Instrument Precision --- *)
       let price_string =
         let raw_price_float = float_of_price price in
-        match Ws_feed.get_price_precision symbol with (* Use getter from feed *)
+        match Ws_feed.get_price_precision symbol with
         | Some precision ->
             Lwt_log_core.debug ~section
               (Printf.sprintf "Formatting price for %s with precision %d" symbol precision) |> Lwt.ignore_result;
-            (* Use the shared formatting function from Primitives *) 
             Primitives.format_float_precision raw_price_float precision
         | None ->
             Lwt_log_core.warning ~section
               (Printf.sprintf "No precision found for symbol %s, sending raw price as string." symbol) |> Lwt.ignore_result;
-            string_of_float raw_price_float (* Fallback to basic string conversion *)
+            string_of_float raw_price_float
       in
-      (* --- END PRICE FORMATTING --- *)
 
-      (* Define a unique placeholder for string replacement *) 
-      let price_placeholder = "@@PRICE_PLACEHOLDER@@" in
-
-      (* Create request with placeholder string *) 
-      let request_with_placeholder = `Assoc [
+      let request = `Assoc [
         "method", `String "add_order";
         "params", `Assoc [
           "symbol", `String symbol;
           "side", `String (match side with Buy -> "buy" | Sell -> "sell");
           "order_type", `String "limit";
-          "limit_price", `String price_placeholder; (* Use placeholder string *) 
+          "limit_price", `Float (float_of_string price_string);
           "order_qty", `Float (float_of_qty qty);
           "time_in_force", `String "gtc";
           "post_only", `Bool true;
@@ -76,89 +69,56 @@ let send_order_command state token (cmd : Core.order_cmd) : unit Lwt.t =
         "req_id", `Int req_id;
       ] in
 
-      (* Convert to JSON string *) 
-      let json_string_with_placeholder = Yojson.Safe.to_string request_with_placeholder in
-      
-      (* Replace the quoted placeholder with the actual numeric price string *) 
-      let final_json_string = Str.replace_first 
-        (Str.regexp ("\"" ^ price_placeholder ^ "\"")) 
-        price_string 
-        json_string_with_placeholder 
-      in
+      let final_json_string = Yojson.Safe.to_string request in
 
-      (* Log the request *) 
       Lwt_log_core.debug ~section
         (Printf.sprintf "Sending order request: %s" final_json_string) >>= fun () ->
 
-      (* Create a promise for the response *)
       let (_response_promise, response_resolver) = Lwt.wait () in
       Hashtbl.add state.response_promises req_id response_resolver;
 
-      (* Send the request (as a raw string frame) *) 
       Websocket_lwt_unix.write state.conn (Frame.create ~content:final_json_string ())
 
-  | Amend { order_id; symbol; new_price; new_qty; _ } -> (* Add symbol *) 
+  | Amend { order_id; symbol; new_price; new_qty; _ } -> (* Add symbol *)
       let req_id = get_next_req_id state in
+      let kraken_order_id = order_id in
 
-      (* Use the provided Kraken order_id directly *) 
-      let kraken_order_id = order_id in (* Assign for clarity/consistency *) 
-
-      (* --- PRICE FORMATTING using Instrument Precision --- *) 
-      (* Use symbol from the command *) 
       let price_string =
         let raw_price_float = float_of_price new_price in
-        match Ws_feed.get_price_precision symbol with (* Use symbol from cmd *) 
+        match Ws_feed.get_price_precision symbol with
         | Some precision ->
             Lwt_log_core.debug ~section
               (Printf.sprintf "Formatting amend price for %s with precision %d" symbol precision) |> Lwt.ignore_result;
-            (* Use the shared formatting function from Primitives *) 
             Primitives.format_float_precision raw_price_float precision
         | None ->
             Lwt_log_core.warning ~section
               (Printf.sprintf "No precision found for symbol %s in amend, sending raw price as string." symbol) |> Lwt.ignore_result;
-            string_of_float raw_price_float (* Fallback to basic string conversion *)
+            string_of_float raw_price_float
       in
-      (* --- END PRICE FORMATTING --- *) 
 
-      (* Define a unique placeholder *) 
-      let price_placeholder = "@@PRICE_PLACEHOLDER@@" in
-
-      (* Create request with placeholder string *) 
-      let params_placeholder = `Assoc [
+      let params = `Assoc [
         "order_id", `String kraken_order_id;
         "order_qty", `Float (float_of_qty new_qty);
-        "limit_price", `String price_placeholder; (* Use placeholder string *) 
+        "limit_price", `Float (float_of_string price_string);
         "post_only", `Bool true;
-        "token", `String token; (* Move token inside params *) 
+        "token", `String token;
       ] in
-      let request_with_placeholder = `Assoc [
+      let request = `Assoc [
         "method", `String "amend_order";
-        "params", params_placeholder;
+        "params", params;
         "req_id", `Int req_id;
       ] in
 
-      (* Convert to JSON string *) 
-      let json_string_with_placeholder = Yojson.Safe.to_string request_with_placeholder in
-      
-      (* Replace the quoted placeholder with the actual numeric price string *) 
-      let final_json_string = Str.replace_first 
-        (Str.regexp ("\"" ^ price_placeholder ^ "\"")) 
-        price_string 
-        json_string_with_placeholder 
-      in
+      let final_json_string = Yojson.Safe.to_string request in
 
       Lwt_log_core.debug ~section
         (Printf.sprintf "Sending amend request: %s" final_json_string) >>= fun () ->
 
-      (* Create a promise for the response *) 
       let (_response_promise, response_resolver) = Lwt.wait () in
       Hashtbl.add state.response_promises req_id response_resolver;
 
-      (* Send the request (as a raw string frame) *) 
       Websocket_lwt_unix.write state.conn (Frame.create ~content:final_json_string ()) >>= fun () ->
-      
-      (* No need to return bool anymore *) 
-      Lwt.return_unit (* Always return unit Lwt.t from the function arm *) 
+      Lwt.return_unit
 
   | Cancel { dst; order_id } -> (* Explicitly match fields *)
       (* TODO: Implement Cancel for exchange dst using order_id *)
@@ -178,6 +138,7 @@ let handle_message state msg ~on_event =
       (* Check for status/heartbeat first *) 
       let message_type = Yojson.Safe.Util.(member "type" json |> to_string_option) in
       let channel = Yojson.Safe.Util.(member "channel" json |> to_string_option) in
+      let method_name = Yojson.Safe.Util.(member "method" json |> to_string_option) in
       
       (match message_type, channel with
        | Some "update", Some "status" -> 
@@ -190,7 +151,6 @@ let handle_message state msg ~on_event =
            let req_id_opt = Yojson.Safe.Util.(member "req_id" json |> to_int_option) in
            let success_opt = Yojson.Safe.Util.(member "success" json |> to_bool_option) in
            let error_opt = Yojson.Safe.Util.(member "error" json |> to_string_option) in
-           (* Note: 'result' field is often absent in errors, so we don't extract it here yet *) 
 
            match req_id_opt with
            | Some req_id ->
@@ -199,9 +159,9 @@ let handle_message state msg ~on_event =
                  Lwt_log_core.debug ~section (Printf.sprintf "Found matching promise for req_id: %d" req_id) >>= fun () ->
                  (* Construct the response record manually *) 
                  let response : Core.order_response = {
-                   success = Option.value success_opt ~default:false; (* Assume false if 'success' field missing *) 
+                   success = Option.value success_opt ~default:false;
                    error = error_opt;
-                   result = Yojson.Safe.Util.(member "result" json |> to_option (fun x -> x)); (* Get result if present *) 
+                   result = Yojson.Safe.Util.(member "result" json |> to_option (fun x -> x));
                  } in
 
                  let resolver = Hashtbl.find state.Common.response_promises req_id in
@@ -209,10 +169,10 @@ let handle_message state msg ~on_event =
                  Lwt.wakeup resolver response;
                  Lwt_log_core.debug ~section "Woke up promise" >>= fun () ->
 
-                 (* Process the response for events (AFTER WAKEUP) *) 
+                 (* Process the response for events - HANDLE DIFFERENT METHODS SEPARATELY *) 
                  if response.success then
-                   match response.result with
-                   | Some result_json ->
+                   match response.result, method_name with
+                   | Some result_json, Some "add_order" ->
                        let order_id = match Yojson.Safe.Util.(member "order_id" result_json |> to_string_option) with
                          | Some id -> id
                          | None -> "unknown_order_id"
@@ -221,14 +181,31 @@ let handle_message state msg ~on_event =
                        Hashtbl.remove state.Common.req_to_client req_id;
                        (match client_id with
                         | Some cid ->
-                            (* REMOVED: client_id_to_order_id mapping storage *) 
                             Lwt_log_core.debug ~section (Printf.sprintf "Received Add Ack for order %s (client_id %s)" order_id cid) >>= fun () -> 
-
                             let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
                             let ack = Core.Ack { order_id; client_id = cid; state = Core.Open; ts } in
                             on_event ack
                         | None -> Lwt_log_core.warning ~section (Printf.sprintf "No client_id found for req_id %d when processing Add Order Ack" req_id))
-                   | None -> Lwt_log_core.warning ~section "Successful response but no result data"
+                   
+                   | Some result_json, Some "amend_order" ->
+                       let order_id = match Yojson.Safe.Util.(member "order_id" result_json |> to_string_option) with
+                         | Some id -> id
+                         | None -> "unknown_order_id"
+                       in
+                       Lwt_log_core.info ~section (Printf.sprintf "Amend order successful for order_id: %s" order_id) >>= fun () ->
+                       Lwt.return_unit  (* No event needed for amend success *)
+                   
+                   | Some _, Some other_method ->
+                       Lwt_log_core.info ~section (Printf.sprintf "Successful %s response received" other_method) >>= fun () ->
+                       Lwt.return_unit
+                   
+                   | Some _, None ->
+                       Lwt_log_core.warning ~section "Successful response but missing method name" >>= fun () ->
+                       Lwt.return_unit
+                   
+                   | None, _ -> 
+                       Lwt_log_core.warning ~section "Successful response but no result data" >>= fun () ->
+                       Lwt.return_unit
                  else
                     (* Error already logged by the waiting promise/loop *) 
                     Lwt.return_unit
@@ -239,7 +216,6 @@ let handle_message state msg ~on_event =
            | None ->
                Lwt_log_core.debug ~section "No req_id found in response JSON. Cannot process." >>= fun () ->
                Lwt.return_unit
-           (* End manual parsing *) 
       )
 
   | Frame.Opcode.Ping ->
@@ -253,34 +229,35 @@ let handle_message state msg ~on_event =
 (* Main loop - REVISED *) 
 let rec start_loop state token ~on_event =
   let section = Lwt_log_core.Section.make "kraken_ws_exec" in
+  (* Yield to other Lwt tasks to ensure fair scheduling *)
+  Lwt.pause () >>= fun () ->
   (* Check internal queue first (non-blocking) *) 
   match Queue.take_opt state.Common.cmd_queue with
   | Some cmd ->
       (* Process command from internal queue *) 
       Lwt_log_core.debug ~section "Processing command from internal queue" >>= fun () ->
-      send_order_command state token cmd >>= fun () -> (* Use renamed function *)
-      (* No response logging here anymore *) 
-      start_loop state token ~on_event (* Loop immediately to check queue / send next order *) 
+      send_order_command state token cmd >>= fun () ->
+      start_loop state token ~on_event 
   | None ->
       (* Queue empty, wait for WebSocket message, new command signal, OR timeout *) 
       Lwt_log_core.debug ~section "Queue empty, waiting for message, signal, or timeout..." >>= fun () ->
-      let timeout_duration = 30.0 (* seconds *) 
+      let timeout_duration = 120.0 (* Increased from 30s *) 
       in
       let read_promise = Lwt.catch
         (fun () ->
            Websocket_lwt_unix.read state.conn >>= fun msg ->
+           (* Immediately yield after receiving a message to allow other tasks to run *)
+           Lwt.pause () >>= fun () ->
            Lwt_log_core.debug ~section "WebSocket read resolved" >>= fun () ->
            handle_message state msg ~on_event >>= fun () ->
-           Lwt.return (Some `MsgHandled) (* Indicate success *)
+           Lwt.return (Some `MsgHandled)
         )
         (fun ex ->
-           (* Handle read/connection errors *) 
            Lwt_log_core.error ~section
              (Printf.sprintf "Error reading from WebSocket: %s. Closing loop." (Printexc.to_string ex)) >>= fun () ->
-           (* Attempt to explicitly close the transport *) 
            Lwt.catch (fun () -> Websocket_lwt_unix.close_transport state.conn) (fun _ -> Lwt.return_unit) >>= fun () ->
-           connection_state := None; (* Reset global state to allow reconnect *)
-           Lwt.return None (* Indicate failure *) 
+           connection_state := None;
+           Lwt.return None
         ) 
       in
 
@@ -301,15 +278,16 @@ let rec start_loop state token ~on_event =
             (* Success from either read or wait, continue loop *) 
             start_loop state token ~on_event
         | Some `Timeout ->
-            (* Idle timeout: Disconnect instead of pinging *) 
-            Lwt_log_core.info ~section "Idle timeout, disconnecting WS Exec connection." >>= fun () ->
+            (* Send ping instead of disconnecting *)
+            Lwt_log_core.info ~section "Idle timeout, sending ping to keep connection alive" >>= fun () ->
             Lwt.catch 
-              (fun () -> Websocket_lwt_unix.close_transport state.conn) 
+              (fun () -> 
+                 Websocket_lwt_unix.write state.conn (Frame.create ~opcode:Frame.Opcode.Ping ())
+              ) 
               (fun ex -> 
-                 Lwt_log_core.warning ~section (Printf.sprintf "Error closing transport on timeout: %s" (Printexc.to_string ex)) 
+                 Lwt_log_core.warning ~section (Printf.sprintf "Error sending ping: %s" (Printexc.to_string ex))
               ) >>= fun () ->
-            connection_state := None; (* Clear global state *) 
-            Lwt.return_unit (* Stop the loop *) 
+            start_loop state token ~on_event (* Continue the loop *)
         | None -> 
             (* read_promise failed, transport already closed and state cleared in its handler, just stop loop *) 
             Lwt.return_unit

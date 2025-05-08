@@ -3,7 +3,7 @@
 
 (* src/engine/router.ml *)
 open Lwt.Infix  (* for >>= *)
-open Types
+open Dio_types
 
 (* Response type for order operations *)
 type order_response = {

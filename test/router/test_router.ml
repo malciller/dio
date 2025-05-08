@@ -1,6 +1,6 @@
 open Lwt.Syntax (* enable let* syntax *)
 open Alcotest_lwt
-open Types
+open Dio_types
 
 (* Define default scales *)
 let default_price_scale = 8

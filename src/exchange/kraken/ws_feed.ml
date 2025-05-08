@@ -5,8 +5,8 @@ open Websocket
 open Lwt.Syntax
 module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
-open Types
-open Dio_lib.Stats
+open Dio_types
+open State
 
 (* Define the logging section once at the top *)
 let section = Lwt_log_core.Section.make "kraken_ws_feed"
@@ -251,11 +251,12 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                       Lwt_list.iter_s
                         (fun (ticker : Common.ticker_data) ->
                           let symbol = ticker.symbol in
-                          let price_prec, _ (*qty_prec not needed for ticker bid/ask*) = Option.value (get_precisions symbol) ~default:(8, 8) in
+                          let price_prec, _ = Option.value (get_precisions symbol) ~default:(8, 8) in
                           let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
                           let bid_price = float_to_price ~scale:price_prec ticker.bid in
                           let ask_price = float_to_price ~scale:price_prec ticker.ask in
                           let current_price = Primitives.Price.midpoint bid_price ask_price in
+                          State.update_price symbol current_price;
                           let tick_event : Event.tick = {
                             src = "kraken";
                             symbol;

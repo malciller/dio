@@ -1,5 +1,5 @@
 (* src/exchange/kraken/common.ml *)
-open Types
+open Dio_types
 
 
 (* Channel-specific subscription parameters *)

@@ -2,6 +2,6 @@
  (name engine)
  (public_name dio.engine)
  (modules engine supervisor feed grid_strategy router)
- (libraries dio.types lwt yojson cohttp-lwt-unix cmdliner dio.exchange.kraken)
+ (libraries dio.dio_types lwt yojson cohttp-lwt-unix cmdliner dio.exchange.kraken)
  (preprocess (pps lwt_ppx))
  (wrapped false))

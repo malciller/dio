@@ -1,4 +1,4 @@
 (test
  (name          test_primitives)
- (libraries     dio.types alcotest)
+ (libraries     dio.dio_types alcotest)
  (preprocess    (pps ppx_deriving_yojson)))

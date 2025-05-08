@@ -1,6 +1,24 @@
 (executable
- (name dio)          
- (public_name dio)  
+ (name dio)
+ (public_name dio_exec)
  (modules dio)
- (libraries dio dio.engine dio.exchange.kraken lwt dotenv mirage-crypto-rng.unix lwt_ssl ssl conduit-lwt-unix notty notty.unix notty.lwt)
- (preprocess (pps lwt_ppx)))
+ (preprocess (pps lwt_ppx))
+ (libraries
+  cmdliner
+  conduit-lwt-unix
+  dio.dashboard
+  dio.dio_types
+  dio.engine
+  dotenv
+  lwt
+  lwt.unix
+  lwt_log
+  mirage-crypto-rng.unix
+  notty
+  notty.lwt
+  sexplib0
+  yojson
+  lwt_ppx
+  ssl
+ )
+)

@@ -1,8 +1,9 @@
+open Dio_types
 module SMap = Map.Make(String)
 
-let pending_orders = ref SMap.empty
-let trades_executed = ref SMap.empty
-let start_ts = Unix.gettimeofday ()
+let pending_orders : int SMap.t ref = ref SMap.empty
+let trades_executed : Int64.t SMap.t ref = ref SMap.empty
+let current_prices : Primitives.Price.t SMap.t ref = ref SMap.empty
 
 let inc_pending asset =
   pending_orders := SMap.update asset
@@ -22,3 +23,11 @@ let inc_trades asset =
   trades_executed := SMap.update asset
       (fun v -> Some (Int64.succ (Option.value ~default:Int64.zero v)))
       !trades_executed 
+
+let update_price symbol price =
+  current_prices := SMap.add symbol price !current_prices
+
+let get_price symbol =
+  SMap.find_opt symbol !current_prices
+
+(* ... other stats functions ... *)

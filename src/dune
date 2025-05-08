@@ -1,6 +1,0 @@
-(library
- (name dio_lib)
- (public_name dio)
- (modules stats pacdash)
- (libraries notty notty.lwt lwt_log)
-)

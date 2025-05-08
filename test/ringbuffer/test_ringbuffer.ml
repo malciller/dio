@@ -1,5 +1,5 @@
 open Alcotest
-open Types
+open Dio_types
 
 (* ------------------------------------------------------------------ *)
 let test_fifo () =

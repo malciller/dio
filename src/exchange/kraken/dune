@@ -4,8 +4,8 @@
  (modules common token ws_feed ws_exec)
  (preprocess (pps ppx_deriving_yojson lwt_ppx))
  (libraries
-  dio_lib
-  dio.types
+  dio.state
+  dio.dio_types
   lwt
   lwt.unix
   websocket-lwt-unix

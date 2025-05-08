@@ -1,4 +1,4 @@
 (test
  (name test_engine)
- (libraries dio.types dio.engine alcotest alcotest-lwt lwt.unix)
+ (libraries dio.dio_types dio.engine alcotest alcotest-lwt lwt.unix)
  (preprocess (pps lwt_ppx)))

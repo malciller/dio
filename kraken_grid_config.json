@@ -9,7 +9,7 @@
     {
       "symbol": "ETH/USD",
       "qty": "0.007",
-      "grid_interval": "1.5",
+      "grid_interval": "2.0",
       "sell_mult": "0.999"
     },
     {
@@ -21,13 +21,13 @@
     {
       "symbol": "SOL/USD",
       "qty": "0.1",
-      "grid_interval": "1.5",
+      "grid_interval": "2.0",
       "sell_mult": "0.999"
     },
     {
       "symbol": "ADA/USD",
       "qty": "18.0",
-      "grid_interval": "1.5",
+      "grid_interval": "2.0",
       "sell_mult": "0.999"
     }
   ],

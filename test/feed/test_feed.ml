@@ -4,7 +4,7 @@
 (* test/feed/test_feed.ml *)
 open Alcotest_lwt
 open Lwt.Infix
-open Types
+open Dio_types
 
 
 
