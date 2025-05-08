@@ -16,23 +16,31 @@ let setup_logging () =
 
   let default_logger =
     if !mode_dash then
-      (* Dashboard mode: logs are formatted and sent ONLY to Stats.dashboard_logs *)
+      (* Dashboard mode: logs with timestamps *)
       Lwt_log_core.make
         ~output:(fun section level messages ->
           if List.length messages > 0 then
-            let first_message_string = List.hd messages in (* Lwt_log typically sends one message per call to output *)
+            let first_message_string = List.hd messages in
+            let timestamp = 
+              let tm = Unix.localtime (Unix.time ()) in
+              Printf.sprintf "%02d:%02d:%02d" 
+                tm.Unix.tm_hour 
+                tm.Unix.tm_min 
+                tm.Unix.tm_sec
+            in
             let formatted_message = 
-              Printf.sprintf "[%s|%s] %s" 
+              Printf.sprintf "[%s][%s|%s] %s" 
+                timestamp
                 (Lwt_log_core.Section.name section) 
                 (Lwt_log_core.string_of_level level) 
                 first_message_string
             in
             Stats.add_dashboard_log formatted_message;
-            Lwt.return_unit (* The output function must return unit Lwt.t *)
+            Lwt.return_unit
           else
             Lwt.return_unit
         )
-        ~close:(fun () -> Lwt.return_unit) (* No underlying stdio logger to explicitly close here *)
+        ~close:(fun () -> Lwt.return_unit)
     else
       (* Normal mode: logs go to stdout *)
       Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
@@ -56,12 +64,30 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
     (* asset is of type Config.asset_cfg, which has a 'symbol: Primitives.symbol' field. Primitives.symbol is string *)
     let engine_symbols : string list = List.map (fun (asset: Config.asset_cfg) -> asset.symbol) runtime_cfg.assets in
     
+    (* Retrieve API key and secret from environment variables *)
+    let api_key = 
+      match Sys.getenv_opt "KRAKEN_API_KEY" with 
+      | Some key -> key 
+      | None -> 
+          Printf.eprintf "FATAL: KRAKEN_API_KEY environment variable not set.\n%!"; 
+          exit 1
+    in
+    let api_secret = 
+      match Sys.getenv_opt "KRAKEN_API_SECRET" with
+      | Some secret -> secret
+      | None -> 
+          Printf.eprintf "FATAL: KRAKEN_API_SECRET environment variable not set.\n%!";
+          exit 1
+    in
+
     let engine_cfg : Config.engine_config = {
       ws_host = "ws.kraken.com";
       ws_port = 443;
       ws_path = "/v2";
       symbols = engine_symbols;
       auth_token = None; (* Will be set later from .env *)
+      kraken_api_key = api_key;
+      kraken_api_secret = api_secret;
     } in
     Ok (runtime_cfg, engine_cfg)
   with

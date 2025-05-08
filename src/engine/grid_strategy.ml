@@ -49,19 +49,24 @@ module State = struct
         (* Reformat price and qty based on fetched precision *) 
         let formatted_price = Primitives.Price.of_string_exn ~scale:price_prec price_str in
         let formatted_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
-        let client_id = "grid-" ^ Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float) in
+        
+        (* Generate client_id based on side and timestamp for uniqueness *)
+        let side_prefix = match side with Core.Buy -> "b-" | Core.Sell -> "s-" in
+        let timestamp_str = Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float) in
+        let client_id = side_prefix ^ timestamp_str in
+        
         let order = Core.Add {
           dst = "kraken";
-          client_id;
+          client_id; (* Use the new side-specific client_id *) 
           symbol;
           side;
           price = formatted_price;
           qty = formatted_qty;
           tif = GTC;
-          tags = [`Grid];
+          tags = [`Grid]; 
         } in
         Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-          (Printf.sprintf "Created order: client_id=%s symbol=%s side=%s price=%s qty=%s"
+          (Printf.sprintf "Created order: client_id=%s symbol=%s side=%s price=%s qty=%s tags=[Grid]"
             client_id
             symbol
             (match side with Buy -> "BUY" | Sell -> "SELL")

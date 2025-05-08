@@ -20,5 +20,7 @@ type engine_config = {
   ws_path: string;
   symbols: string list;
   auth_token: string option;
+  kraken_api_key : string;
+  kraken_api_secret : string;
 }
 

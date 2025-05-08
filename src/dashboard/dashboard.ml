@@ -17,7 +17,7 @@ let price_now     = I.string A.(fg yellow ++ st blink) "◆"     (* Current pric
 
 let header_lines = [
   "     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓    ";
-  "     ┃  ██████╗ ██╗ ██████╗   ALGORITHMIC TRADE   ┃    ";
+  "     ┃  ██████╗ ██╗ ██████╗   ALGORITHMIC TRADING ┃    ";
   "     ┃  ██╔══██╗██║██╔═══██╗  ═══════════════════ ┃    ";
   "     ┃  ██║  ██║██║██║   ██║  DIOPHANT SOLUTIONS  ┃    ";
   "     ┃  ██║  ██║██║██║   ██║  ═══════════════════ ┃    ";
@@ -46,54 +46,46 @@ let get_term_dimensions () =
   | Some (h, w) -> (max 24 h, max 80 w) (* Ensure minimum dimensions *)
   | None -> (24, 80) (* Fallback dimensions *)
 
-let price_ladder current_price buy_orders sell_orders =
-
-  (* Sort orders by price *)
-  let buys = List.sort (fun (p1,_) (p2,_) -> compare p2 p1) buy_orders in
-  let sells = List.sort (fun (p1,_) (p2,_) -> compare p1 p2) sell_orders in
-  
-  (* Calculate available width for ladder *)
-  let _, term_width = get_term_dimensions () in
-  let content_width = term_width - 4 in (* Padding for borders *)
-  let ladder_width = content_width - 20 in (* Reserve space for price visualization *)
-  
-  (* Log width calculations for debugging *)
-  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "pacdash")
-    (Printf.sprintf "Price ladder: term_width=%d, content_width=%d, ladder_width=%d"
-       term_width content_width ladder_width)
-  |> Lwt.ignore_result;
-  
+let price_ladder ~ladder_width current_price buy_orders sell_orders =
+  (* buy_orders is expected to be 0 or 1 (the anchor buy) *)
+  (* sell_orders is the list of sells to display *)
   let ladder = Array.make ladder_width (I.string A.empty " ") in
-  
-  (* Helper to map price to index *)
-  let price_to_index price =
-    let min_price = min (List.fold_left (fun acc (p,_) -> min acc p) current_price buys)
-                        (List.fold_left (fun acc (p,_) -> min acc p) current_price sells) in
-    let max_price = max (List.fold_left (fun acc (p,_) -> max acc p) current_price buys)
-                        (List.fold_left (fun acc (p,_) -> max acc p) current_price sells) in
-    let price_range = max_price -. min_price in
-    if price_range = 0. then ladder_width / 2
-    else
-      let idx = int_of_float ((price -. min_price) /. price_range *. float_of_int (ladder_width - 1)) in
-      max 0 (min (ladder_width - 1) idx)
+
+  (* Determine min/max for scaling based on the specific orders provided *)
+  let min_display_price, max_display_price = 
+    let all_relevant_prices = current_price :: (List.map fst buy_orders) @ (List.map fst sell_orders) in
+    match all_relevant_prices with
+    | [] -> (current_price, current_price) (* Should not happen if current_price is always included *)
+    | p::ps -> List.fold_left (fun (min_acc, max_acc) pr -> (min min_acc pr, max max_acc pr)) (p,p) ps
   in
-  
+
+  (* Helper to map price to index within the focused window *)
+  let price_to_index price =
+    let price_range = max_display_price -. min_display_price in
+    if price_range = 0. then
+      if ladder_width > 0 then ladder_width / 2 else 0 (* Centered if single point, or 0 if no width *)
+    else
+      let scale_factor = if ladder_width > 0 then float_of_int (ladder_width - 1) else 0.0 in
+      let idx = int_of_float (((price -. min_display_price) /. price_range) *. scale_factor) in
+      if ladder_width > 0 then max 0 (min (ladder_width - 1) idx) else 0 (* Clamp index *)
+  in
+
   (* Place orders on ladder *)
   List.iter (fun (price,_) -> 
     let idx = price_to_index price in
     ladder.(idx) <- buy_order
-  ) buys;
+  ) buy_orders;
   
   List.iter (fun (price,_) -> 
     let idx = price_to_index price in
     ladder.(idx) <- sell_order
-  ) sells;
+  ) sell_orders;
   
   (* Place current price marker *)
   let current_idx = price_to_index current_price in
   ladder.(current_idx) <- price_now;
   
-  (* Convert to image - just return the ladder without the asset name *)
+  (* Convert to image *)
   I.hcat (Array.to_list ladder)
 
 (* Helper to format price based on symbol *)
@@ -102,36 +94,42 @@ let format_price asset price =
   | Some prec -> Printf.sprintf "%.*f" prec price
   | None -> Printf.sprintf "%.2f" price
 
+(* Take first n elements from a list - PLACED BEFORE USAGE *)
+let rec take n = function
+  | [] -> []
+  | x :: xs -> if n <= 0 then [] else x :: take (n-1) xs
+
 (* Row for each asset with price ladder *)
 let row_of_asset asset =
   let open I in
+  let _, term_width = get_term_dimensions () in
   let current_price_opt = Stats.get_price asset in
-  let buy_prices, sell_prices = Stats.get_orders_for_symbol asset in
+  let all_buy_orders_for_symbol, all_sell_orders_for_symbol = Stats.get_orders_for_symbol asset in
   
-  (* Get closest buy and sell prices *)
-  let closest_buy = match current_price_opt with
-    | Some current_price ->
-        let current = Float.of_string (Primitives.Price.to_string current_price) in
+  (* Logic for the info pane (closest overall buy/sell) - remains the same *)
+  let closest_buy_for_info = match current_price_opt with
+    | Some current_price_val ->
+        let current = Float.of_string (Primitives.Price.to_string current_price_val) in
         List.fold_left (fun acc (price, _) ->
           if price <= current then
             match acc with
             | None -> Some price
             | Some p -> Some (max p price)
           else acc
-        ) None buy_prices
+        ) None all_buy_orders_for_symbol
     | None -> None
   in
   
-  let closest_sell = match current_price_opt with
-    | Some current_price ->
-        let current = Float.of_string (Primitives.Price.to_string current_price) in
+  let closest_sell_for_info = match current_price_opt with
+    | Some current_price_val ->
+        let current = Float.of_string (Primitives.Price.to_string current_price_val) in
         List.fold_left (fun acc (price, _) ->
           if price >= current then
             match acc with
             | None -> Some price
             | Some p -> Some (min p price)
           else acc
-        ) None sell_prices
+        ) None all_sell_orders_for_symbol
     | None -> None
   in
   
@@ -141,52 +139,97 @@ let row_of_asset asset =
     | None -> "-.--"
   in
   
-  (* Stats section (now on the left) *)
-  let stats = 
-    let asset_label = I.string A.(fg lightcyan ++ st bold) (Printf.sprintf "%-8s" asset) in
-    let buy_price = I.string A.(fg green) (format_opt_price asset closest_buy) in
-    let curr_price = I.string A.(fg yellow) (match current_price_opt with 
-      | Some p -> format_price asset (Float.of_string (Primitives.Price.to_string p))
-      | None -> "-.--") in
-    let sell_price = I.string A.(fg red) (format_opt_price asset closest_sell) in
-    let sell_count = I.string A.(fg lightmagenta) (Printf.sprintf "◀ %d ▶" (List.length sell_prices)) in
-    hcat [
-      asset_label;
-      I.string A.(fg white) " │ ";
-      I.string A.(fg green) "buy: "; buy_price;
-      I.string A.(fg white) " │ ";
-      I.string A.(fg yellow) "now: "; curr_price;
-      I.string A.(fg white) " │ ";
-      I.string A.(fg red) "sell: "; sell_price;
-      I.string A.(fg white) " │ ";
-      I.string A.(fg lightmagenta) "orders: "; sell_count;
-    ]
+  (* Images for the info pane *)
+  let asset_label = I.string A.(fg lightcyan ++ st bold) (Printf.sprintf "%-7s" asset) in
+  let buy_price_img = I.string A.(fg green) (format_opt_price asset closest_buy_for_info) in
+  let curr_price_img = I.string A.(fg yellow) (match current_price_opt with
+    | Some p -> format_price asset (Float.of_string (Primitives.Price.to_string p))
+    | None -> "-.--")
   in
-  
-  (* Price ladder visualization (now on the right) *)
-  let price_view = match current_price_opt with
-    | Some current_price -> 
-        price_ladder (Float.of_string (Primitives.Price.to_string current_price)) buy_prices sell_prices
+  let sell_price_img = I.string A.(fg red) (format_opt_price asset closest_sell_for_info) in
+  let order_count_str = Printf.sprintf "◎%2d" (List.length all_sell_orders_for_symbol) in (* Count of all sells *)
+  let sell_count_img = I.string A.(fg lightmagenta) order_count_str in
+
+  (* Info pane content *)
+  let info_pane_content = hcat [
+    asset_label;
+    I.string A.(fg white) " │ ";
+    I.string A.(fg green) "B:"; buy_price_img; (* Shortened label *)
+    I.string A.(fg white) " │ ";
+    I.string A.(fg yellow) "P:"; curr_price_img; (* Shortened label *)
+    I.string A.(fg white) " │ ";
+    I.string A.(fg red) "S:"; sell_price_img; (* Shortened label *)
+    I.string A.(fg white) " │ ";
+    sell_count_img; (* Using the new compact order count image directly *)
+  ] in
+
+  (* Separator image *)
+  let separator_img = I.string A.(fg white) " │ " in
+
+  (* Calculate available width for the ladder *)
+  let total_content_width_inside_borders = term_width - 4 in (* for "┃ " and " ┃" *)
+  let calculated_ladder_width =
+    total_content_width_inside_borders - I.width info_pane_content - I.width separator_img
+  in
+  let available_ladder_width = max 1 calculated_ladder_width in
+
+  (* Select orders for the ladder: closest buy, current price, and closest sell *)
+  let ladder_buy_orders, ladder_sell_orders = 
+    match current_price_opt with
+    | Some cp_val ->
+        let current_f = Float.of_string (Primitives.Price.to_string cp_val) in
+        
+        (* 1. Select the closest buy order (<= current_f) *)
+        let closest_buy_order_list =
+          all_buy_orders_for_symbol
+          |> List.filter (fun (p, _) -> p <= current_f)
+          |> List.sort (fun (p1, _) (p2, _) -> compare p2 p1) (* Closest first *)
+          |> (fun l -> match l with [] -> [] | h :: _ -> [h]) (* Max 1 *)
+        in
+
+        (* 2. Select the closest sell order (>= current_f) *)
+        let closest_sell_order_list =
+          all_sell_orders_for_symbol
+          |> List.filter (fun (p, _) -> p >= current_f)
+          |> List.sort (fun (p1, _) (p2, _) -> compare p1 p2) (* Closest first *)
+          |> (fun l -> match l with [] -> [] | h :: _ -> [h]) (* Max 1 *)
+        in
+        (closest_buy_order_list, closest_sell_order_list)
+    | None -> ([], [])
+  in
+
+  (* Ladder image content *)
+  let ladder_img_content =
+    match current_price_opt with
+    | Some current_price_val ->
+        price_ladder
+          ~ladder_width:available_ladder_width
+          (Float.of_string (Primitives.Price.to_string current_price_val))
+          ladder_buy_orders (* Use the new selected list *)
+          ladder_sell_orders (* Use the new selected list *)
     | None ->
-        string A.(fg red) "No price data"
+        let no_data_img = I.string A.(fg red) "No price data" in
+        (* Snap the "No price data" message to the available width, cropping if necessary *)
+        I.hsnap ~align:`Left available_ladder_width no_data_img
   in
+
+  (* Combine info pane, separator, and ladder image *)
+  let combined_inline_content = hcat [
+    info_pane_content;
+    separator_img;
+    ladder_img_content;
+  ] in
   
-  let _, term_width = get_term_dimensions () in
-  let content_width = term_width - 4 in
-  let row = stats <|> void 2 1 <|> price_view in (* Added spacing between stats and price_view *)
-  
-  (* Add border elements *)
+  (* Final row construction with borders *)
+  (* The combined_inline_content should fill total_content_width_inside_borders *)
   hcat [
     I.string A.(fg white) "┃ ";
-    row;
-    void (content_width - width row - 4) 1;
+    combined_inline_content;
+    (* If combined_inline_content is narrower than total_content_width_inside_borders due to rounding or min width, add padding *)
+    (* This case should be rare if available_ladder_width is calculated and used correctly. *)
+    void (total_content_width_inside_borders - I.width combined_inline_content) 1;
     I.string A.(fg white) " ┃"
   ]
-
-(* Take first n elements from a list *)
-let rec take n = function
-  | [] -> []
-  | x :: xs -> if n <= 0 then [] else x :: take (n-1) xs
 
 (* Dashboard state *)
 type dashboard_state = {
@@ -231,64 +274,50 @@ let render state =
   let term_height, term_width = get_term_dimensions () in
   let content_width = term_width - 4 in
   
-  (* Runtime display *)
+  (* Runtime display image (no change in its definition) *)
   let runtime_display =
     string A.(fg lightgreen ++ st bold)
       ("Runtime: " ^ fmt_runtime Stats.start_ts)
-    |> I.pad ~t:1 ~l:2
+    |> I.pad ~t:1 ~l:2 (* Original padding; might look better centered or full-width later if desired *)
   in
   
-  (* Trading view - now with ordered assets *)
+  (* Asset rows section *)
   let all_assets = 
     M.fold (fun asset _ acc -> asset :: acc) !Stats.pending_orders []
     |> List.sort compare_assets
   in
-  let rows = List.map row_of_asset all_assets in
+  let asset_rows = List.map row_of_asset all_assets in
+  let asset_rows_section = vcat asset_rows in
   
-  (* Calculate heights with priority to main section *)
-  let total_padding = 4 in
+  (* Calculate heights *)
   let header_height = height header in
-  let runtime_height = height runtime_display in
-  let rows_height = List.length rows in
+  let asset_rows_height = height asset_rows_section in
+  let runtime_display_height = height runtime_display in
   
-  (* Main section must show everything *)
-  let main_height = header_height + runtime_height + rows_height + 2 in (* +2 for spacing *)
-  
-  (* Remaining space for logs *)
+  (* Calculate logs_height based on new layout *)
+  (* Elements above logs: header, asset_rows_section, runtime_display *)
+  (* Padding lines: 1 at screen top, 1 between runtime and logs, 1 at screen bottom = 3 total *)
   let logs_height = 
     if state.show_logs then
-      max 0 (term_height - main_height - total_padding)
+      let height_of_content_above_logs = header_height + asset_rows_height + runtime_display_height in
+      max 0 (term_height - height_of_content_above_logs - 3) (* 3 for void spacers *)
     else 0
   in
   
-  (* Main section *)
-  let main_section =
-    let content = vcat (
-      header ::
-      runtime_display ::
-      rows
-    ) in
-    let width_adjusted = 
-      if width content < content_width then
-        hcat [content; void (content_width - width content) main_height]
-      else
-        content
-    in
-    width_adjusted
-  in
-  
-  (* Logs section *)
-  let logs_section = 
+  (* Logs section (internal logic remains the same, uses new logs_height) *)
+  let logs_section_image = 
     if not state.show_logs || logs_height <= 0 then void 0 0
     else
-      let logs_header = 
+      let logs_header_img = 
         hcat [
           I.string A.(fg lightcyan ++ st bold) "┏━ LOGS ";
-          I.string A.(fg white) (String.make (content_width - 8) '-');  (* Using simple ASCII *)
+          I.string A.(fg white) (String.make (content_width - 8) '-');
           I.string A.(fg white) "┓"
         ] |> I.pad ~l:2
       in
-      let log_messages =
+      let log_messages = 
+        (* Ensure we take (logs_height - 1) for messages to account for logs_header_img *)
+        let num_log_lines_to_take = max 0 (logs_height - height logs_header_img) in 
         List.map (fun msg -> 
           let msg_img = I.string A.(fg white) msg in
           let msg_width = width msg_img in
@@ -306,26 +335,34 @@ let render state =
             let wrapped_lines = wrap_text msg [] |> List.rev in
             vcat (List.map (fun line -> I.string A.(fg white) line) wrapped_lines)
           else
-            hcat [power_pellet; msg_img; void (content_width - msg_width - 1) 1]
-        ) (take (logs_height - 1) (List.rev !Stats.dashboard_logs)) (* -1 to account for header *)
+            (* Pad individual log lines to content_width if shorter *)
+            hcat [power_pellet; I.string A.(fg white) " "; msg_img; void (content_width - (width msg_img) - 2) 1] (* -2 for pellet and space *)
+        ) (take num_log_lines_to_take (List.rev !Stats.dashboard_logs))
       in
-      let logs_content = vcat (logs_header :: log_messages) in
-      let width_adjusted =
-        if width logs_content < content_width then
-          hcat [logs_content; void (content_width - width logs_content) logs_height]
-        else
-          logs_content
+      let logs_body_content = vcat log_messages in
+      let logs_full_content = vcat [logs_header_img; logs_body_content] in
+      (* Ensure the entire logs section is constrained by logs_height and content_width *)
+      let cropped_logs_content = 
+        if height logs_full_content > logs_height then 
+          vsnap ~align:`Top logs_height logs_full_content 
+        else 
+          logs_full_content 
       in
-      width_adjusted
+      if width cropped_logs_content < content_width then
+        hcat [cropped_logs_content; void (content_width - width cropped_logs_content) (height cropped_logs_content)]
+      else
+        cropped_logs_content
   in
   
-  (* Combine sections with explicit spacing *)
+  (* Combine sections in the new order with explicit spacing *)
   vcat [
-    void content_width 1;
-    main_section;
-    void content_width 1;
-    logs_section;
-    void content_width 1;
+    void content_width 1; (* Top padding *)
+    header;                 (* Header section *)
+    asset_rows_section;   (* Asset rows section *)
+    runtime_display;      (* Runtime display moved here *)
+    void content_width 1; (* Padding between runtime and logs *)
+    logs_section_image;   (* Logs section *)
+    void content_width 1; (* Bottom padding *)
   ]
 
 (* ─── loop ────────────────────────────────────────────────── *)

@@ -58,10 +58,14 @@ module Mock_feed = Engine.Feed.Make(Mock_kraken_ws_feed)
 let test_config_no_auth : Config.engine_config = { (* Use explicit Core.config *) 
   ws_host = "localhost"; ws_port = 8080; ws_path = "/test";
   symbols = ["BTC/USD"]; auth_token = None;
+  kraken_api_key = "dummy_test_api_key";
+  kraken_api_secret = "dummy_test_api_secret";
 }
 let test_config_with_auth : Config.engine_config = {
   ws_host = "localhost"; ws_port = 8080; ws_path = "/test";
   symbols = ["BTC/USD"]; auth_token = Some "test_token";
+  kraken_api_key = "dummy_test_api_key";
+  kraken_api_secret = "dummy_test_api_secret";
 }
 
 let dummy_on_tick _tick = Lwt.return_unit

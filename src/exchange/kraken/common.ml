@@ -201,10 +201,18 @@ type order = {
   qty: float; (* Mapped from vol *)
 }
 
+(* Global, mutable reference for the last used nonce.
+   Initialize with current time in microseconds to ensure it's likely higher than
+   any nonce from a previous session and provides good granularity.
+   Using microseconds (Unix.time() *. 1_000_000.0) for initialization
+   and incrementing ensures it's always increasing during a session.
+*)
+let last_nonce =
+  ref (Unix.gettimeofday () *. 1_000_000.0 |> Int64.of_float)
 
 let nonce () =
-  let ms = Int64.of_float (Unix.gettimeofday () *. 1000.) in
-  Int64.to_string ms
+  last_nonce := Int64.add !last_nonce 1L; (* Increment the last nonce *)
+  Int64.to_string !last_nonce             (* Return the new nonce as a string *)
 
 (* Kraken signing function *)
 let sign ~secret ~path ~body ~nonce =
