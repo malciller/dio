@@ -628,9 +628,22 @@ let get_all_open_orders () : (string, Common.order) Hashtbl.t = all_open_orders
 (* Main Feed Functions *)
 let start (cfg : Config.engine_config) ~on_tick =
   let rec loop conn =
-    Websocket_lwt_unix.read conn >>= fun frame ->
-    handle_public_frame conn cfg frame ~on_tick >>= fun () ->
-    loop conn
+    Lwt.catch
+      (fun () ->
+        Websocket_lwt_unix.read conn >>= fun frame ->
+        handle_public_frame conn cfg frame ~on_tick >>= fun () ->
+        loop conn)
+      (fun exn ->
+        (* Log the error and re-throw it to be caught by Feed.start's retry mechanism *)
+        Lwt_log_core.error_f ~section "Error in public feed read loop: %s" (Printexc.to_string exn) >>= fun () ->
+        (* Send a close frame if possible, but don't wait for it to complete *)
+        Lwt.catch
+          (fun () -> 
+            Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Close ()) >>= fun _ ->
+            Lwt.return_unit)
+          (fun _ -> Lwt.return_unit) >>= fun () ->
+        (* Re-throw the exception so Feed.start's retry loop will handle it *)
+        Lwt.fail exn)
   in
   connect cfg false >>= fun conn ->
   let subscribe_ticker_msg = make_subscribe_message ~req_id:1 cfg `Ticker in
@@ -645,16 +658,23 @@ let start_executions (cfg : Config.engine_config) ~on_execution =
   | None -> Lwt.fail_with "Authentication token required for executions feed"
   | Some _ ->
       let rec loop conn =
-        Websocket_lwt_unix.read conn >>= fun frame ->
         Lwt.catch 
           (fun () -> 
-            handle_auth_frame conn cfg frame ~on_execution (* Pass cfg here *)
+            Websocket_lwt_unix.read conn >>= fun frame ->
+            handle_auth_frame conn cfg frame ~on_execution >>= fun () ->
+            loop conn
           )
           (fun ex -> 
-            Lwt_log_core.error_f ~section "Error reading/handling auth frame: %s" (Printexc.to_string ex) >>= fun () ->
+            Lwt_log_core.error_f ~section "Error in auth feed read loop: %s" (Printexc.to_string ex) >>= fun () ->
+            (* Send a close frame if possible, but don't wait for it to complete *)
+            Lwt.catch
+              (fun () -> 
+                Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Close ()) >>= fun _ ->
+                Lwt.return_unit)
+              (fun _ -> Lwt.return_unit) >>= fun () ->
+            (* Re-throw the exception so Feed.start_executions's retry loop will handle it *)
             Lwt.fail ex
-          ) >>= fun () ->
-        loop conn
+          )
       in
       Lwt.catch 
         (fun () -> 
