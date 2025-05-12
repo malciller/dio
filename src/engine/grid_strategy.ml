@@ -37,6 +37,16 @@ module State = struct
     ) open_orders;
     !has_buy && !has_sell (* Returns true only if both a buy and a sell exist *)
 
+  (* Check if we have any open buy order for a symbol *)
+  let has_buy_order symbol =
+    let found_buy_order = ref false in
+    Hashtbl.iter (fun _ (order : K.Common.order) ->
+      if not !found_buy_order then (* Short-circuit if already found *)
+        if String.equal order.order_symbol symbol && order.side = Some Core.Buy then
+          found_buy_order := true
+    ) open_orders;
+    !found_buy_order
+
   (* Get latest price info for a symbol *)
   let get_price symbol = Hashtbl.find_opt price_info symbol
 
@@ -83,7 +93,7 @@ module State = struct
   let create_initial_orders : Config.runtime_cfg -> string -> Core.order_cmd Ringbuffer.t -> unit Lwt.t = 
     fun runtime_cfg symbol cmd_buffer ->
       (* Only proceed if we've initialized orders for this symbol *)
-      if Hashtbl.mem initialized_symbols symbol && not (has_open_orders symbol) then
+      if Hashtbl.mem initialized_symbols symbol && not (has_buy_order symbol) then
         match get_price symbol with
         | Some tick ->
             (* Find the asset configuration for this symbol *)
