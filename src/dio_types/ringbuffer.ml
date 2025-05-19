@@ -32,7 +32,7 @@ let pop_opt q =
   else
     let idx = q.tail land q.mask in
     match q.buf.(idx) with
-    | None -> None (* impossible *)
+    | None -> None 
     | Some v ->
         q.buf.(idx) <- None;
         q.tail <- q.tail + 1;

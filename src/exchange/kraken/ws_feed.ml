@@ -8,16 +8,12 @@ module JsonUtil = Yojson.Safe.Util
 open Dio_types
 open State
 
-(* Define the logging section once at the top *)
 let section = Lwt_log_core.Section.make "kraken_ws_feed"
 
-(* Simplified promise setup for snapshots *)
 let executions_snapshot_processed, resolve_executions_snapshot_processed = Lwt.task ()
 let instruments_loaded, resolve_instruments_loaded = Lwt.task ()
 
-(* Expose a function to get the snapshot promise *)
 let wait_for_snapshot () = executions_snapshot_processed
-(* Expose a function to get the instruments promise *)
 let wait_for_instruments () = instruments_loaded
 
 (* Storage for instrument precisions: symbol -> (price_precision, qty_precision) *)
@@ -26,7 +22,7 @@ let instrument_precisions : (string, (int * int)) Hashtbl.t = Hashtbl.create 16
 (* Getter for instrument precisions *)
 let get_precisions symbol : (int * int) option = Hashtbl.find_opt instrument_precisions symbol
 
-(* NEW Getter specifically for price precision *)
+(* Getter for price precision *)
 let get_price_precision symbol : int option =
   match Hashtbl.find_opt instrument_precisions symbol with
   | Some (price_prec, _) -> Some price_prec
@@ -59,14 +55,11 @@ let format_order_log (order : Common.order) action =
   Printf.sprintf "[ORDER %s] ID: %s, Symbol: %s, Side: %s, Status: %s, Price: %.8f"
     action order.order_id order.order_symbol
     (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown")
-    (match order.status with (* Updated match for Core.order_state - removed redundant case *)
+    (match order.status with 
      | Core.Open -> "Open"
      | Core.Filled -> "Filled"
      | Core.Canceled -> "Canceled"
      | Core.Rejected -> "Rejected" 
-     (* Add other Core.order_state variants if they exist and need specific strings *)
-     (* | Core.Expired -> "Expired"  <- Assuming Expired exists *)
-     (* | Core.Pending -> "Pending" <- Assuming Pending exists *)
     )
     order.limit_price
 
@@ -122,9 +115,9 @@ let kraken_side_to_core_side = function
   | Some "sell" -> Some Core.Sell
   | _ -> None
 
-let kraken_status_to_core_state status : Core.order_state = (* Explicit return type *)
+let kraken_status_to_core_state status : Core.order_state = 
   match status with
-  | "new" | "pending_new" | "amended" | "restated" | "status" | "partially_filled" -> Open (* Add partially_filled here *)
+  | "new" | "pending_new" | "amended" | "restated" | "status" | "partially_filled" -> Open 
   | "filled" -> Filled
   | "canceled" | "expired" -> Canceled
   | "rejected" -> Rejected
@@ -344,16 +337,15 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
   let order_qty_opt = JsonUtil.(member "order_qty" order_json |> to_float_option) in
   let userref_opt = JsonUtil.(member "userref" order_json |> to_int_option |> Option.map string_of_int) in
 
-  (* Added: Get symbol early for stats calls *)
   let symbol_for_stats =
       let existing_opt =
         match item_exec_type with
         | "new" -> Hashtbl.find_opt pending_orders order_id
-        | _ -> Hashtbl.find_opt all_open_orders order_id (* Use all_open_orders for others *)
+        | _ -> Hashtbl.find_opt all_open_orders order_id 
       in
       match existing_opt with
       | Some o -> Some o.order_symbol
-      | None -> symbol_opt (* Fallback to symbol from current message *)
+      | None -> symbol_opt 
   in
 
   (* Detailed log for easier debugging of incoming data for state changes *)
@@ -372,7 +364,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
       let%lwt was_in_pending_and_stat_handled =
         match Hashtbl.find_opt pending_orders order_id with
         | Some po ->
-            Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Calling dec_pending for %s (canceled/pending)" po.order_symbol) >>= fun () -> (* Added Log *)
+            Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Calling dec_pending for %s (canceled/pending)" po.order_symbol) >>= fun () -> 
             dec_pending po.order_symbol;
             Hashtbl.remove pending_orders order_id;
             Lwt_log_core.debug ~section (format_order_log po ("CANCELED (from Pending State)" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
@@ -382,9 +374,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
       (match Hashtbl.find_opt all_open_orders order_id with
       | Some existing_order ->
           let symbol = existing_order.order_symbol in
-          (* The dec_pending call based on symbol_for_stats (derived from all_open_orders) is removed here *)
           Hashtbl.remove all_open_orders order_id;
-          (* Removal from pending_orders is handled above if it was pending *)
           debug_log (format_order_log existing_order ("CANCELED" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
           handle_order_cancellation order_id symbol >>= fun () ->
           log_open_orders ()
@@ -575,9 +565,8 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                         if market_events <> [] then (
                           debug_log (Printf.sprintf "Calling on_execution with %d events from update" (List.length market_events)) >>= fun () ->
                           on_execution market_events
-                        ) else Lwt.return_unit (* Removed redundant log for no events for brevity *)
+                        ) else Lwt.return_unit 
                       in
-                      
                       (* Step 3: Update Internal State *)
                       Lwt_list.iter_s (fun order_json ->
                           process_execution_order_item_state order_json cfg "update"
@@ -587,7 +576,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                   | None ->
                       Lwt_log_core.warning ~section (Printf.sprintf "Message type is missing in execution message. Payload: %s" frame.content)
                   end
-              | Some "status" -> (* Existing status handling *)
+              | Some "status" -> 
                   begin match Common.status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
                       Lwt.return_unit
@@ -622,7 +611,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
            (Frame.Opcode.to_string frame.Websocket.Frame.opcode)) >>= fun () ->
       Lwt.return_unit
 
-(* Getter for open orders (used by Strategy) - Updated Type and Name *)
+(* Getter for open orders (used by Strategy) *)
 let get_all_open_orders () : (string, Common.order) Hashtbl.t = all_open_orders
 
 (* Main Feed Functions *)
@@ -647,13 +636,12 @@ let start (cfg : Config.engine_config) ~on_tick =
   in
   connect cfg false >>= fun conn ->
   let subscribe_ticker_msg = make_subscribe_message ~req_id:1 cfg `Ticker in
-  let subscribe_instrument_msg = make_subscribe_message ~req_id:3 cfg `Instrument in (* New subscription *)
+  let subscribe_instrument_msg = make_subscribe_message ~req_id:3 cfg `Instrument in 
   Websocket_lwt_unix.write conn subscribe_ticker_msg >>= fun () ->
-  Websocket_lwt_unix.write conn subscribe_instrument_msg >>= fun () -> (* Send instrument subscription *)
+  Websocket_lwt_unix.write conn subscribe_instrument_msg >>= fun () -> 
   loop conn
 
 let start_executions (cfg : Config.engine_config) ~on_execution =
-  (* Using global 'section' now *)
   match cfg.auth_token with
   | None -> Lwt.fail_with "Authentication token required for executions feed"
   | Some _ ->

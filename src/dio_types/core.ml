@@ -41,11 +41,7 @@ type market_event =
 [@@deriving yojson]
 
 
-(* --- Engine Configuration & Component Types --- *) 
-
-(* Engine Configuration type has been moved to Config.ml *)
-
-(* Type for strategy component - Updated start signature *) 
+(* Type for strategy component *) 
 type grid_strategy = {
   start: Config.runtime_cfg -> Config.engine_config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }

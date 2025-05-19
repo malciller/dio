@@ -5,8 +5,8 @@ type asset_cfg = {
   symbol        : symbol;
   qty           : Qty.t;
   grid_interval : Fixed.t;
-  sell_mult     : Fixed.t;  (* e.g. 0.999 to sell almost all *)
-} [@@deriving yojson { exn = true }]   (* generates _to_yojson + _of_yojson_exn *)
+  sell_mult     : Fixed.t;  
+} [@@deriving yojson { exn = true }]   
 
 type runtime_cfg = {
   assets      : asset_cfg list;

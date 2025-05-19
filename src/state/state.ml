@@ -29,5 +29,3 @@ let update_price symbol price =
 
 let get_price symbol =
   SMap.find_opt symbol !current_prices
-
-(* ... other stats functions ... *)

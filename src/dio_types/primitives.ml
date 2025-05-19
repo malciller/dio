@@ -26,7 +26,7 @@ module Fixed : sig
 
   (* Calculate powers of 10 *)
   val pow10 : int -> int64
-end = struct              (* silence "unused" inside this module *)
+end = struct             
 
   type t = { raw : int64; scale : int }
 

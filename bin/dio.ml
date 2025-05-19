@@ -85,7 +85,7 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
       ws_port = 443;
       ws_path = "/v2";
       symbols = engine_symbols;
-      auth_token = None; (* Will be set later from .env *)
+      auth_token = None; (* Will be set later from Exchange.Kraken.Token *)
       kraken_api_key = api_key;
       kraken_api_secret = api_secret;
     } in
@@ -102,10 +102,8 @@ let specs = [
   ("--dashboard", Arg.Set mode_dash, " Run Pac-Man-style dashboard")
 ] @ your_other_args
 
-(* Renamed function to reflect it starts the core logic and returns a promise *)
 let start_engine_logic () : unit Lwt.t = 
-  (* This was the original Lwt_main.run block, now returns the promise *)
-  init () >>= fun _ctx -> (* Assuming init() is defined elsewhere or should be part of this block *)
+  init () >>= fun _ctx ->
   Lwt.catch
     (fun () ->
       (* Read config file *)
@@ -166,12 +164,10 @@ let main () =
   if !mode_dash then begin
     let quit_promise, resolve_quit = Lwt.wait () in
 
-    (* This ref is used by the new cleanup logic and callbacks *)
     let cleanup_initiated = ref false in
 
-    (* Revised approach for cleanup to handle term_instance correctly *)
     let term_instance_ref = ref None in
-    let final_engine_promise_ref = ref (Lwt.return_unit) in (* To store the actual engine promise *)
+    let final_engine_promise_ref = ref (Lwt.return_unit) in 
 
     let dashboard_on_quit () =
       if not !cleanup_initiated then (

@@ -6,7 +6,7 @@ open Dio_types
 
 (* 1. Define the WebSocket Interface using Core.config *)
 module type WS = sig
-  type config = Config.engine_config (* Use the central config type *)
+  type config = Config.engine_config 
 
   val start : config -> on_tick:(Event.tick -> unit Lwt.t) -> unit Lwt.t
   val start_executions : config -> on_execution:(Core.market_event list -> unit Lwt.t) -> unit Lwt.t
@@ -20,7 +20,7 @@ module Make (W : WS) = struct
   let start (cfg : Config.engine_config) ~on_tick =
     let rec retry_loop () =
       Lwt.catch
-        (fun () -> W.start cfg ~on_tick) (* W.start expects Core.config *)
+        (fun () -> W.start cfg ~on_tick) 
         (fun exn ->
           Lwt_log_core.error_f ~section "Error starting public feed: %s. Retrying in 5s..." (Printexc.to_string exn) >>= fun () ->
           Lwt_unix.sleep 5.0 >>= fun () ->
@@ -33,7 +33,7 @@ module Make (W : WS) = struct
     | Some _ ->
         let rec retry_loop () =
           Lwt.catch
-            (fun () -> W.start_executions cfg ~on_execution) (* W.start_executions expects Core.config *)
+            (fun () -> W.start_executions cfg ~on_execution) 
             (fun exn ->
               Lwt_log_core.error_f ~section "Error starting execution feed: %s. Retrying in 5s..." (Printexc.to_string exn) >>= fun () ->
               Lwt_unix.sleep 5.0 >>= fun () ->
@@ -46,11 +46,9 @@ module Make (W : WS) = struct
 end
 
 (* 3. Define the production implementation using the real Kraken Ws_feed *)
-(* Kraken.Ws_feed now uses Core.config, matching the WS signature *)
 module Kraken_ws : WS with type config = Config.engine_config = struct
-  type config = Config.engine_config (* Satisfy signature constraint *)
+  type config = Config.engine_config 
 
-  (* Map functions, coercing return type *)
   let start cfg ~on_tick : unit Lwt.t =
     (Kraken.Ws_feed.start cfg ~on_tick : unit Lwt.t)
 
@@ -60,5 +58,4 @@ module Kraken_ws : WS with type config = Config.engine_config = struct
   let get_open_buy_orders = Kraken.Ws_feed.get_all_open_orders
 end
 
-(* 4. Instantiate the production Feed module *)
 module Prod = Make (Kraken_ws)

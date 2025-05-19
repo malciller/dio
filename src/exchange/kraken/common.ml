@@ -211,8 +211,8 @@ let last_nonce =
   ref (Unix.gettimeofday () *. 1_000_000.0 |> Int64.of_float)
 
 let nonce () =
-  last_nonce := Int64.add !last_nonce 1L; (* Increment the last nonce *)
-  Int64.to_string !last_nonce             (* Return the new nonce as a string *)
+  last_nonce := Int64.add !last_nonce 1L; 
+  Int64.to_string !last_nonce       
 
 (* Kraken signing function *)
 let sign ~secret ~path ~body ~nonce =

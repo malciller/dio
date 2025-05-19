@@ -1,12 +1,8 @@
 (* src/exchange/kraken/ws_exec.ml *)
 open Lwt.Infix
-(* open Websocket -- Will be removed *)
 open Dio_types
-open Cohttp_lwt_unix (* Added for HTTP client *)
-(* Note: Other opens like Yojson.Safe are implicitly used via Common or other modules *)
+open Cohttp_lwt_unix 
 
-(* Global connection state -- Will be removed *)
-(* let connection_state = ref None *)
 
 (* Helper functions *)
 let float_of_price price =
@@ -35,7 +31,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       in
       let qty_str = Primitives.Qty.to_string qty in
       let order_type_str = "limit" in 
-      let side_str = match side with Core.Buy -> "buy" | Core.Sell -> "sell" in (* Use Core.Buy/Core.Sell for match clarity *)
+      let side_str = match side with Core.Buy -> "buy" | Core.Sell -> "sell" in 
       let oflags = "post" in 
       let time_in_force_str = "gtc" in 
       let truncated_client_id = 
@@ -159,7 +155,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         Lwt_log_core.error ~section (Printf.sprintf "Exception during REST AmendOrder for order_id %s: %s" order_id err_msg)
       )
       
-  | Cancel { order_id; dst = _ } -> (* dst is not used for Kraken REST cancel by txid *)
+  | Cancel { order_id; dst = _ } -> 
       Lwt_log_core.debug ~section (Printf.sprintf "Processing REST Cancel Order for order_id: %s" order_id) >>= fun () ->
       let api_path = "/0/private/CancelOrder" in
       let api_host = "api.kraken.com" in
@@ -209,9 +205,8 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         on_event ack
       )
 
-(* Public interface for router - REVISED COMPLETELY *)
 let handle_router_command (cfg : Config.engine_config) cmd exec_buffer : unit Lwt.t =
-  let section = Lwt_log_core.Section.make "kraken_rest_exec" in (* Renamed section *)
+  let section = Lwt_log_core.Section.make "kraken_rest_exec" in 
   Lwt_log_core.debug ~section (Printf.sprintf "Handling router command via REST: %s" (Core.order_cmd_to_yojson cmd |> Yojson.Safe.to_string)) >>= fun () ->
   
   let on_event event = 
@@ -219,15 +214,4 @@ let handle_router_command (cfg : Config.engine_config) cmd exec_buffer : unit Lw
     Lwt.return_unit
   in
   
-  (* Directly call send_order_command for all command types *)
   send_order_command cfg cmd ~on_event
-  (* No Lwt.async needed here as send_order_command itself returns a Lwt.t that the caller (router) will manage *)
-
-(* Functions to be removed:
-   - get_next_req_id (was for WS req_id)
-   - connect (WS connect)
-   - send_message (WS send)
-   - handle_message (WS message handler)
-   - start_loop (WS loop)
-   - connection_state ref (WS global state)
-*)

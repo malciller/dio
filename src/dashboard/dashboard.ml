@@ -5,7 +5,7 @@ open Dio_types
 module Stats = Stats (* Use Dio.Stats *)
 module M = Stats.SMap
 
-(* ─── New Color Palette & Styles ───────────────────────────────────────── *)
+(* ─── Color Palette & Styles ───────────────────────────────────────── *)
 let style_primary_text    = A.fg (A.rgb ~r:(180*5/255) ~g:(180*5/255) ~b:(180*5/255)) (* Approx r:3 g:3 b:3 *)
 let style_buy_order_text  = A.fg (A.rgb ~r:(0*5/255)   ~g:(255*5/255) ~b:(100*5/255)) (* Approx r:0 g:5 b:1 *)
 let style_sell_order_text = A.fg (A.rgb ~r:(255*5/255) ~g:(50*5/255)  ~b:(50*5/255))  (* Approx r:5 g:0 b:0 *)
@@ -261,7 +261,7 @@ let render state =
     let line2 = I.string art_style "     ┃  ██╔══██╗██║██╔═══██╗  ═══════════════════ ┃    " in
     let line3 = I.hcat [
                   I.string art_style         "     ┃  ██║  ██║██║██║   ██║  ";
-                  I.string text_style         "DIOPHANT SOLUTIONS "; (* Note space based on original visual *)
+                  I.string text_style         "DIOPHANT SOLUTIONS "; 
                   I.string art_style         " ┃    ";
                 ]
     in
@@ -290,21 +290,19 @@ let render state =
       if term_width >= required_width_for_line then
         (* Total space available for dashes *)
         let total_dash_space = term_width - required_width_for_line in
-        (* Calculate dashes before: roughly half, minus 10, ensuring non-negative *)
         let dashes_before_count = max 0 ((total_dash_space / 2) - 30) in
-        (* Dashes after fill the remaining space *)
         let dashes_after_count = max 0 ((total_dash_space / 2) + 1 ) in
 
         I.hcat [
-          I.string A.empty "     "; (* 5 spaces padding *)
-          I.string art_style "\u{2517}"; (* "┗" *)
-          I.string art_style (create_horizontal_fill dashes_before_count horiz_border_char_str); (* Dashes before *)
-          runtime_img; (* Runtime timestamp *)
-          I.string art_style (create_horizontal_fill dashes_after_count horiz_border_char_str); (* Dashes after *)
-          I.string art_style "\u{251B}" (* "┛" *)
+          I.string A.empty "     "; 
+          I.string art_style "\u{2517}"; 
+          I.string art_style (create_horizontal_fill dashes_before_count horiz_border_char_str); 
+          runtime_img;
+          I.string art_style (create_horizontal_fill dashes_after_count horiz_border_char_str);
+          I.string art_style "\u{251B}" 
         ]
-      else (* Not enough space for padding + runtime + essential borders *)
-        I.empty (* Draw nothing for this line *)
+      else 
+        I.empty 
     in
 
     I.vcat [line0; line1; line2; line3; line4; line5; line6]
@@ -314,24 +312,23 @@ let render state =
     (M.fold (fun asset _ acc -> asset :: acc) !Stats.pending_orders [] |> List.sort compare_assets)
   in
   let diogrid_label_text = " DioGrid " in
-  let diogrid_label_style = style_logs_accent_text ++ A.st A.bold in (* Or your preferred style *)
+  let diogrid_label_style = style_logs_accent_text ++ A.st A.bold in 
   let diogrid_label_img = I.string diogrid_label_style diogrid_label_text in
   let diogrid_label_width = I.width diogrid_label_img in
   let top_asset_box_line = 
     match asset_rows with 
     | [] -> I.empty 
     | _ -> 
-        (* Characters: ┏(1), ━(1), Label(W), ━(1), ..., ┓(1) = W + 4 minimum *) 
+      
         let min_space_for_labeled_border = diogrid_label_width + 4 in
         if term_width >= min_space_for_labeled_border then
-          (* Fill width = Total - Width(┏━) - LabelWidth - Width(━ after label) - Width(┓) *) 
           let fill_width = term_width - 2 - diogrid_label_width - 1 - 1 in 
           I.hcat [
-            I.string style_header_border "\u{250F}\u{2501}"; (* "┏━" *)
+            I.string style_header_border "\u{250F}\u{2501}";
             diogrid_label_img;
-            I.string style_header_border horiz_border_char_str; (* The extra "━" right after the label *)
+            I.string style_header_border horiz_border_char_str;
             I.string style_header_border (create_horizontal_fill fill_width horiz_border_char_str);
-            I.string style_header_border "\u{2513}"; (* "┓" *)
+            I.string style_header_border "\u{2513}";
           ]
         else (* Fallback to a simple line if not enough space *) 
           I.string style_header_border (Printf.sprintf "\u{250F}%s\u{2513}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))

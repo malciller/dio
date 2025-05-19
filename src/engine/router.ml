@@ -1,8 +1,5 @@
-(* Remove warning suppression for Types_engine *)
-(* [@@@warning "-33"] *) 
-
 (* src/engine/router.ml *)
-open Lwt.Infix  (* for >>= *)
+open Lwt.Infix  
 open Dio_types
 
 (* Response type for order operations *)
@@ -139,7 +136,7 @@ let start cfg ~cmd_buffer ~exec_buffer =
                     (Printf.sprintf "Unknown exchange: %s" dst) >>= fun () ->
                   (* No response to return here, just log *)
                   Lwt.return_unit
-          ) >>= fun () -> (* Now expects unit Lwt.t *)
+          ) >>= fun () -> 
           
           cmd_loop ()
         )

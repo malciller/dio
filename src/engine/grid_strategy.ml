@@ -67,7 +67,7 @@ module State = struct
         
         let order = Core.Add {
           dst = "kraken";
-          client_id; (* Use the new side-specific client_id *) 
+          client_id; 
           symbol;
           side;
           price = formatted_price;
@@ -86,7 +86,6 @@ module State = struct
     | None -> 
         (* Log error and potentially raise an exception or return an error type *)
         let () = Logs.err (fun m -> m "Precisions not found for symbol: %s. Cannot create order." symbol) in
-        (* Decide on error handling: For now, let's cause a failure *) 
         failwith ("Precision data missing for symbol: " ^ symbol)
 
   (* Forward declaration for create_initial_orders *)
@@ -200,7 +199,7 @@ module State = struct
   (* Update price info for a symbol *)
   let update_price (tick : Event.tick) =
     Hashtbl.replace price_info tick.symbol tick;
-    Lwt.return_unit  (* Return a Lwt promise instead of just unit *)
+    Lwt.return_unit 
 
   (* Check and adjust orders that are too far from current price *)
   let check_and_adjust_orders (runtime_cfg : Config.runtime_cfg) cmd_buffer (tick : Event.tick) =
@@ -259,17 +258,16 @@ module State = struct
                        (Printf.sprintf "%.*f" tick.current_price.scale new_price_float)
                in
                
-               (* Remove unused client_id definition *)
                let current_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty) in (* Use order.qty from K.order *)
                
                (* Create amend command *) 
                let amend_cmd = Core.Amend {
                  dst = "kraken";
-                 order_id = order.order_id; (* Use order_id directly *)
-                 symbol = order.order_symbol; (* Add symbol from order *)
-                 new_price = new_price; (* Non-optional price *)
-                 new_qty = current_qty; (* Pass existing qty from order record *)
-                 ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float; (* Add timestamp *)
+                 order_id = order.order_id; 
+                 symbol = order.order_symbol; 
+                 new_price = new_price; 
+                 new_qty = current_qty; 
+                 ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
                } in
                
                (* Log the adjustment *)
@@ -408,7 +406,7 @@ module State = struct
         end
     | _ -> Lwt.return_unit
 
-  (* Initialize order state from exchange - uses core_cfg for symbols *)
+  (* Initialize order state from exchange *)
   let initialize_orders (core_cfg : Config.engine_config) =
     (* Initialize all configured symbols to false *) 
     List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) core_cfg.symbols;
@@ -417,12 +415,12 @@ module State = struct
     let exchange_orders = K.Ws_feed.get_all_open_orders () in
     Hashtbl.clear open_orders;
     (* Process each order and collect logging promises *)
-    let log_promises = Hashtbl.fold (fun order_id (order : K.Common.order) promises -> (* USE NEW TYPE *)
+    let log_promises = Hashtbl.fold (fun order_id (order : K.Common.order) promises -> 
       let log_promise = 
-        let symbol_str = order.order_symbol in (* Use field from K.order *)
-        if symbol_str <> "N/A" && List.mem symbol_str core_cfg.symbols then ( (* Check against core_cfg.symbols *) 
+        let symbol_str = order.order_symbol in 
+        if symbol_str <> "N/A" && List.mem symbol_str core_cfg.symbols then ( 
           Hashtbl.replace open_orders order_id order;
-          Hashtbl.replace initialized_symbols symbol_str true; (* Set to true if existing order found *) 
+          Hashtbl.replace initialized_symbols symbol_str true; 
           Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
             (Printf.sprintf "Loaded existing order %s for %s" order_id symbol_str)
         ) else (
@@ -554,8 +552,6 @@ module State = struct
     let all_feed_orders = K.Ws_feed.get_all_open_orders () in
     let orders = Hashtbl.to_seq_values all_feed_orders |> List.of_seq in
     List.filter_map (fun (order : K.Common.order) -> 
-      (* You might want to add filtering here if this function is supposed to return only specific types of orders,
-         otherwise, it will return all orders (buy and sell) fetched from the feed. *)
       Some {
           order_id = order.order_id;
           symbol = order.order_symbol;
@@ -587,14 +583,11 @@ let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Config.engine_config) ~
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
     "Instrument data received." >>= fun () ->
 
-  (* Initialize state using the core_cfg *)
-  State.initialize_orders core_cfg >>= fun () -> (* Pass core_cfg *)
+  State.initialize_orders core_cfg >>= fun () -> 
 
-  (* Log strategy startup with config info - Use core_cfg for symbols *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     (Printf.sprintf "Starting grid strategy for symbols: [%s]" (String.concat ", " core_cfg.symbols)) >>= fun () ->
 
-  (* Grid strategy: consume ticks and executions, emit Core.order_cmd via cmd_buffer *)
   let rec loop () =
     (* First process any executions *)
     begin match Ringbuffer.pop_opt exec_buffer with
