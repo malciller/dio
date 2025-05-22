@@ -49,10 +49,10 @@ let setup_logging () =
   Lwt_log_core.default := default_logger;
 
   (* Specific rules for log levels and sections.
-     These will now use the 'default_logger' configured above. *)
+     These will now use the 'default_logger' configured above. 
   Lwt_log.add_rule "engine.*" Lwt_log_core.Info;
-  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info
-  
+  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info *)
+  Lwt_log.add_rule "database.price_logger" Lwt_log_core.Info
 
 (* Read and parse config file *)
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)
@@ -80,6 +80,13 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
           exit 1
     in
 
+    (* Get DB_PATH from environment variable, with a default for convenience *)
+    let db_path = 
+      match Sys.getenv_opt "DB_PATH" with
+      | Some path -> path
+      | None -> "./dio_prices.db" (* Default path if not set *)
+    in
+
     let engine_cfg : Config.engine_config = {
       ws_host = "ws.kraken.com";
       ws_port = 443;
@@ -88,6 +95,7 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
       auth_token = None; (* Will be set later from Exchange.Kraken.Token *)
       kraken_api_key = api_key;
       kraken_api_secret = api_secret;
+      db_path = db_path; 
     } in
     Ok (runtime_cfg, engine_cfg)
   with
@@ -95,11 +103,11 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
   | Sys_error msg -> Error (Printf.sprintf "Failed to read config file: %s" msg)
   | exn -> Error (Printf.sprintf "Unexpected error reading config: %s" (Printexc.to_string exn))
 
-(* Placeholder for any other existing command line arguments your application might have *)
+(* Placeholder for any other existing command line arguments application might have *)
 let your_other_args = []
 
 let specs = [
-  ("--dashboard", Arg.Set mode_dash, " Run Pac-Man-style dashboard")
+  ("--dashboard", Arg.Set mode_dash, " Run Dashboard")
 ] @ your_other_args
 
 let start_engine_logic () : unit Lwt.t = 

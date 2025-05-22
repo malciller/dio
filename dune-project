@@ -19,7 +19,9 @@
   dune
   decimal
   lwt lwt_ppx
+  lwt_log
   yojson ppx_deriving_yojson
+  sqlite3
   websocket-lwt-unix cohttp-lwt-unix
   alcotest alcotest-lwt
   dotenv

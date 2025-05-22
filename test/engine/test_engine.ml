@@ -13,13 +13,17 @@ let test_buffer_push_pop _switch () =
     let bid = Primitives.Price.of_string_exn ~scale:2 "100.00" in
     let ask = Primitives.Price.of_string_exn ~scale:2 "100.10" in
     { Event.src="t"; symbol="BTC/USD"; 
-      bid; ask; current_price = Primitives.Price.midpoint bid ask; ts=0L }
+      bid; ask; current_price = Primitives.Price.midpoint bid ask; ts=0L;
+      ask_qty = 0.0; bid_qty = 0.0; change = 0.0; change_pct = 0.0;
+      high = 0.0; last_price = 0.0; low = 0.0; volume = 0.0; vwap = 0.0 }
   in
   let tick2 =
     let bid = Primitives.Price.of_string_exn ~scale:2 "50.00" in
     let ask = Primitives.Price.of_string_exn ~scale:2 "50.05" in
     { Event.src="t"; symbol="ETH/USD"; 
-      bid; ask; current_price = Primitives.Price.midpoint bid ask; ts=1L }
+      bid; ask; current_price = Primitives.Price.midpoint bid ask; ts=1L;
+      ask_qty = 0.0; bid_qty = 0.0; change = 0.0; change_pct = 0.0;
+      high = 0.0; last_price = 0.0; low = 0.0; volume = 0.0; vwap = 0.0 }
   in
 
   Alcotest.(check bool) "push1" true (Ringbuffer.push buffer tick1);

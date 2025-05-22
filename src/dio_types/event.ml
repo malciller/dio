@@ -13,6 +13,15 @@ type tick = {
   ask    : Price.t;
   current_price : Price.t; (* Midpoint of bid/ask *)
   ts     : timestamp;   (* µs since epoch *)
+  ask_qty: float;
+  bid_qty: float;
+  change: float;
+  change_pct: float;
+  high: float;
+  last_price: float; (* Corresponds to 'last' in the API schema *)
+  low: float;
+  volume: float;
+  vwap: float;
 }
 [@@deriving yojson { exn = true }]
 

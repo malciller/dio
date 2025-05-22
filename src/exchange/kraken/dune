@@ -18,4 +18,5 @@
   dotenv
   mirage-crypto
   cstruct
-  conduit-lwt-unix))
+  conduit-lwt-unix
+  dio.database))

@@ -33,6 +33,15 @@ type ticker_data = {
   ask: float; [@key "ask"]
   bid: float; [@key "bid"]
   symbol: string; [@key "symbol"]
+  ask_qty: float; [@key "ask_qty"]
+  bid_qty: float; [@key "bid_qty"]
+  change: float; [@key "change"]
+  change_pct: float; [@key "change_pct"]
+  high: float; [@key "high"]
+  last: float; [@key "last"] (* API uses 'last', will be mapped to 'last_price' in Event.tick *)
+  low: float; [@key "low"]
+  volume: float; [@key "volume"]
+  vwap: float; [@key "vwap"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
 type ticker_response = {

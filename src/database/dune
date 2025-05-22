@@ -1,0 +1,5 @@
+(library
+ (name database)
+ (public_name dio.database)
+ (modules price_logger)
+ (libraries dio.dio_types lwt sqlite3 lwt_log)) 

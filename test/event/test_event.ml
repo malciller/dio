@@ -26,6 +26,15 @@ let sample_tick : Event.tick =
   ask    = ask_price;
   current_price = Primitives.Price.midpoint bid_price ask_price;
   ts     = 1678886400123456L; (* Example timestamp *)
+  ask_qty = 0.0;
+  bid_qty = 0.0;
+  change = 0.0;
+  change_pct = 0.0;
+  high = 0.0;
+  last_price = 0.0;
+  low = 0.0;
+  volume = 0.0;
+  vwap = 0.0;
 }
 
 let sample_fill : Event.fill = {

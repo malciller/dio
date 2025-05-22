@@ -60,12 +60,14 @@ let test_config_no_auth : Config.engine_config = { (* Use explicit Core.config *
   symbols = ["BTC/USD"]; auth_token = None;
   kraken_api_key = "dummy_test_api_key";
   kraken_api_secret = "dummy_test_api_secret";
+  db_path = "/tmp/test_feed.db";
 }
 let test_config_with_auth : Config.engine_config = {
   ws_host = "localhost"; ws_port = 8080; ws_path = "/test";
   symbols = ["BTC/USD"]; auth_token = Some "test_token";
   kraken_api_key = "dummy_test_api_key";
   kraken_api_secret = "dummy_test_api_secret";
+  db_path = "/tmp/test_feed_auth.db";
 }
 
 let dummy_on_tick _tick = Lwt.return_unit
@@ -109,7 +111,9 @@ let test_callbacks_passed_down _switch () =
   let dummy_tick_for_callback = 
     let bid = Primitives.Price.of_string_exn ~scale:1 "1" in
     let ask = Primitives.Price.of_string_exn ~scale:1 "1" in
-    { Event.src="test"; symbol="X"; bid; ask; current_price = Primitives.Price.midpoint bid ask; ts=0L }
+    { Event.src="test"; symbol="X"; bid; ask; current_price = Primitives.Price.midpoint bid ask; ts=0L;
+      ask_qty = 0.0; bid_qty = 0.0; change = 0.0; change_pct = 0.0;
+      high = 0.0; last_price = 0.0; low = 0.0; volume = 0.0; vwap = 0.0 }
   in
 
   !(Mock_state.last_on_tick_callback) dummy_tick_for_callback >>= fun () ->
