@@ -2,4 +2,4 @@
  (name database)
  (public_name dio.database)
  (modules price_logger)
- (libraries dio.dio_types lwt sqlite3 lwt_log)) 
+ (libraries dio.dio_types lwt caqti caqti-lwt caqti-lwt.unix caqti-driver-postgresql lwt_log))

@@ -49,9 +49,9 @@ let setup_logging () =
   Lwt_log_core.default := default_logger;
 
   (* Specific rules for log levels and sections.
-     These will now use the 'default_logger' configured above. 
+     These will now use the 'default_logger' configured above *) 
   Lwt_log.add_rule "engine.*" Lwt_log_core.Info;
-  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info *)
+  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info;
   Lwt_log.add_rule "database.price_logger" Lwt_log_core.Info
 
 (* Read and parse config file *)
@@ -80,11 +80,11 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
           exit 1
     in
 
-    (* Get DB_PATH from environment variable, with a default for convenience *)
-    let db_path = 
-      match Sys.getenv_opt "DB_PATH" with
-      | Some path -> path
-      | None -> "./dio_prices.db" (* Default path if not set *)
+    (* Get DB_URI from environment variable, with a default for convenience *)
+    let db_uri = 
+      match Sys.getenv_opt "DB_URI" with
+      | Some uri -> uri
+      | None -> "sqlite3:./dio_prices.db" (* Default SQLite URI if not set *)
     in
 
     let engine_cfg : Config.engine_config = {
@@ -95,7 +95,7 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
       auth_token = None; (* Will be set later from Exchange.Kraken.Token *)
       kraken_api_key = api_key;
       kraken_api_secret = api_secret;
-      db_path = db_path; 
+      db_uri = db_uri;  (* Changed from db_path to db_uri *)
     } in
     Ok (runtime_cfg, engine_cfg)
   with

@@ -21,7 +21,10 @@
   lwt lwt_ppx
   lwt_log
   yojson ppx_deriving_yojson
-  sqlite3
+  caqti
+  caqti-lwt
+  caqti-driver-postgresql
+  postgresql
   websocket-lwt-unix cohttp-lwt-unix
   alcotest alcotest-lwt
   dotenv

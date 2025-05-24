@@ -11,6 +11,7 @@ ENV QEMU_CPU=host
 # 2.  System dependencies
 #     • netbase   → provides /etc/services so Conduit can resolve "https"
 #     • libsqlite3-dev for caqti-driver-sqlite3
+#     • libpq-dev for caqti-driver-postgresql
 RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
     m4 \
@@ -20,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpcre3-dev \
     libssl-dev \
     libsqlite3-dev \
+    libpq-dev \
     zlib1g-dev \
     make \
     g++ \

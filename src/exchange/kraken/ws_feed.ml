@@ -638,7 +638,7 @@ let get_all_open_orders () : (string, Common.order) Hashtbl.t = all_open_orders
 (* Main Feed Functions *)
 let start (cfg : Config.engine_config) ~on_tick =
   (* Initialize Price_logger *)
-  (Price_logger.init cfg.db_path >>= function
+  (Price_logger.init cfg.db_uri >>= function
     | Ok conn -> 
         db_conn := Some conn;
         Lwt_log_core.info ~section "Price logger initialized."
