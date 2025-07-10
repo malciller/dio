@@ -219,7 +219,7 @@ let rec intersperse sep = function
   | [x] -> [x]
   | x :: xs -> x :: sep :: intersperse sep xs
 
-let priority_assets = ["BTC/USD"; "SOL/USD"; "ETH/USD"; "ADA/USD"; "TRX/USD"]
+let priority_assets = ["BTC/USD"; "ETH/USD"; "SOL/USD"; "ADA/USD"; "TRX/USD"]
 let find_index pred lst =
   let rec aux i = function
     | [] -> None

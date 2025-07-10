@@ -1,3 +1,12 @@
+(*
+  Position sizing for BTC: 0.00025 BTC x (unrealized value of portfolio / 100)
+  Position sizing for alts: $10 order size min, adjust to maintain new $5 thresholds on 
+  increased price movement.
+    i.e. if price of alt increases to where buy order = $15, new min threshold for that asset becomes
+      $15. If price of alt decreases below min threshold, volume of asset traded increased to meet 
+      threshold in USD value.
+*)
+
 (* src/engine/strategy.ml *)
 open Lwt.Infix  (* for >>= *)
 open Dio_types 
@@ -6,16 +15,12 @@ module K = Kraken (* To get open orders *)
 
 (* Module-level state *)
 module State = struct
-  (* Track latest prices per symbol *)
   let price_info : (string, Event.tick) Hashtbl.t = Hashtbl.create 16
 
-  (* Track our open orders - USE NEW TYPE *)
   let open_orders : (string, K.Common.order) Hashtbl.t = Hashtbl.create 16
   
-  (* Track whether we've initialized orders for each symbol *)
   let initialized_symbols : (string, bool) Hashtbl.t = Hashtbl.create 16
 
-  (* Type for open order information *)
   type open_order = {
     order_id: string;
     symbol: string;
@@ -24,7 +29,6 @@ module State = struct
     limit_price: float;
   }
 
-  (* Check if we have any open orders for a symbol *)
   let has_open_orders symbol =
     let has_buy = ref false in
     let has_sell = ref false in
@@ -37,7 +41,6 @@ module State = struct
     ) open_orders;
     !has_buy && !has_sell (* Returns true only if both a buy and a sell exist *)
 
-  (* Check if we have any open buy order for a symbol *)
   let has_buy_order symbol =
     let found_buy_order = ref false in
     Hashtbl.iter (fun _ (order : K.Common.order) ->
@@ -47,10 +50,8 @@ module State = struct
     ) open_orders;
     !found_buy_order
 
-  (* Get latest price info for a symbol *)
   let get_price symbol = Hashtbl.find_opt price_info symbol
 
-  (* Create a new order command *)
   let create_order ~symbol ~side ~price ~qty =
     match K.Ws_feed.get_precisions symbol with
     | Some (price_prec, qty_prec) ->
@@ -88,7 +89,6 @@ module State = struct
         let () = Logs.err (fun m -> m "Precisions not found for symbol: %s. Cannot create order." symbol) in
         failwith ("Precision data missing for symbol: " ^ symbol)
 
-  (* Forward declaration for create_initial_orders *)
   let create_initial_orders : Config.runtime_cfg -> string -> Core.order_cmd Ringbuffer.t -> unit Lwt.t = 
     fun runtime_cfg symbol cmd_buffer ->
       (* Only proceed if we've initialized orders for this symbol *)
@@ -196,12 +196,10 @@ module State = struct
       else
         Lwt.return_unit
 
-  (* Update price info for a symbol *)
   let update_price (tick : Event.tick) =
     Hashtbl.replace price_info tick.symbol tick;
     Lwt.return_unit 
 
-  (* Check and adjust orders that are too far from current price *)
   let check_and_adjust_orders (runtime_cfg : Config.runtime_cfg) cmd_buffer (tick : Event.tick) =
     (* Find the asset configuration for this symbol *)
     let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) -> 
@@ -303,7 +301,6 @@ module State = struct
         Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy")
           (Printf.sprintf "No configuration found for symbol %s in runtime_cfg" tick.symbol)
 
-  (* Sync our open orders with exchange's state *)
   let sync_open_orders runtime_cfg cmd_buffer () =
     let exchange_orders = K.Ws_feed.get_all_open_orders () in
     (* Track which orders were updated *)
@@ -346,7 +343,6 @@ module State = struct
     
     Lwt.return_unit
 
-  (* Update open orders based on execution *)
   let handle_execution runtime_cfg cmd_buffer (event : Core.market_event) =
     match event with
     | Core.Fill { order_id; symbol; price; qty; side; _ } ->
@@ -406,7 +402,6 @@ module State = struct
         end
     | _ -> Lwt.return_unit
 
-  (* Initialize order state from exchange *)
   let initialize_orders (core_cfg : Config.engine_config) =
     (* Initialize all configured symbols to false *) 
     List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) core_cfg.symbols;
@@ -562,7 +557,6 @@ module State = struct
     ) orders
 end
 
-(* Updated signature for start function *)
 let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
   (* Log the runtime config to use the variable *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")

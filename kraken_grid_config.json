@@ -2,31 +2,31 @@
   "assets": [
     {
       "symbol": "BTC/USD",
-      "qty": "0.001325",
+      "qty": "0.00135",
       "grid_interval": "0.75",
       "sell_mult": "0.999"
     },
     {
-      "symbol": "SOL/USD",
-      "qty": "0.1",
+      "symbol": "ETH/USD",
+      "qty": "0.008",
       "grid_interval": "2.5",
       "sell_mult": "0.999"
     },
     {
-      "symbol": "ETH/USD",
-      "qty": "0.007",
+      "symbol": "SOL/USD",
+      "qty": "0.14",
       "grid_interval": "2.5",
       "sell_mult": "0.999"
     },
     {
       "symbol": "ADA/USD",
-      "qty": "18.0",
+      "qty": "30.0",
       "grid_interval": "2.5",
       "sell_mult": "0.999"
     },    
     {
       "symbol": "TRX/USD",
-      "qty": "55.0",
+      "qty": "60.0",
       "grid_interval": "2.5",
       "sell_mult": "0.999"
     }
