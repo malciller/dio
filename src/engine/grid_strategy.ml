@@ -363,13 +363,22 @@ module State = struct
                 symbol
                 (Primitives.Price.to_string price)
                 order_side_str) >>= fun () ->
-            Hashtbl.remove open_orders order_id;
-            (* After a fill, check other orders and create new ones if needed *)
-            (match get_price symbol with
-            | Some tick ->
-                check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
+            (* Sync state after fill to get latest from exchange (e.g., remaining qty or removal if full) *)
+            sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
+            (* Check if the order still exists after sync - if not, it was completely filled *)
+            if not (Hashtbl.mem open_orders order_id) then
+              (* Order was completely filled, create new orders if we have none for this symbol *)
+              Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                (Printf.sprintf "Order %s completely filled, checking if new orders needed" order_id) >>= fun () ->
+              if not (has_open_orders symbol) then
                 create_initial_orders runtime_cfg symbol cmd_buffer
-            | None -> Lwt.return_unit)
+              else
+                Lwt.return_unit
+            else
+              (* Order still exists, so it was a partial fill - don't create new orders yet *)
+              Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+                (Printf.sprintf "Order %s partially filled, order still exists" order_id) >>= fun () ->
+              Lwt.return_unit
         | None -> Lwt.return_unit
         end
     | Ack { order_id; state; _ } ->
@@ -382,21 +391,34 @@ module State = struct
                 Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
                   (Printf.sprintf "Order %s %s" order_id 
                     (match state with Canceled -> "canceled" | Rejected -> "rejected" | _ -> "")) >>= fun () ->
-                (* After cancellation/rejection, check other orders and create new ones if needed *)
+                (* After cancellation/rejection, sync, check, and create if needed *)
+                sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
                 (match get_price symbol with
                 | Some tick ->
                     check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
-                    create_initial_orders runtime_cfg symbol cmd_buffer
+                    if not (has_open_orders symbol) then
+                      create_initial_orders runtime_cfg symbol cmd_buffer
+                    else Lwt.return_unit
                 | None -> Lwt.return_unit)
             | Open ->
-                (* When an order is amended/opened, check if other orders need adjustment *)
+                (* When an order is amended/opened (including after partial fills), just sync and check *)
                 Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                  (Printf.sprintf "Order %s state updated to Open - checking orders" order_id) >>= fun () ->
+                  (Printf.sprintf "Order %s state updated to Open - syncing orders" order_id) >>= fun () ->
                 sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
+                (* Don't create new orders on Open state - wait for Filled *)
+                Lwt.return_unit
+            | Filled ->
+                (* For Ack Filled (confirmation after final partial), ensure sync and create if no orders left *)
+                sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
+                Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                  (Printf.sprintf "Order %s fully filled (Ack confirmation)" order_id) >>= fun () ->
                 (match get_price symbol with
-                | Some tick -> check_and_adjust_orders runtime_cfg cmd_buffer tick
+                | Some tick ->
+                    check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
+                    if not (has_open_orders symbol) then
+                      create_initial_orders runtime_cfg symbol cmd_buffer
+                    else Lwt.return_unit
                 | None -> Lwt.return_unit)
-            | Filled -> Lwt.return_unit (* Handled by Fill event *)
             )
         | None -> Lwt.return_unit
         end
@@ -478,7 +500,7 @@ module State = struct
                 Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval)
               in
               let expected_total_spread_pct = 2.0 *. configured_grid_interval_pct in
-              let tolerance_pct = 0.025 (* Tolerance for comparison, e.g., 0.1% *) in
+              let tolerance_pct = 0.01 (* Tolerance for comparison, e.g., 0.1% *) in
               let diff_pct = abs_float (actual_spread_pct_of_mid -. expected_total_spread_pct) in
 
               if diff_pct <= tolerance_pct then

@@ -453,6 +453,8 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
             match item_exec_type with
             | "new" -> (match Hashtbl.find_opt pending_orders order_id with Some o -> o.limit_price | None -> Option.value limit_price_opt ~default:0.0)
             | "amended" -> (match Hashtbl.find_opt all_open_orders order_id with Some o -> Option.value limit_price_opt ~default:o.limit_price | None -> Option.value limit_price_opt ~default:0.0)
+            | "trade" -> (* For trade events, preserve existing price if no new price provided *)
+                (match Hashtbl.find_opt all_open_orders order_id with Some o -> Option.value limit_price_opt ~default:o.limit_price | None -> Option.value limit_price_opt ~default:0.0)
             | _ -> Option.value limit_price_opt ~default:0.0
           in
           let qty =
@@ -548,7 +550,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                       ) else Lwt.return_unit
                   | Some "update" ->
                       (* Step 1: Generate market events *)
-                      let market_events = List.filter_map (fun order_json ->
+                      let market_events = List.flatten (List.map (fun order_json ->
                           let order_id = safe_string order_json "order_id" "" in
                           let item_exec_type = safe_string order_json "exec_type" "" in
                           let order_status_str = safe_string order_json "order_status" "" in
@@ -566,20 +568,24 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                           match symbol_opt with
                           | None -> (* Cannot generate event without symbol for Fill *)
                               if List.mem item_exec_type ["canceled"; "expired"; "rejected"] || core_state != Core.Open then
-                                Some (Core.Ack { order_id; client_id; state = core_state; ts })
-                              else None
+                                [Core.Ack { order_id; client_id; state = core_state; ts }]
+                              else []
                           | Some symbol ->
                               let price_prec, qty_prec = Option.value (get_precisions symbol) ~default:(8, 8) in
                               match item_exec_type, last_qty_opt, last_price_opt, kraken_side_to_core_side side_str_opt with
                               | ("trade" | "filled"), Some qty_f, Some price_f, Some side when qty_f > 0.0 ->
                                   (try
-                                     Some (Core.Fill { symbol; order_id; client_id; price=(float_to_price ~scale:price_prec price_f); qty=(float_to_qty ~scale:qty_prec qty_f); side; ts })
-                               with ex -> 
-                                 Lwt_log_core.error ~section (Printf.sprintf "Failed converting Fill data for update %s: %s" order_id (Printexc.to_string ex)) |> Lwt.ignore_result; 
-                                     Some (Core.Ack { order_id; client_id; state = core_state; ts }))
+                                     let fill_event = Core.Fill { symbol; order_id; client_id; price=(float_to_price ~scale:price_prec price_f); qty=(float_to_qty ~scale:qty_prec qty_f); side; ts } in
+                                     if core_state = Filled then
+                                       [fill_event; Core.Ack { order_id; client_id; state = core_state; ts }]
+                                     else
+                                       [fill_event]
+                                   with ex -> 
+                                     Lwt_log_core.error ~section (Printf.sprintf "Failed converting Fill data for update %s: %s" order_id (Printexc.to_string ex)) |> Lwt.ignore_result; 
+                                     [Core.Ack { order_id; client_id; state = core_state; ts }])
                               | _ -> (* For any other exec_type or if not a valid trade for Fill, generate Ack *)
-                                  Some (Core.Ack { order_id; client_id; state = core_state; ts })
-                      ) data_json_list in
+                                  [Core.Ack { order_id; client_id; state = core_state; ts }]
+                      ) data_json_list) in
 
                       (* Step 2: Call on_execution *)
                       let* () = 
