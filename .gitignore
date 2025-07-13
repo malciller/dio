@@ -11,3 +11,6 @@
 # --- env / secrets ---
 .env*
 *.sh
+
+*.py
+*.csv
