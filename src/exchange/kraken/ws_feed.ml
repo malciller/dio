@@ -251,7 +251,13 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                           let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
                           let bid_price = float_to_price ~scale:price_prec ticker.bid in
                           let ask_price = float_to_price ~scale:price_prec ticker.ask in
-                          let current_price = Primitives.Price.midpoint bid_price ask_price in
+                          let last_price = float_to_price ~scale:price_prec ticker.last in
+                          let current_price =
+                            if Primitives.Price.equal last_price (Primitives.Price.zero price_prec) then
+                              Primitives.Price.midpoint bid_price ask_price
+                            else
+                              last_price
+                          in
                           State.update_price symbol current_price;
                           let event_tick : Event.tick = {
                             src = "kraken";

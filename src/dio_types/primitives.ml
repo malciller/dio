@@ -26,6 +26,12 @@ module Fixed : sig
 
   (* Calculate powers of 10 *)
   val pow10 : int -> int64
+
+  (* Equality *)
+  val equal : t -> t -> bool
+
+  (* Zero value *)
+  val zero : int -> t
 end = struct             
 
   type t = { raw : int64; scale : int }
@@ -86,6 +92,13 @@ end = struct
     let open Int64 in
     let avg_raw = div (add p1.raw p2.raw) 2L in
     { raw = avg_raw; scale = p1.scale }
+
+  (* Equality *)
+  let equal p1 p2 =
+    p1.scale = p2.scale && p1.raw = p2.raw
+
+  (* Zero value *)
+  let zero scale = { raw = 0L; scale }
 end
 
 (* Aliases for clarity – they inherit to_yojson/of_yojson *)
