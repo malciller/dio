@@ -9,6 +9,7 @@
   dio.dashboard
   dio.dio_types
   dio.engine
+  dio.engine.strategy
   dotenv
   lwt
   lwt.unix

@@ -29,7 +29,7 @@ let start_feed (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config
   Lwt.join [feed_promise; executions_promise]
 
 (* Main run function that orchestrates all components *)
-let run ~grid_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config) =
+let run ~grid_strategy ~orderbook_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config) =
   (* Create the ring buffers *)
   (* TODO: Potentially use runtime_cfg.queues_cap here? For now, keep fixed size. *)
   let tick_buffer = Ringbuffer.create 1024 in
@@ -40,6 +40,7 @@ let run ~grid_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Conf
   Supervisor.start 
     ~feed_initializer_fn:(fun () -> start_feed runtime_cfg core_cfg tick_buffer exec_buffer)
     ~grid_strategy
+    ~orderbook_strategy
     ~router
     ~tick_buffer
     ~exec_buffer

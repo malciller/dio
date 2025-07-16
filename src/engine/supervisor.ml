@@ -22,16 +22,18 @@ let supervise name fiber_fun =
 
 let start ~(feed_initializer_fn : unit -> unit Lwt.t)
     ~(grid_strategy : Core.grid_strategy) 
+    ~(orderbook_strategy : Core.orderbook_strategy)
     ~(router : Core.router) 
     ~(tick_buffer: Event.tick Ringbuffer.t) 
     ~(exec_buffer: Core.market_event Ringbuffer.t) 
     ~(cmd_buffer: Core.order_cmd Ringbuffer.t) 
     (runtime_cfg : Config.runtime_cfg) 
     (core_cfg : Config.engine_config) =     
-  (* Coordinator: launch the three main fibers and supervise them *)
+  (* Coordinator: launch the four main fibers and supervise them *)
   let feed_fut = supervise "feed" feed_initializer_fn in
-  let strat_fut = supervise "strategy" (fun () -> grid_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in 
+  let grid_strat_fut = supervise "grid_strategy" (fun () -> grid_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
+  let orderbook_strat_fut = supervise "orderbook_strategy" (fun () -> orderbook_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in 
   let router_fut = supervise "router" (fun () -> router.start core_cfg ~cmd_buffer ~exec_buffer) in
 
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.supervisor") "Starting all components under supervision..." >>= fun () ->
-  Lwt.join [feed_fut; strat_fut; router_fut]
+  Lwt.join [feed_fut; grid_strat_fut; orderbook_strat_fut; router_fut]

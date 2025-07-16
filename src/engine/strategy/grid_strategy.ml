@@ -379,22 +379,30 @@ module State = struct
                 symbol
                 (Primitives.Price.to_string price)
                 order_side_str) >>= fun () ->
-            (* Sync state after fill to get latest from exchange (e.g., remaining qty or removal if full) *)
+            (* Sync state after fill to get latest from exchange *)
             sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
             (* Check if the order still exists after sync - if not, it was completely filled *)
-            if not (Hashtbl.mem open_orders order_id) then
-              (* Order was completely filled, create new orders if we have none for this symbol *)
+            if not (Hashtbl.mem open_orders order_id) then (
+              (* Order was completely filled *)
               Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
-                (Printf.sprintf "Order %s completely filled, checking if new orders needed" order_id) >>= fun () ->
-              if not (has_open_orders symbol) then
+                (Printf.sprintf "Order %s completely filled" order_id) >>= fun () ->
+              (* If it was a buy order, immediately create new orders *)
+              if order.side = Some Core.Buy then (
+                Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                  (Printf.sprintf "Buy order %s filled, creating new orders for %s" order_id symbol) >>= fun () ->
                 create_initial_orders runtime_cfg symbol cmd_buffer
-              else
+              ) else (
+                (* Sell order filled - don't create new orders, just log *)
+                Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                  (Printf.sprintf "Sell order %s filled, no action needed" order_id) >>= fun () ->
                 Lwt.return_unit
-            else
+              )
+            ) else (
               (* Order still exists, so it was a partial fill - don't create new orders yet *)
               Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
                 (Printf.sprintf "Order %s partially filled, order still exists" order_id) >>= fun () ->
               Lwt.return_unit
+            )
           | None -> Lwt.return_unit
         ) else (
           Lwt.return_unit
@@ -411,34 +419,40 @@ module State = struct
                 Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
                   (Printf.sprintf "Order %s %s" order_id 
                     (match state with Canceled -> "canceled" | Rejected -> "rejected" | _ -> "")) >>= fun () ->
-                (* After cancellation/rejection, sync, check, and create if needed *)
-                sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
-                (match get_price symbol with
-                | Some tick ->
-                    check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
-                    if not (has_open_orders symbol) then
-                      create_initial_orders runtime_cfg symbol cmd_buffer
-                    else Lwt.return_unit
-                | None -> Lwt.return_unit)
+                (* If it was a buy order, immediately create new orders *)
+                if order.side = Some Core.Buy then (
+                  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                    (Printf.sprintf "Buy order %s cancelled/rejected, creating new orders for %s" order_id symbol) >>= fun () ->
+                  sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
+                  create_initial_orders runtime_cfg symbol cmd_buffer
+                ) else (
+                  (* Sell order cancelled/rejected - don't create new orders *)
+                  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                    (Printf.sprintf "Sell order %s cancelled/rejected, no action needed" order_id) >>= fun () ->
+                  Lwt.return_unit
+                )
             | Open ->
-                (* When an order is amended/opened (including after partial fills), just sync and check *)
+                (* When an order is amended/opened (including after partial fills), just sync *)
                 Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
                   (Printf.sprintf "Order %s state updated to Open - syncing orders" order_id) >>= fun () ->
                 sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
-                (* Don't create new orders on Open state - wait for Filled *)
                 Lwt.return_unit
             | Filled ->
-                (* For Ack Filled (confirmation after final partial), ensure sync and create if no orders left *)
+                (* For Ack Filled (confirmation after final partial) *)
                 sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
                 Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
                   (Printf.sprintf "Order %s fully filled (Ack confirmation)" order_id) >>= fun () ->
-                (match get_price symbol with
-                | Some tick ->
-                    check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
-                    if not (has_open_orders symbol) then
-                      create_initial_orders runtime_cfg symbol cmd_buffer
-                    else Lwt.return_unit
-                | None -> Lwt.return_unit)
+                (* If it was a buy order, create new orders *)
+                if order.side = Some Core.Buy then (
+                  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                    (Printf.sprintf "Buy order %s fully filled, creating new orders for %s" order_id symbol) >>= fun () ->
+                  create_initial_orders runtime_cfg symbol cmd_buffer
+                ) else (
+                  (* Sell order filled - don't create new orders *)
+                  Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+                    (Printf.sprintf "Sell order %s fully filled, no action needed" order_id) >>= fun () ->
+                  Lwt.return_unit
+                )
             ) else (
               Lwt.return_unit
             )
@@ -676,14 +690,14 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
                   (Printf.sprintf "Checking existing orders for %s" tick.symbol) >>= fun () ->
                 State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
                 (* Then create new orders only if we don't have any for this symbol *)
-                (let has_orders = State.has_open_orders tick.symbol in
+                (let has_orders = State.has_buy_order tick.symbol in
                 Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                  (Printf.sprintf "%s has open orders: %b" tick.symbol has_orders) >>= fun () ->
+                  (Printf.sprintf "%s has buy order: %b" tick.symbol has_orders) >>= fun () ->
                 if not has_orders then
                   State.create_initial_orders runtime_cfg tick.symbol cmd_buffer
                 else
                   Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                    (Printf.sprintf "Skipping order creation for %s - already has orders" tick.symbol) >>= fun () ->
+                    (Printf.sprintf "Skipping order creation for %s - already has buy order" tick.symbol) >>= fun () ->
                   Lwt.return_unit) >>= fun () ->
                 (* Verify grid spacing after potential order adjustments or creations *)
                 let current_price_for_verify = Float.of_string (Primitives.Price.to_string tick.current_price) in

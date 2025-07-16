@@ -51,7 +51,8 @@ let setup_logging () =
   (* Specific rules for log levels and sections.
      These will now use the 'default_logger' configured above *) 
   Lwt_log.add_rule "engine.*" Lwt_log_core.Info;
-  Lwt_log.add_rule "*kraken_orderbook" Lwt_log_core.Info
+  Lwt_log.add_rule "kraken_orderbook" Lwt_log_core.Info;
+  ()
 
 (* Read and parse config file *)
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)
@@ -157,10 +158,13 @@ let start_engine_logic () : unit Lwt.t =
           let grid_strategy : Core.grid_strategy = { 
             start = Grid_strategy.start 
           } in
+          let orderbook_strategy : Core.orderbook_strategy = {
+            start = Orderbook_mm.start
+          } in
           let router : Core.router = {
             start = Router.start 
           } in
-          Engine.run ~grid_strategy ~router runtime_cfg core_cfg 
+          Engine.run ~grid_strategy ~orderbook_strategy ~router runtime_cfg core_cfg
     )
     (fun exn ->
       (* Log errors from starting the engine *)
