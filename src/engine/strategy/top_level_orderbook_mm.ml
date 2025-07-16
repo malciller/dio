@@ -1,8 +1,9 @@
 (*
-  Market-making bot for 0 fee assets. Primarily effective with pegged assets.
+  Top-level order book market-making.
+  - Ideal for 0 fee pegged assets (hft)
   - Places buy and sell orders at top level bid/ask prices.
   - Filling of a buy order triggers new order pair
-  - buy order updated to maintain top-level of order book.
+  - Buy order updated to maintain top-level of order book.
 
 *)
 
