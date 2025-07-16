@@ -159,7 +159,7 @@ let start_engine_logic () : unit Lwt.t =
             start = Suicide_grid.start 
           } in
           let orderbook_strategy : Core.orderbook_strategy = {
-            start = Top_level_orderbook_mm.start
+            start = Top_level_mm.start
           } in
           let router : Core.router = {
             start = Router.start 
