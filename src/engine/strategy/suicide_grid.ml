@@ -7,7 +7,7 @@
       threshold in USD value.
 *)
 
-(* src/engine/strategy.ml *)
+(* src/engine/strategy/suicide_grid.ml *)
 open Lwt.Infix  (* for >>= *)
 open Dio_types 
 

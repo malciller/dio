@@ -1,3 +1,12 @@
+(*
+  Market-making bot for 0 fee assets. Primarily effective with pegged assets.
+  - Places buy and sell orders at top level bid/ask prices.
+  - Filling of a buy order triggers new order pair
+  - buy order updated to maintain top-level of order book.
+
+*)
+
+(* src/engine/strategy/top_level_orderbook_mm.ml *)
 open Lwt.Infix
 open Dio_types
 
@@ -144,18 +153,14 @@ module State = struct
             Lwt_log_core.debug ~section (Printf.sprintf "Price comparison for order %s: order_price_float=%.8f top_bid_price_float=%.8f" 
               order.order_id order_price_float top_bid_price_float) >>= fun () ->
             
-            (* Use a more reasonable tolerance based on the price level *)
-            let price_tolerance = 
-              if top_bid_price_float > 1.0 then 0.0001 (* For prices > 1.0, use 0.0001 tolerance *)
-              else 0.00001 (* For prices < 1.0, use smaller tolerance *)
-            in
+            (* No tolerance - any price change triggers an amend *)
             let price_diff = abs_float (order_price_float -. top_bid_price_float) in
             
-            Lwt_log_core.debug ~section (Printf.sprintf "Price difference: %.10f, tolerance: %.10f, needs_amend: %b" 
-              price_diff price_tolerance (price_diff > price_tolerance)) >>= fun () ->
+            Lwt_log_core.debug ~section (Printf.sprintf "Price difference: %.10f, needs_amend: %b" 
+              price_diff (price_diff > 0.0)) >>= fun () ->
             
-            if price_diff > price_tolerance then (
-              Lwt_log_core.info ~section (Printf.sprintf "Prices differ significantly, creating amend command for order %s (%.8f -> %.8f)" 
+            if price_diff > 0.0 then (
+              Lwt_log_core.info ~section (Printf.sprintf "Prices differ, creating amend command for order %s (%.8f -> %.8f)" 
                 order.order_id order_price_float top_bid_price_float) >>= fun () ->
               let amend_cmd = Core.Amend {
                 dst = "kraken";
@@ -170,8 +175,8 @@ module State = struct
               else
                 Lwt_log_core.info ~section (Printf.sprintf "Amending order %s to new price %s" order.order_id (Primitives.Price.to_string top_bid_price))
             ) else (
-              Lwt_log_core.debug ~section (Printf.sprintf "Order %s price %.8f matches top bid %.8f (within tolerance %.8f), no amendment needed" 
-                order.order_id order_price_float top_bid_price_float price_tolerance) >>= fun () ->
+              Lwt_log_core.debug ~section (Printf.sprintf "Order %s price %.8f matches top bid %.8f exactly, no amendment needed" 
+                order.order_id order_price_float top_bid_price_float) >>= fun () ->
               Lwt.return_unit
             )
         | [] ->
