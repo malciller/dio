@@ -19,6 +19,11 @@ type channel_params =
   | Instrument of { (* New variant for instrument channel *)
       snapshot: bool;
     }
+  | Book of {
+      symbol: string list;
+      depth: int;
+      snapshot: bool;
+    }
 [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
 (* Unified subscription message *)

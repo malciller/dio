@@ -13,6 +13,14 @@ let section = Lwt_log_core.Section.make "kraken_ws_feed"
 
 let db_conn : Price_logger.db option ref = ref None
 
+(* Helper function to get orderbook symbols from config *)
+let get_orderbook_symbols (runtime_cfg : Config.runtime_cfg) : string list =
+  List.filter_map (fun (asset : Config.asset_cfg) ->
+    match asset.strategy with
+    | Config.Orderbook -> Some asset.symbol
+    | Config.Grid -> None
+  ) runtime_cfg.assets
+
 let executions_snapshot_processed, resolve_executions_snapshot_processed = Lwt.task ()
 let instruments_loaded, resolve_instruments_loaded = Lwt.task ()
 
@@ -182,6 +190,8 @@ let custom_channel_params_to_yojson = function
       )
   | Instrument { snapshot } ->
       `Assoc [("channel", `String "instrument"); ("snapshot", `Bool snapshot)]
+  | Common.Book { symbol; depth; snapshot } ->
+      `Assoc [("channel", `String "book"); ("symbol", `List (List.map (fun s -> `String s) symbol)); ("depth", `Int depth); ("snapshot", `Bool snapshot)]
 
 (* Custom Yojson converter for subscribe_message *)
 let custom_subscribe_message_to_yojson (msg : Common.subscribe_message) : Json.t =
@@ -209,6 +219,12 @@ let make_subscribe_message ?req_id (cfg : Config.engine_config) channel =
         }
     | `Instrument ->
         Instrument {
+          snapshot = true;
+        }
+    | `Book symbols ->
+        Book {
+          symbol = symbols;
+          depth = 25;
           snapshot = true;
         }
   in
@@ -327,6 +343,8 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                   | Error err ->
                       Lwt_log_core.error ~section (Printf.sprintf "Failed to parse instrument data: %s. Payload: %s" err frame.content)
                   end
+              | Some "book" ->
+                  Orderbook.handle_book_message ~get_precisions json
               | Some unknown_channel ->
                   Lwt_log_core.warning ~section
                     (Printf.sprintf "Received unhandled channel '%s': %s" unknown_channel frame.content)
@@ -648,7 +666,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
 let get_all_open_orders () : (string, Common.order) Hashtbl.t = all_open_orders
 
 (* Main Feed Functions *)
-let start (cfg : Config.engine_config) ~on_tick =
+let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
   (* Initialize Price_logger *)
   (Price_logger.init cfg.db_uri >>= function
     | Ok conn -> 
@@ -681,6 +699,20 @@ let start (cfg : Config.engine_config) ~on_tick =
   let subscribe_instrument_msg = make_subscribe_message ~req_id:3 cfg `Instrument in 
   Websocket_lwt_unix.write conn subscribe_ticker_msg >>= fun () ->
   Websocket_lwt_unix.write conn subscribe_instrument_msg >>= fun () -> 
+  
+  (* Subscribe to book channels for orderbook symbols *)
+  (match runtime_cfg with
+   | Some runtime_cfg ->
+     let orderbook_symbols = get_orderbook_symbols runtime_cfg in
+     if List.length orderbook_symbols > 0 then (
+       let subscribe_book_msg = make_subscribe_message ~req_id:4 cfg (`Book orderbook_symbols) in
+       Websocket_lwt_unix.write conn subscribe_book_msg >>= fun () ->
+       Lwt_log_core.info ~section (Printf.sprintf "Subscribed to book channel for %d orderbook symbols" (List.length orderbook_symbols))
+     ) else
+       Lwt.return_unit
+   | None -> Lwt.return_unit
+  ) >>= fun () ->
+  
   loop conn
 
 let start_executions (cfg : Config.engine_config) ~on_execution =

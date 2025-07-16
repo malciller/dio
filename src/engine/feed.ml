@@ -8,7 +8,7 @@ open Dio_types
 module type WS = sig
   type config = Config.engine_config 
 
-  val start : config -> on_tick:(Event.tick -> unit Lwt.t) -> unit Lwt.t
+  val start : ?runtime_cfg:Config.runtime_cfg -> config -> on_tick:(Event.tick -> unit Lwt.t) -> unit Lwt.t
   val start_executions : config -> on_execution:(Core.market_event list -> unit Lwt.t) -> unit Lwt.t
   val get_open_buy_orders : unit -> (string, Kraken.Common.order) Hashtbl.t
 end
@@ -17,10 +17,10 @@ end
 module Make (W : WS) = struct
   let section = Lwt_log_core.Section.make "engine.feed"
 
-  let start (cfg : Config.engine_config) ~on_tick =
+  let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
     let rec retry_loop () =
       Lwt.catch
-        (fun () -> W.start cfg ~on_tick) 
+        (fun () -> W.start ?runtime_cfg cfg ~on_tick) 
         (fun exn ->
           Lwt_log_core.error_f ~section "Error starting public feed: %s. Retrying in 5s..." (Printexc.to_string exn) >>= fun () ->
           Lwt_unix.sleep 5.0 >>= fun () ->
@@ -49,8 +49,8 @@ end
 module Kraken_ws : WS with type config = Config.engine_config = struct
   type config = Config.engine_config 
 
-  let start cfg ~on_tick : unit Lwt.t =
-    (Kraken.Ws_feed.start cfg ~on_tick : unit Lwt.t)
+  let start ?runtime_cfg cfg ~on_tick : unit Lwt.t =
+    (Kraken.Ws_feed.start ?runtime_cfg cfg ~on_tick : unit Lwt.t)
 
   let start_executions cfg ~on_execution : unit Lwt.t =
     (Kraken.Ws_feed.start_executions cfg ~on_execution : unit Lwt.t)

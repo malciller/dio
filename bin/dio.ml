@@ -51,8 +51,7 @@ let setup_logging () =
   (* Specific rules for log levels and sections.
      These will now use the 'default_logger' configured above *) 
   Lwt_log.add_rule "engine.*" Lwt_log_core.Info;
-  Lwt_log.add_rule "kraken_ws_exec" Lwt_log_core.Info;
-  Lwt_log.add_rule "database.price_logger" Lwt_log_core.Info
+  Lwt_log.add_rule "*kraken_orderbook" Lwt_log_core.Info
 
 (* Read and parse config file *)
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)
@@ -60,9 +59,25 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
     let json = Yojson.Safe.from_file config_path in
     let runtime_cfg : Config.runtime_cfg = Config.runtime_cfg_of_yojson_exn json in
     
-    (* Extract symbols for engine_config *)
-    (* asset is of type Config.asset_cfg, which has a 'symbol: Primitives.symbol' field. Primitives.symbol is string *)
-    let engine_symbols : string list = List.map (fun (asset: Config.asset_cfg) -> asset.symbol) runtime_cfg.assets in
+    (* Separate symbols by strategy type *)
+    let grid_symbols = List.filter_map (fun (asset: Config.asset_cfg) -> 
+      match asset.strategy with 
+      | Config.Grid -> Some asset.symbol
+      | Config.Orderbook -> None
+    ) runtime_cfg.assets in
+    
+    let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) -> 
+      match asset.strategy with 
+      | Config.Orderbook -> Some asset.symbol
+      | Config.Grid -> None
+    ) runtime_cfg.assets in
+    
+    (* All symbols for engine_config (both strategies need market data) *)
+    let all_symbols = List.map (fun (asset: Config.asset_cfg) -> asset.symbol) runtime_cfg.assets in
+    
+    (* Log strategy distribution *)
+    Printf.eprintf "[CONFIG] Grid strategy symbols: [%s]\n%!" (String.concat ", " grid_symbols);
+    Printf.eprintf "[CONFIG] Orderbook strategy symbols: [%s]\n%!" (String.concat ", " orderbook_symbols);
     
     (* Retrieve API key and secret from environment variables *)
     let api_key = 
@@ -91,11 +106,11 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
       ws_host = "ws.kraken.com";
       ws_port = 443;
       ws_path = "/v2";
-      symbols = engine_symbols;
+      symbols = all_symbols;  (* All symbols need market data *)
       auth_token = None; (* Will be set later from Exchange.Kraken.Token *)
       kraken_api_key = api_key;
       kraken_api_secret = api_secret;
-      db_uri = db_uri;  (* Changed from db_path to db_uri *)
+      db_uri = db_uri;
     } in
     Ok (runtime_cfg, engine_cfg)
   with
@@ -115,7 +130,7 @@ let start_engine_logic () : unit Lwt.t =
   Lwt.catch
     (fun () ->
       (* Read config file *)
-      match read_config "kraken_grid_config.json" with
+      match read_config "_config.json" with
       | Error msg ->
           Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.config") msg >>= fun () ->
           Lwt.fail_with msg

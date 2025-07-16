@@ -17,6 +17,7 @@ let asset_cfg_sample =
   ; qty                  = Qty.of_string_exn   ~scale:8 "0.01000000"
   ; grid_interval        = Fixed.of_string_exn ~scale:8 "1.0" (* Represents 1% *)
   ; sell_mult            = Fixed.of_string_exn ~scale:8 "0.999"
+  ; strategy             = Config.Grid
   }
 
 let runtime_cfg_sample =

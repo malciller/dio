@@ -1,7 +1,7 @@
 (library
  (name kraken)
  (public_name dio.exchange.kraken)
- (modules common token ws_feed kraken_exec)
+ (modules common token ws_feed kraken_exec orderbook)
  (preprocess (pps ppx_deriving_yojson lwt_ppx))
  (libraries
   dio.state

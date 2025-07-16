@@ -32,8 +32,9 @@ module Mock_kraken_ws_feed : Engine.Feed.WS = struct (* Declare implementation o
   (* Use the config type defined in the WS interface (which is Core.config) *) 
   type config = Config.engine_config (* Use Core.config directly *) 
 
-  let start (cfg: config) ~on_tick = 
+  let start ?runtime_cfg (cfg: config) ~on_tick = 
     let _ = cfg.auth_token in 
+    let _ = runtime_cfg in (* Ignore runtime_cfg in mock *)
     Mock_state.start_called := true;
     Mock_state.last_on_tick_callback := on_tick;
     Lwt.return_unit
