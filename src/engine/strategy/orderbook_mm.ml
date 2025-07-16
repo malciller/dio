@@ -54,7 +54,20 @@ module State = struct
 
   let create_initial_order (runtime_cfg : Config.runtime_cfg) symbol cmd_buffer =
     Lwt_log_core.info ~section (Printf.sprintf "create_initial_order called for %s" symbol) >>= fun () ->
-    if not (has_open_buy_order symbol) then (
+    
+    (* First, let's log what orders we currently have *)
+    let current_orders = Hashtbl.fold (fun order_id (order : K.Common.order) acc ->
+      if String.equal order.order_symbol symbol then
+        let side_str = match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown" in
+        Printf.sprintf "%s(%s@%.8f)" order_id side_str order.limit_price :: acc
+      else acc
+    ) open_orders [] in
+    Lwt_log_core.info ~section (Printf.sprintf "Current orders for %s: [%s]" symbol (String.concat "; " current_orders)) >>= fun () ->
+    
+    let has_buy = has_open_buy_order symbol in
+    Lwt_log_core.info ~section (Printf.sprintf "has_open_buy_order for %s: %b" symbol has_buy) >>= fun () ->
+    
+    if not has_buy then (
       Lwt_log_core.info ~section (Printf.sprintf "No open buy order found for %s, proceeding with order creation" symbol) >>= fun () ->
       match get_price symbol with
       | Some tick ->
@@ -67,8 +80,9 @@ module State = struct
           ) runtime_cfg.assets in
           (match asset_cfg_opt with
           | Some asset_cfg ->
-              Lwt_log_core.info ~section (Printf.sprintf "Found asset config for %s: qty=%s" 
-                symbol (Primitives.Qty.to_string asset_cfg.qty)) >>= fun () ->
+              Lwt_log_core.info ~section (Printf.sprintf "Found asset config for %s: qty=%s strategy=%s" 
+                symbol (Primitives.Qty.to_string asset_cfg.qty)
+                (match asset_cfg.strategy with Config.Orderbook -> "Orderbook" | Config.Grid -> "Grid")) >>= fun () ->
               let buy_price = tick.bid in
               let sell_price = tick.ask in
               Lwt_log_core.info ~section (Printf.sprintf "Creating orders for %s: buy_price=%s sell_price=%s" 
@@ -130,8 +144,11 @@ module State = struct
             Lwt_log_core.debug ~section (Printf.sprintf "Price comparison for order %s: order_price_float=%.8f top_bid_price_float=%.8f" 
               order.order_id order_price_float top_bid_price_float) >>= fun () ->
             
-            (* Use a tolerance for floating point comparison *)
-            let price_tolerance = 0.00000001 in (* 1e-8 tolerance *)
+            (* Use a more reasonable tolerance based on the price level *)
+            let price_tolerance = 
+              if top_bid_price_float > 1.0 then 0.0001 (* For prices > 1.0, use 0.0001 tolerance *)
+              else 0.00001 (* For prices < 1.0, use smaller tolerance *)
+            in
             let price_diff = abs_float (order_price_float -. top_bid_price_float) in
             
             Lwt_log_core.debug ~section (Printf.sprintf "Price difference: %.10f, tolerance: %.10f, needs_amend: %b" 
@@ -153,8 +170,8 @@ module State = struct
               else
                 Lwt_log_core.info ~section (Printf.sprintf "Amending order %s to new price %s" order.order_id (Primitives.Price.to_string top_bid_price))
             ) else (
-              Lwt_log_core.debug ~section (Printf.sprintf "Order %s price %.8f matches top bid %.8f (within tolerance), no amendment needed" 
-                order.order_id order_price_float top_bid_price_float) >>= fun () ->
+              Lwt_log_core.debug ~section (Printf.sprintf "Order %s price %.8f matches top bid %.8f (within tolerance %.8f), no amendment needed" 
+                order.order_id order_price_float top_bid_price_float price_tolerance) >>= fun () ->
               Lwt.return_unit
             )
         | [] ->
@@ -183,26 +200,113 @@ module State = struct
 
   let handle_execution runtime_cfg cmd_buffer symbols (event: Core.market_event) =
     match event with
-    | Core.Fill { symbol; _ } ->
-        if List.mem symbol symbols then
-          sync_open_orders () >>= fun () ->
-          create_initial_order runtime_cfg symbol cmd_buffer
-        else
+    | Core.Fill { order_id; symbol; price; qty; side; _ } ->
+        if List.mem symbol symbols then (
+          Lwt_log_core.info ~section (Printf.sprintf "Fill event received for %s: order_id=%s side=%s qty=%s price=%s" 
+            symbol order_id 
+            (match side with Buy -> "BUY" | Sell -> "SELL")
+            (Primitives.Qty.to_string qty)
+            (Primitives.Price.to_string price)) >>= fun () ->
+          
+          (* Look up the original order to get its details *)
+          match Hashtbl.find_opt open_orders order_id with
+          | Some (order : K.Common.order) ->
+              let order_side_str = match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown" in
+              Lwt_log_core.info ~section (Printf.sprintf "Found original order %s: symbol=%s side=%s price=%.8f" 
+                order_id order.order_symbol order_side_str order.limit_price) >>= fun () ->
+              
+              (* Sync orders first to get the latest state *)
+              sync_open_orders () >>= fun () ->
+              
+              (* Check if the order still exists after sync - if not, it was completely filled *)
+              if not (Hashtbl.mem open_orders order_id) then (
+                Lwt_log_core.info ~section (Printf.sprintf "Order %s completely filled" order_id) >>= fun () ->
+                
+                (* Only create new orders if it was a buy order that was filled *)
+                if order.side = Some Core.Buy then (
+                  Lwt_log_core.info ~section (Printf.sprintf "Buy order %s filled, creating new orders for %s" order_id symbol) >>= fun () ->
+                  create_initial_order runtime_cfg symbol cmd_buffer
+                ) else (
+                  Lwt_log_core.info ~section (Printf.sprintf "Sell order %s filled, no new orders needed" order_id) >>= fun () ->
+                  Lwt.return_unit
+                )
+              ) else (
+                Lwt_log_core.debug ~section (Printf.sprintf "Order %s partially filled, order still exists" order_id) >>= fun () ->
+                Lwt.return_unit
+              )
+          | None ->
+              Lwt_log_core.warning ~section (Printf.sprintf "Fill event for unknown order %s, attempting to create orders anyway" order_id) >>= fun () ->
+              (* If we can't find the order, we can't determine its side, so we'll be conservative and create orders *)
+              sync_open_orders () >>= fun () ->
+              create_initial_order runtime_cfg symbol cmd_buffer
+        ) else (
+          Lwt_log_core.debug ~section (Printf.sprintf "Fill event for %s not in orderbook symbols, ignoring" symbol) >>= fun () ->
           Lwt.return_unit
-    | Ack { client_id; state; _ } ->
+        )
+    | Ack { order_id; client_id; state; _ } ->
+        Lwt_log_core.debug ~section (Printf.sprintf "Ack event received: order_id=%s client_id=%s state=%s" 
+          order_id client_id 
+          (match state with Open -> "Open" | Filled -> "Filled" | Canceled -> "Canceled" | Rejected -> "Rejected")) >>= fun () ->
+        
         (match state with
         | Canceled | Rejected ->
-            let symbol_opt = Hashtbl.fold (fun _ (order: K.Common.order) acc ->
+            (* Find the order by client_id to determine its symbol and side *)
+            let symbol_and_side_opt = Hashtbl.fold (fun _ (order: K.Common.order) acc ->
               match order.client_id with
-              | Some order_client_id when String.equal order_client_id client_id -> Some order.order_symbol
+              | Some order_client_id when String.equal order_client_id client_id -> 
+                  Some (order.order_symbol, order.side)
               | _ -> acc
             ) open_orders None in
-            (match symbol_opt with
-            | Some symbol when List.mem symbol symbols ->
+            
+            (match symbol_and_side_opt with
+            | Some (symbol, side) when List.mem symbol symbols ->
+                Lwt_log_core.info ~section (Printf.sprintf "Order %s cancelled/rejected for %s, side=%s" 
+                  order_id symbol 
+                  (match side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown")) >>= fun () ->
+                
+                (* Only create new orders if it was a buy order that was cancelled/rejected *)
+                if side = Some Core.Buy then (
+                  Lwt_log_core.info ~section (Printf.sprintf "Buy order %s cancelled/rejected, creating new orders for %s" order_id symbol) >>= fun () ->
+                  sync_open_orders () >>= fun () ->
+                  create_initial_order runtime_cfg symbol cmd_buffer
+                ) else (
+                  Lwt_log_core.info ~section (Printf.sprintf "Sell order %s cancelled/rejected, no new orders needed" order_id) >>= fun () ->
+                  Lwt.return_unit
+                )
+            | _ -> 
+                Lwt_log_core.debug ~section (Printf.sprintf "Ack event for order %s not in orderbook symbols or not found" order_id) >>= fun () ->
+                Lwt.return_unit)
+        | Filled ->
+            (* This is a final Fill confirmation - sync orders and check if we need to create new orders *)
+            let symbol_and_side_opt = Hashtbl.fold (fun _ (order: K.Common.order) acc ->
+              if String.equal order.order_id order_id then 
+                Some (order.order_symbol, order.side)
+              else acc
+            ) open_orders None in
+            
+            (match symbol_and_side_opt with
+            | Some (symbol, side) when List.mem symbol symbols ->
+                Lwt_log_core.info ~section (Printf.sprintf "Order %s fully filled (Ack confirmation) for %s, side=%s" 
+                  order_id symbol 
+                  (match side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown")) >>= fun () ->
+                
                 sync_open_orders () >>= fun () ->
-                create_initial_order runtime_cfg symbol cmd_buffer
-            | _ -> Lwt.return_unit)
-        | _ -> Lwt.return_unit)
+                
+                (* Only create new orders if it was a buy order that was filled *)
+                if side = Some Core.Buy then (
+                  Lwt_log_core.info ~section (Printf.sprintf "Buy order %s fully filled, creating new orders for %s" order_id symbol) >>= fun () ->
+                  create_initial_order runtime_cfg symbol cmd_buffer
+                ) else (
+                  Lwt_log_core.info ~section (Printf.sprintf "Sell order %s fully filled, no new orders needed" order_id) >>= fun () ->
+                  Lwt.return_unit
+                )
+            | _ -> 
+                Lwt_log_core.debug ~section (Printf.sprintf "Filled Ack for order %s not in orderbook symbols or not found" order_id) >>= fun () ->
+                Lwt.return_unit)
+        | _ -> 
+            Lwt_log_core.debug ~section (Printf.sprintf "Ack event for order %s with state %s, no action needed" 
+              order_id (match state with Open -> "Open" | Filled -> "Filled" | Canceled -> "Canceled" | Rejected -> "Rejected")) >>= fun () ->
+            Lwt.return_unit)
     | _ -> Lwt.return_unit
 
   let initialize_orders (runtime_cfg : Config.runtime_cfg) =

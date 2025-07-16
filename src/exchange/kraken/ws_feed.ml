@@ -344,7 +344,58 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                       Lwt_log_core.error ~section (Printf.sprintf "Failed to parse instrument data: %s. Payload: %s" err frame.content)
                   end
               | Some "book" ->
-                  Orderbook.handle_book_message ~get_precisions json
+                  (* Handle book message and generate ticks for top-of-book changes *)
+                  let* () = Orderbook.handle_book_message ~get_precisions json in
+                  (* Generate ticks for symbols that had book updates *)
+                  let open Yojson.Safe.Util in
+                  (try
+                    let data_list = json |> member "data" |> to_list in
+                    Lwt_list.iter_s (fun data_json ->
+                      let symbol = data_json |> member "symbol" |> to_string in
+                      (* Generate tick from current orderbook state *)
+                      match Orderbook.get_best_bid_ask symbol with
+                      | Some (bid_price, ask_price) ->
+                          let price_prec, _ = Option.value (get_precisions symbol) ~default:(8, 8) in
+                          let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
+                          let bid_price_primitive = float_to_price ~scale:price_prec bid_price in
+                          let ask_price_primitive = float_to_price ~scale:price_prec ask_price in
+                          let current_price = Primitives.Price.midpoint bid_price_primitive ask_price_primitive in
+                          
+                          (* Create tick event *)
+                          let event_tick : Event.tick = {
+                            src = "kraken";
+                            symbol;
+                            bid = bid_price_primitive;
+                            ask = ask_price_primitive;
+                            current_price;
+                            ts;
+                            ask_qty = 0.0; (* Book doesn't provide qty aggregates *)
+                            bid_qty = 0.0;
+                            change = 0.0;  (* Book doesn't provide change info *)
+                            change_pct = 0.0;
+                            high = 0.0;
+                            last_price = 0.0;
+                            low = 0.0;
+                            volume = 0.0;
+                            vwap = 0.0;
+                          } in
+                          
+                          Lwt_log_core.debug ~section (Printf.sprintf "Generated book tick for %s: bid=%s ask=%s" 
+                            symbol 
+                            (Primitives.Price.to_string bid_price_primitive) 
+                            (Primitives.Price.to_string ask_price_primitive)) >>= fun () ->
+                          
+                          (* Send tick to strategy *)
+                          on_tick event_tick
+                      | None ->
+                          Lwt_log_core.debug ~section (Printf.sprintf "No best bid/ask available for %s after book update" symbol) >>= fun () ->
+                          Lwt.return_unit
+                    ) data_list
+                  with
+                  | exn ->
+                      Lwt_log_core.error ~section (Printf.sprintf "Failed to generate ticks from book update: %s" (Printexc.to_string exn)) >>= fun () ->
+                      Lwt.return_unit
+                  )
               | Some unknown_channel ->
                   Lwt_log_core.warning ~section
                     (Printf.sprintf "Received unhandled channel '%s': %s" unknown_channel frame.content)
