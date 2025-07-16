@@ -571,8 +571,14 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
                 let last_qty_val = Option.value last_qty_opt ~default:0.0 in
                 let last_price_val = Option.value last_price_opt ~default:0.0 in
                 if status = Core.Open then (* If order is still open (e.g. partially_filled) *)
-                  (Hashtbl.replace all_open_orders order_id order;
-                   Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Order remains open)" suffix last_qty_val order.order_symbol last_price_val))
+                  (match Hashtbl.find_opt all_open_orders order_id with
+                   | Some existing ->
+                       let remaining_qty = existing.qty -. last_qty_val in
+                       let updated_order = { order with qty = (if remaining_qty > 0.0 then remaining_qty else 0.0) } in
+                       Hashtbl.replace all_open_orders order_id updated_order;
+                       Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Remaining qty: %.8f)" suffix last_qty_val order.order_symbol last_price_val remaining_qty)
+                   | None ->
+                       Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (No existing order found)" suffix last_qty_val order.order_symbol last_price_val))
                 else (* If trade results in Filled or other terminal state *)
                   (* Check if it was pending before moving *)
                   let was_pending = Hashtbl.mem pending_orders order_id in
@@ -662,17 +668,17 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                                   [Core.Ack { order_id; client_id; state = core_state; ts }]
                       ) data_json_list) in
 
-                      (* Step 2: Call on_execution *)
-                      let* () = 
-                        if market_events <> [] then (
-                          debug_log (Printf.sprintf "Calling on_execution with %d events from update" (List.length market_events)) >>= fun () ->
-                          on_execution market_events
-                        ) else Lwt.return_unit 
-                      in
-                      (* Step 3: Update Internal State *)
+                      (* NEW: Step 2: Update Internal State (moved before calling on_execution to avoid race condition) *)
                       Lwt_list.iter_s (fun order_json ->
                           process_execution_order_item_state order_json cfg "update"
-                      ) data_json_list
+                      ) data_json_list >>= fun () ->
+
+                      (* NEW: Step 3: Call on_execution (after state update) *)
+                      if market_events <> [] then (
+                        debug_log (Printf.sprintf "Calling on_execution with %d events from update" (List.length market_events)) >>= fun () ->
+                        on_execution market_events
+                      ) else Lwt.return_unit
+
                   | Some other_type ->
                       Lwt_log_core.warning ~section (Printf.sprintf "Unknown execution message type: %s. Payload: %s" other_type frame.content)
                   | None ->
