@@ -1,5 +1,0 @@
-(library
- (name database)
- (public_name dio.database)
- (modules price_logger)
- (libraries dio.dio_types lwt caqti caqti-lwt caqti-lwt.unix caqti-driver-postgresql lwt_log))

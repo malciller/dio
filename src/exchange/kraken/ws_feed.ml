@@ -7,11 +7,8 @@ module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
 open Dio_types
 open State
-open Database
 
 let section = Lwt_log_core.Section.make "kraken_ws_feed"
-
-let db_conn : Price_logger.db option ref = ref None
 
 (* Helper function to get orderbook symbols from config *)
 let get_orderbook_symbols (runtime_cfg : Config.runtime_cfg) : string list =
@@ -292,17 +289,8 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                             volume = ticker.volume;
                             vwap = ticker.vwap;
                           } in
-                          (* Log the tick to the database *)
-                          (match !db_conn with
-                           | Some conn ->
-                               Price_logger.log_tick conn event_tick >>= fun log_result ->
-                               (match log_result with
-                                | Ok () -> Lwt.return_unit
-                                | Error e -> Lwt_log_core.error ~section (Printf.sprintf "Failed to log tick for %s: %s" symbol e))
-                           | None -> Lwt.return_unit (* DB not initialized, skip logging *)
-                          ) >>= fun () ->
-                          on_tick event_tick)
-                        ticker_list
+                          on_tick event_tick
+                      ) ticker_list
                   | Ok _ ->
                       Lwt_log_core.warning ~section (Printf.sprintf "Unexpected ticker data format: %s" frame.content)
                   | Error err ->
@@ -724,15 +712,6 @@ let get_all_open_orders () : (string, Common.order) Hashtbl.t = all_open_orders
 
 (* Main Feed Functions *)
 let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
-  (* Initialize Price_logger *)
-  (Price_logger.init cfg.db_uri >>= function
-    | Ok conn -> 
-        db_conn := Some conn;
-        Lwt_log_core.info ~section "Price logger initialized."
-    | Error err -> 
-        Lwt_log_core.error ~section ("Failed to initialize price logger: " ^ err) (* Continue without db logging if init fails *)
-  ) >>= fun () ->
-
   let rec loop conn =
     Lwt.catch
       (fun () ->

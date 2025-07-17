@@ -96,13 +96,6 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
           exit 1
     in
 
-    (* Get DB_URI from environment variable, with a default for convenience *)
-    let db_uri = 
-      match Sys.getenv_opt "DB_URI" with
-      | Some uri -> uri
-      | None -> "sqlite3:./dio_prices.db" (* Default SQLite URI if not set *)
-    in
-
     let engine_cfg : Config.engine_config = {
       ws_host = "ws.kraken.com";
       ws_port = 443;
@@ -111,7 +104,6 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
       auth_token = None; (* Will be set later from Exchange.Kraken.Token *)
       kraken_api_key = api_key;
       kraken_api_secret = api_secret;
-      db_uri = db_uri;
     } in
     Ok (runtime_cfg, engine_cfg)
   with

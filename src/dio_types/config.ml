@@ -41,6 +41,5 @@ type engine_config = {
   auth_token: string option;
   kraken_api_key : string;
   kraken_api_secret : string;
-  db_uri : string;
 }
 

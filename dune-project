@@ -21,12 +21,13 @@
   lwt lwt_ppx
   lwt_log
   yojson ppx_deriving_yojson
-  caqti
-  caqti-lwt
-  caqti-driver-postgresql
-  postgresql
-  websocket-lwt-unix cohttp-lwt-unix
-  alcotest alcotest-lwt
   dotenv
   cstruct
-  notty))
+  notty
+  websocket-lwt-unix
+  cohttp-lwt-unix
+  uri
+  logs
+  digestif
+  base64
+  mirage-crypto))

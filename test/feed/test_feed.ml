@@ -61,14 +61,12 @@ let test_config_no_auth : Config.engine_config = { (* Use explicit Core.config *
   symbols = ["BTC/USD"]; auth_token = None;
   kraken_api_key = "dummy_test_api_key";
   kraken_api_secret = "dummy_test_api_secret";
-  db_uri = "sqlite3:/tmp/test_feed.db";  (* Changed from db_path to db_uri and added URI scheme *)
 }
 let test_config_with_auth : Config.engine_config = {
   ws_host = "localhost"; ws_port = 8080; ws_path = "/test";
   symbols = ["BTC/USD"]; auth_token = Some "test_token";
   kraken_api_key = "dummy_test_api_key";
   kraken_api_secret = "dummy_test_api_secret";
-  db_uri = "sqlite3:/tmp/test_feed_auth.db";  (* Changed from db_path to db_uri and added URI scheme *)
 }
 
 let dummy_on_tick _tick = Lwt.return_unit

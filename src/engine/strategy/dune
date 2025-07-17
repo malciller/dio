@@ -2,6 +2,6 @@
  (name engine_strategy)
  (public_name dio.engine.strategy)
  (modules suicide_grid top_level_mm)
- (libraries dio.dio_types lwt yojson cohttp-lwt-unix cmdliner dio.exchange.kraken dio.database)
+ (libraries dio.dio_types lwt yojson cohttp-lwt-unix cmdliner dio.exchange.kraken)
  (preprocess (pps lwt_ppx))
  (wrapped false)) 
