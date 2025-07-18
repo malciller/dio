@@ -130,7 +130,7 @@ let start_engine_logic () : unit Lwt.t =
       | Ok (runtime_cfg, core_cfg) -> (* Destructure the tuple *)
           (* Retrieve Auth Token using Kraken.Token.get_token, handle potential errors *)
           (Lwt.catch 
-            (fun () -> Kraken.Token.get_token () >>= fun token -> Lwt.return_some token)
+            (fun () -> Kraken.Kraken_generate_auth_token.get_token () >>= fun token -> Lwt.return_some token)
             (fun exn -> 
               let backtrace = Printexc.get_backtrace () in 
               Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.auth") 
@@ -148,10 +148,10 @@ let start_engine_logic () : unit Lwt.t =
 
           (* Create strategy and router modules *)
           let grid_strategy : Core.grid_strategy = { 
-            start = Suicide_grid.start 
+            start = Kraken_suicide_grid.start 
           } in
           let orderbook_strategy : Core.orderbook_strategy = {
-            start = Top_level_mm.start
+            start = Kraken_top_level_mm.start
           } in
           let router : Core.router = {
             start = Router.start 

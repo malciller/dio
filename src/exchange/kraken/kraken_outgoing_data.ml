@@ -20,10 +20,10 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let api_path = "/0/private/AddOrder" in
       let api_host = "api.kraken.com" in 
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      let nonce = Common.nonce () in 
+      let nonce = Kraken_common_types.nonce () in 
       let price_str =
         let raw_price_float = float_of_price price in
-        match Ws_feed.get_precisions symbol with 
+        match Kraken_incoming_data.get_precisions symbol with 
         | Some (price_prec, _qty_prec) -> Primitives.format_float_precision raw_price_float price_prec
         | None -> 
             Lwt_log_core.warning ~section (Printf.sprintf "No price precision found for %s in AddOrder, sending raw price." symbol) |> Lwt.ignore_result;
@@ -53,7 +53,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let sorted_params = List.sort (fun (k1,_) (k2,_) -> String.compare k1 k2) params in
       let encoded_post_data = Uri.encoded_of_query sorted_params in
       Lwt_log_core.debug ~section (Printf.sprintf "REST AddOrder POST data: %s" encoded_post_data) >>= fun () ->
-      let signature = Common.sign ~secret:cfg.kraken_api_secret ~path:api_path ~body:encoded_post_data ~nonce in
+      let signature = Kraken_common_types.sign ~secret:cfg.kraken_api_secret ~path:api_path ~body:encoded_post_data ~nonce in
       let headers = Cohttp.Header.of_list [
         ("API-Key", cfg.kraken_api_key);
         ("API-Sign", signature); 
@@ -96,9 +96,9 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let api_path = "/0/private/AmendOrder" in
       let api_host = "api.kraken.com" in
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      let nonce = Common.nonce () in
+      let nonce = Kraken_common_types.nonce () in
       let price_prec_opt, qty_prec_opt = 
-        match Ws_feed.get_precisions symbol with
+        match Kraken_incoming_data.get_precisions symbol with
         | Some (pp, qp) -> (Some pp, Some qp)
         | None -> (None, None)
       in
@@ -127,7 +127,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       ] in
       let encoded_post_data = Uri.encoded_of_query params in 
       Lwt_log_core.debug ~section (Printf.sprintf "REST AmendOrder POST data: %s" encoded_post_data) >>= fun () ->
-      let signature = Common.sign ~secret:cfg.kraken_api_secret ~path:api_path ~body:encoded_post_data ~nonce in
+      let signature = Kraken_common_types.sign ~secret:cfg.kraken_api_secret ~path:api_path ~body:encoded_post_data ~nonce in
       let headers = Cohttp.Header.of_list [
         ("API-Key", cfg.kraken_api_key);
         ("API-Sign", signature);
@@ -160,14 +160,14 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let api_path = "/0/private/CancelOrder" in
       let api_host = "api.kraken.com" in
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      let nonce = Common.nonce () in
+      let nonce = Kraken_common_types.nonce () in
       let params = [
         ("nonce", [nonce]);
         ("txid", [order_id]); 
       ] in
       let encoded_post_data = Uri.encoded_of_query params in
       Lwt_log_core.debug ~section (Printf.sprintf "REST CancelOrder POST data: %s" encoded_post_data) >>= fun () ->
-      let signature = Common.sign ~secret:cfg.kraken_api_secret ~path:api_path ~body:encoded_post_data ~nonce in
+      let signature = Kraken_common_types.sign ~secret:cfg.kraken_api_secret ~path:api_path ~body:encoded_post_data ~nonce in
       let headers = Cohttp.Header.of_list [
         ("API-Key", cfg.kraken_api_key);
         ("API-Sign", signature);

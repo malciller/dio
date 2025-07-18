@@ -27,6 +27,9 @@ depends: [
   "digestif"
   "base64"
   "mirage-crypto"
+  "alcotest"
+  "alcotest-lwt"
+  "mirage-crypto-rng"
   "odoc" {with-doc}
 ]
 build: [

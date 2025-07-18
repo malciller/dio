@@ -30,4 +30,9 @@
   logs
   digestif
   base64
-  mirage-crypto))
+  mirage-crypto
+  
+  ;; Test dependencies
+  alcotest 
+  alcotest-lwt 
+  mirage-crypto-rng))

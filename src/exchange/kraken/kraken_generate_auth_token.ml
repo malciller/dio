@@ -26,9 +26,9 @@ let get_api_credentials_from_env () =
 let get_token () =
   let api_key, api_secret = get_api_credentials_from_env () in
   let path = "/0/private/GetWebSocketsToken" in
-  let nonce = Common.nonce () in
+  let nonce = Kraken_common_types.nonce () in
   let body_str = "nonce=" ^ nonce in 
-  let signature = Common.sign ~secret:api_secret ~path ~body:body_str ~nonce in 
+  let signature = Kraken_common_types.sign ~secret:api_secret ~path ~body:body_str ~nonce in 
   let headers = Cohttp.Header.add_list (Cohttp.Header.init ()) [
     ("API-Key", api_key);
     ("API-Sign", signature);

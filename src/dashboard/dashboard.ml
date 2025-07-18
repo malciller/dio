@@ -68,7 +68,7 @@ let price_ladder ~ladder_width current_price buy_orders sell_orders =
   I.hcat (Array.to_list ladder)
 
 let format_price asset price =
-  match Kraken.Ws_feed.get_price_precision asset with
+  match Kraken.Kraken_incoming_data.get_price_precision asset with
   | Some prec -> Printf.sprintf "%.*f" prec price
   | None -> Printf.sprintf "%.2f" price
 

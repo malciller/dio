@@ -10,7 +10,7 @@ module type WS = sig
 
   val start : ?runtime_cfg:Config.runtime_cfg -> config -> on_tick:(Event.tick -> unit Lwt.t) -> unit Lwt.t
   val start_executions : config -> on_execution:(Core.market_event list -> unit Lwt.t) -> unit Lwt.t
-  val get_open_buy_orders : unit -> (string, Kraken.Common.order) Hashtbl.t
+  val get_open_buy_orders : unit -> (string, Kraken.Kraken_common_types.order) Hashtbl.t
 end
 
 (* 2. Implement the Functor *)
@@ -45,17 +45,17 @@ module Make (W : WS) = struct
         Lwt.return_unit
 end
 
-(* 3. Define the production implementation using the real Kraken Ws_feed *)
+(* 3. Define the production implementation using the real Kraken_incoming_data *)
 module Kraken_ws : WS with type config = Config.engine_config = struct
   type config = Config.engine_config 
 
   let start ?runtime_cfg cfg ~on_tick : unit Lwt.t =
-    (Kraken.Ws_feed.start ?runtime_cfg cfg ~on_tick : unit Lwt.t)
+    (Kraken.Kraken_incoming_data.start ?runtime_cfg cfg ~on_tick : unit Lwt.t)
 
   let start_executions cfg ~on_execution : unit Lwt.t =
-    (Kraken.Ws_feed.start_executions cfg ~on_execution : unit Lwt.t)
+    (Kraken.Kraken_incoming_data.start_executions cfg ~on_execution : unit Lwt.t)
 
-  let get_open_buy_orders = Kraken.Ws_feed.get_all_open_orders
+  let get_open_buy_orders = Kraken.Kraken_incoming_data.get_all_open_orders
 end
 
 module Prod = Make (Kraken_ws)

@@ -56,10 +56,10 @@ let parse_order_side = function
   | _ -> None
 
 (* Order Tracking - Define Hashtables after 'order' type *)
-let all_open_orders : (string, Common.order) Hashtbl.t = Hashtbl.create 16
-let pending_orders : (string, Common.order) Hashtbl.t = Hashtbl.create 16
+let all_open_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
+let pending_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
 
-let format_order_log (order : Common.order) action =
+let format_order_log (order : Kraken_common_types.order) action =
   Printf.sprintf "[ORDER %s] ID: %s, Symbol: %s, Side: %s, Status: %s, Price: %.8f"
     action order.order_id order.order_symbol
     (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown")
@@ -74,7 +74,7 @@ let format_order_log (order : Common.order) action =
 let log_open_orders () =
   let orders = Hashtbl.to_seq_values all_open_orders |> List.of_seq in
   debug_log (Printf.sprintf "Open orders (%d):" (List.length orders)) >>= fun () ->
-  Lwt_list.iter_s (fun (order: Common.order) ->
+  Lwt_list.iter_s (fun (order: Kraken_common_types.order) ->
     debug_log (format_order_log order "OPEN")
   ) orders
 
@@ -133,7 +133,7 @@ let kraken_status_to_core_state status : Core.order_state =
       Lwt_log_core.warning ~section (Printf.sprintf "Unhandled Kraken order status: %s, mapping to Rejected" status) |> ignore;
       Rejected
 
-let execution_report_to_market_event (report : Common.execution_report) : Core.market_event option =
+let execution_report_to_market_event (report : Kraken_common_types.execution_report) : Core.market_event option =
   let order_id = report.order_id in
   let client_id = "kraken:" ^ order_id in
   let ts = kraken_ts_to_core_ts report.timestamp in
@@ -173,7 +173,7 @@ let connect (cfg : Config.engine_config) is_auth =
 
 (* Custom Yojson converter for channel_params *)
 let custom_channel_params_to_yojson = function
-  | Common.Ticker { symbol; snapshot; event_trigger } ->
+  | Kraken_common_types.Ticker { symbol; snapshot; event_trigger } ->
       `Assoc (
         [("channel", `String "ticker"); ("symbol", `List (List.map (fun s -> `String s) symbol)); ("snapshot", `Bool snapshot)] @
         (match event_trigger with
@@ -187,11 +187,11 @@ let custom_channel_params_to_yojson = function
       )
   | Instrument { snapshot } ->
       `Assoc [("channel", `String "instrument"); ("snapshot", `Bool snapshot)]
-  | Common.Book { symbol; depth; snapshot } ->
+  | Kraken_common_types.Book { symbol; depth; snapshot } ->
       `Assoc [("channel", `String "book"); ("symbol", `List (List.map (fun s -> `String s) symbol)); ("depth", `Int depth); ("snapshot", `Bool snapshot)]
 
 (* Custom Yojson converter for subscribe_message *)
-let custom_subscribe_message_to_yojson (msg : Common.subscribe_message) : Json.t =
+let custom_subscribe_message_to_yojson (msg : Kraken_common_types.subscribe_message) : Json.t =
   `Assoc (
     [("method", `String msg.method_); ("params", custom_channel_params_to_yojson msg.params)] @
     (match msg.req_id with None -> [] | Some id -> [("req_id", `Int id)])
@@ -201,7 +201,7 @@ let custom_subscribe_message_to_yojson (msg : Common.subscribe_message) : Json.t
 let make_subscribe_message ?req_id (cfg : Config.engine_config) channel =
   let params = match channel with
     | `Ticker -> 
-        Common.Ticker {
+        Kraken_common_types.Ticker {
           symbol = cfg.symbols;
           snapshot = true;
           event_trigger = Some "trades";
@@ -226,9 +226,9 @@ let make_subscribe_message ?req_id (cfg : Config.engine_config) channel =
         }
   in
   let msg = {
-    Common.method_ = "subscribe";
-    Common.params;
-    Common.req_id;
+    Kraken_common_types.method_ = "subscribe";
+    Kraken_common_types.params;
+    Kraken_common_types.req_id;
   } in
   let content = custom_subscribe_message_to_yojson msg |> Json.to_string in
   Frame.create ~content ()
@@ -255,10 +255,10 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
               (* Handle data messages by channel *)
               match JsonUtil.(member "channel" json |> to_string_option) with
               | Some "ticker" ->
-                  begin match Common.ticker_response_of_yojson json with
+                  begin match Kraken_common_types.ticker_response_of_yojson json with
                   | Ok { type_ = ("snapshot" | "update"); data = ticker_list; _ } ->
                       Lwt_list.iter_s
-                        (fun (ticker : Common.ticker_data) ->
+                        (fun (ticker : Kraken_common_types.ticker_data) ->
                           let symbol = ticker.symbol in
                           let price_prec, _ = Option.value (get_precisions symbol) ~default:(8, 8) in
                           let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
@@ -297,7 +297,7 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                       Lwt_log_core.error ~section (Printf.sprintf "Failed to parse ticker: %s. Payload: %s" err frame.content)
                   end
               | Some "status" ->
-                  begin match Common.status_response_of_yojson json with
+                  begin match Kraken_common_types.status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
                       Lwt_log_core.debug ~section "Received valid status message"
                   | Ok _ ->
@@ -308,10 +308,10 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
               | Some "heartbeat" ->
                   Lwt.return_unit
               | Some "instrument" ->
-                  begin match Common.instrument_response_of_yojson json with
+                  begin match Kraken_common_types.instrument_response_of_yojson json with
                   | Ok { type_ = msg_type_str; data = { pairs; _ }; _ } when msg_type_str = "snapshot" || msg_type_str = "update"->
                       Lwt_list.iter_s
-                        (fun (pair : Common.pair_data) ->
+                        (fun (pair : Kraken_common_types.pair_data) ->
                           if List.mem pair.symbol cfg.symbols then
                             let () = Hashtbl.replace instrument_precisions pair.symbol (pair.price_precision, pair.qty_precision) in
                             Lwt_log_core.debug ~section
@@ -333,7 +333,7 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                   end
               | Some "book" ->
                   (* Handle book message and generate ticks for top-of-book changes *)
-                  let* () = Orderbook.handle_book_message ~get_precisions json in
+                  let* () = Kraken_orderbook.handle_book_message ~get_precisions json in
                   (* Generate ticks for symbols that had book updates *)
                   let open Yojson.Safe.Util in
                   (try
@@ -341,7 +341,7 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                     Lwt_list.iter_s (fun data_json ->
                       let symbol = data_json |> member "symbol" |> to_string in
                       (* Generate tick from current orderbook state *)
-                      match Orderbook.get_best_bid_ask symbol with
+                      match Kraken_orderbook.get_best_bid_ask symbol with
                       | Some (bid_price, ask_price) ->
                           let price_prec, _ = Option.value (get_precisions symbol) ~default:(8, 8) in
                           let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
@@ -526,7 +526,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
             | "amended" -> (match Hashtbl.find_opt all_open_orders order_id with Some o -> Option.value order_qty_opt ~default:o.qty | None -> Option.value order_qty_opt ~default:0.0)
             | _ -> Option.value order_qty_opt ~default:0.0
           in
-          let order : Common.order = {
+          let order : Kraken_common_types.order = {
             order_id; client_id = userref_opt; order_symbol = symbol;
             side = side_opt; status; limit_price; qty;
           } in
@@ -673,7 +673,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                       Lwt_log_core.warning ~section (Printf.sprintf "Message type is missing in execution message. Payload: %s" frame.content)
                   end
               | Some "status" -> 
-                  begin match Common.status_response_of_yojson json with
+                  begin match Kraken_common_types.status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
                       Lwt.return_unit
                   | Ok _ ->
@@ -708,7 +708,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
       Lwt.return_unit
 
 (* Getter for open orders (used by Strategy) *)
-let get_all_open_orders () : (string, Common.order) Hashtbl.t = all_open_orders
+let get_all_open_orders () : (string, Kraken_common_types.order) Hashtbl.t = all_open_orders
 
 (* Main Feed Functions *)
 let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =

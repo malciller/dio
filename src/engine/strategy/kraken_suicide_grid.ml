@@ -17,7 +17,7 @@ module K = Kraken (* To get open orders *)
 module State = struct
   let price_info : (string, Event.tick) Hashtbl.t = Hashtbl.create 16
 
-  let open_orders : (string, K.Common.order) Hashtbl.t = Hashtbl.create 16
+  let open_orders : (string, K.Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
   
   let initialized_symbols : (string, bool) Hashtbl.t = Hashtbl.create 16
 
@@ -32,7 +32,7 @@ module State = struct
   let has_open_orders symbol =
     let has_buy = ref false in
     let has_sell = ref false in
-    Hashtbl.iter (fun _ (order : K.Common.order) ->
+    Hashtbl.iter (fun _ (order : K.Kraken_common_types.order) ->
       if String.equal order.order_symbol symbol then
         match order.side with
         | Some Core.Buy -> has_buy := true
@@ -43,7 +43,7 @@ module State = struct
 
   let has_buy_order symbol =
     let found_buy_order = ref false in
-    Hashtbl.iter (fun _ (order : K.Common.order) ->
+    Hashtbl.iter (fun _ (order : K.Kraken_common_types.order) ->
       if not !found_buy_order then (* Short-circuit if already found *)
         if String.equal order.order_symbol symbol && order.side = Some Core.Buy then
           found_buy_order := true
@@ -53,7 +53,7 @@ module State = struct
   let get_price symbol = Hashtbl.find_opt price_info symbol
 
   let create_order ~symbol ~side ~price ~qty =
-    match K.Ws_feed.get_precisions symbol with
+    match K.Kraken_incoming_data.get_precisions symbol with
     | Some (price_prec, qty_prec) ->
         let price_str = Primitives.Price.to_string price in
         let qty_str = Primitives.Qty.to_string qty in
@@ -134,7 +134,7 @@ module State = struct
                 let base_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
                 let sell_mult_float = Float.of_string (Primitives.Fixed.to_string asset_cfg.sell_mult) in
                 let sell_qty_float = base_qty_float *. sell_mult_float in
-                let sell_qty = match K.Ws_feed.get_precisions symbol with
+                let sell_qty = match K.Kraken_incoming_data.get_precisions symbol with
                   | Some (_, qty_prec) ->
                       Primitives.Qty.of_string_exn ~scale:qty_prec
                         (Printf.sprintf "%.*f" qty_prec sell_qty_float)
@@ -218,14 +218,14 @@ module State = struct
             tick.symbol current_price_float grid_pct max_distance_pct) >>= fun () ->
         
         (* Get all open orders for this symbol *)
-        let orders = Hashtbl.to_seq_values (K.Ws_feed.get_all_open_orders ()) |> List.of_seq in
+        let orders = Hashtbl.to_seq_values (K.Kraken_incoming_data.get_all_open_orders ()) |> List.of_seq in
         
         (* Log how many orders we're checking *)
         Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
           (Printf.sprintf "Found %d open orders to check" (List.length orders)) >>= fun () ->
         
         (* Process each order *)
-        Lwt_list.iter_s (fun (order : K.Common.order) ->
+        Lwt_list.iter_s (fun (order : K.Kraken_common_types.order) ->
           (* Log each order we're examining *)
           Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
             (Printf.sprintf "Examining order %s: symbol=%s side=%s price=%.8f" 
@@ -254,7 +254,7 @@ module State = struct
                      new_price_float)
                else Lwt.return_unit) >>= fun () ->
 
-               let new_price = match K.Ws_feed.get_precisions tick.symbol with
+               let new_price = match K.Kraken_incoming_data.get_precisions tick.symbol with
                  | Some (price_prec, _) ->
                      Primitives.Price.of_string_exn ~scale:price_prec
                        (Printf.sprintf "%.*f" price_prec new_price_float)
@@ -316,12 +316,12 @@ module State = struct
           (Printf.sprintf "No configuration found for symbol %s in runtime_cfg" tick.symbol)
 
   let sync_open_orders runtime_cfg cmd_buffer () =
-    let exchange_orders = K.Ws_feed.get_all_open_orders () in
+    let exchange_orders = K.Kraken_incoming_data.get_all_open_orders () in
     (* Track which orders were updated *)
     let updated_symbols = Hashtbl.create 16 in
     
     (* Remove orders that no longer exist on exchange *)
-    Hashtbl.iter (fun order_id (order : K.Common.order) ->
+    Hashtbl.iter (fun order_id (order : K.Kraken_common_types.order) ->
       if not (Hashtbl.mem exchange_orders order_id) then (
         Hashtbl.add updated_symbols order.order_symbol true;
         Hashtbl.remove open_orders order_id
@@ -329,7 +329,7 @@ module State = struct
     ) open_orders;
     
     (* Add/update orders from exchange *)
-    Hashtbl.iter (fun order_id (order : K.Common.order) ->
+    Hashtbl.iter (fun order_id (order : K.Kraken_common_types.order) ->
       match Hashtbl.find_opt open_orders order_id with
       | Some existing_order ->
           (* Check if order was modified *)
@@ -363,7 +363,7 @@ module State = struct
         (* Only process fills for grid strategy symbols *)
         if List.mem symbol grid_symbols then (
           match Hashtbl.find_opt open_orders order_id with
-          | Some (order : K.Common.order) ->
+          | Some (order : K.Kraken_common_types.order) ->
             let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
             let order_side_str = 
               match order.side with
@@ -472,10 +472,10 @@ module State = struct
     List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) grid_symbols;
     
     (* Fetch existing orders *) 
-    let exchange_orders = K.Ws_feed.get_all_open_orders () in
+    let exchange_orders = K.Kraken_incoming_data.get_all_open_orders () in
     Hashtbl.clear open_orders;
     (* Process each order and collect logging promises *)
-    let log_promises = Hashtbl.fold (fun order_id (order : K.Common.order) promises -> 
+    let log_promises = Hashtbl.fold (fun order_id (order : K.Kraken_common_types.order) promises -> 
       let log_promise = 
         let symbol_str = order.order_symbol in 
         if symbol_str <> "N/A" && List.mem symbol_str grid_symbols then ( 
@@ -506,20 +506,20 @@ module State = struct
         let open_orders_for_symbol =
           Hashtbl.to_seq_values open_orders
           |> List.of_seq
-          |> List.filter (fun (o : K.Common.order) -> String.equal o.order_symbol symbol)
+          |> List.filter (fun (o : K.Kraken_common_types.order) -> String.equal o.order_symbol symbol)
         in
 
-        let buy_orders = List.filter (fun (o : K.Common.order) -> o.side = Some Core.Buy) open_orders_for_symbol in
-        let sell_orders = List.filter (fun (o : K.Common.order) -> o.side = Some Core.Sell) open_orders_for_symbol in
+        let buy_orders = List.filter (fun (o : K.Kraken_common_types.order) -> o.side = Some Core.Buy) open_orders_for_symbol in
+        let sell_orders = List.filter (fun (o : K.Kraken_common_types.order) -> o.side = Some Core.Sell) open_orders_for_symbol in
 
         if List.length buy_orders > 0 && List.length sell_orders > 0 then
           let highest_buy_order =
-            List.fold_left (fun (acc : K.Common.order) (curr : K.Common.order) ->
+            List.fold_left (fun (acc : K.Kraken_common_types.order) (curr : K.Kraken_common_types.order) ->
               if curr.limit_price > acc.limit_price then curr else acc
             ) (List.hd buy_orders) (List.tl buy_orders)
           in
           let lowest_sell_order =
-            List.fold_left (fun (acc : K.Common.order) (curr : K.Common.order) ->
+            List.fold_left (fun (acc : K.Kraken_common_types.order) (curr : K.Kraken_common_types.order) ->
               if curr.limit_price < acc.limit_price then curr else acc
             ) (List.hd sell_orders) (List.tl sell_orders)
           in
@@ -567,7 +567,7 @@ module State = struct
                       symbol)
                 else
                   (* Safe to amend, check precision and if new price is actually different *)
-                  match K.Ws_feed.get_precisions symbol with
+                  match K.Kraken_incoming_data.get_precisions symbol with
                   | None ->
                       Lwt_log_core.error ~section
                         (Printf.sprintf "Grid Verify [%s]:(No Precision)."
@@ -615,9 +615,9 @@ module State = struct
               symbol (List.length buy_orders) (List.length sell_orders))
 
   let get_open_orders () : open_order list =
-    let all_feed_orders = K.Ws_feed.get_all_open_orders () in
+    let all_feed_orders = K.Kraken_incoming_data.get_all_open_orders () in
     let orders = Hashtbl.to_seq_values all_feed_orders |> List.of_seq in
-    List.filter_map (fun (order : K.Common.order) -> 
+    List.filter_map (fun (order : K.Kraken_common_types.order) -> 
       Some {
           order_id = order.order_id;
           symbol = order.order_symbol;
@@ -637,14 +637,14 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   (* Wait for the execution snapshot to be processed *)
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     "Waiting for execution snapshot from Kraken..." >>= fun () ->
-  K.Ws_feed.wait_for_snapshot () >>= fun () ->
+  K.Kraken_incoming_data.wait_for_snapshot () >>= fun () ->
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     "Execution snapshot received, initializing strategy state..." >>= fun () ->
 
   (* Wait for instrument data to be loaded *) 
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
     "Waiting for instrument data from Kraken..." >>= fun () ->
-  K.Ws_feed.wait_for_instruments () >>= fun () ->
+  K.Kraken_incoming_data.wait_for_instruments () >>= fun () ->
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy") 
     "Instrument data received." >>= fun () ->
 

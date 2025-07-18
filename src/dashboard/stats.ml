@@ -17,14 +17,14 @@ let add_dashboard_log (message : string) : unit =
 (* ─────────────────────────────────────────────────────────────── *)
 
 let get_orders_for_symbol symbol =
-  let orders = Kraken.Ws_feed.get_all_open_orders () in
+  let orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
   let orders_list = 
     Hashtbl.to_seq_values orders
     |> List.of_seq
-    |> List.filter (fun order -> String.equal order.Kraken.Common.order_symbol symbol)
+    |> List.filter (fun order -> String.equal order.Kraken.Kraken_common_types.order_symbol symbol)
   in
   let buy_orders, sell_orders = 
-    List.partition (fun order -> order.Kraken.Common.side = Some Core.Buy) orders_list
+    List.partition (fun order -> order.Kraken.Kraken_common_types.side = Some Core.Buy) orders_list
   in
-  let to_price_qty order = (order.Kraken.Common.limit_price, order.Kraken.Common.qty) in
+  let to_price_qty order = (order.Kraken.Kraken_common_types.limit_price, order.Kraken.Kraken_common_types.qty) in
   (List.map to_price_qty buy_orders, List.map to_price_qty sell_orders) 

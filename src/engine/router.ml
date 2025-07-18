@@ -65,7 +65,7 @@ module Kraken = struct
             (Primitives.Price.to_string price)
             (Primitives.Qty.to_string qty)
             client_id) >>= fun () ->
-        Kraken.Kraken_exec.handle_router_command cfg cmd exec_buffer
+        Kraken.Kraken_outgoing_data.handle_router_command cfg cmd exec_buffer
     | Core.Amend { dst=_; order_id; symbol; new_price; new_qty; ts=_ } ->
         Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router.kraken")
           (Printf.sprintf "Sending AMEND order to Kraken: %s (%s) price=%s qty=%s"
@@ -73,11 +73,11 @@ module Kraken = struct
             symbol
             (Primitives.Price.to_string new_price)
             (Primitives.Qty.to_string new_qty)) >>= fun () ->
-        Kraken.Kraken_exec.handle_router_command cfg cmd exec_buffer
+        Kraken.Kraken_outgoing_data.handle_router_command cfg cmd exec_buffer
     | Core.Cancel { order_id; _ } ->
         Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router.kraken")
           (Printf.sprintf "Sending CANCEL order to Kraken: %s" order_id) >>= fun () ->
-        Kraken.Kraken_exec.handle_router_command cfg cmd exec_buffer
+        Kraken.Kraken_outgoing_data.handle_router_command cfg cmd exec_buffer
 end
 
 let start cfg ~cmd_buffer ~exec_buffer =
