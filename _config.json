@@ -23,14 +23,14 @@
     },
     {
       "symbol": "ADA/USD",
-      "qty": "30.0",
+      "qty": "32.0",
       "grid_interval": "2.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },    
     {
       "symbol": "TRX/USD",
-      "qty": "60.0",
+      "qty": "65.0",
       "grid_interval": "2.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
