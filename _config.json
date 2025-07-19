@@ -37,7 +37,7 @@
     },
     {
       "symbol": "USDG/USD",
-      "qty": "200.0",
+      "qty": "100.0",
       "grid_interval": "0.01",
       "sell_mult": "1.0",
       "strategy": "Orderbook"
