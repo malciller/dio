@@ -1,4 +1,4 @@
-(* src/exchange/kraken/ws_feed.ml *)
+(* src/exchange/kraken/kraken_incoming_data.ml *)
 
 open Lwt.Infix
 open Websocket

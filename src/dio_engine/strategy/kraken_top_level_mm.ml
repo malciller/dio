@@ -7,7 +7,7 @@
 
 *)
 
-(* src/engine/strategy/top_level_orderbook_mm.ml *)
+(* src/engine/strategy/kraken_top_level_orderbook_mm.ml *)
 open Lwt.Infix
 open Dio_types
 
@@ -63,22 +63,20 @@ module State = struct
         None
 
   let create_initial_order (runtime_cfg : Config.runtime_cfg) symbol cmd_buffer =
-    Lwt_log_core.info ~section (Printf.sprintf "create_initial_order called for %s" symbol) >>= fun () ->
     
     (* First, let's log what orders we currently have *)
-    let current_orders = Hashtbl.fold (fun order_id (order : K.Kraken_common_types.order) acc ->
+    let _current_orders = Hashtbl.fold (fun order_id (order : K.Kraken_common_types.order) acc ->
       if String.equal order.order_symbol symbol then
         let side_str = match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown" in
         Printf.sprintf "%s(%s@%.8f)" order_id side_str order.limit_price :: acc
       else acc
     ) open_orders [] in
-    Lwt_log_core.info ~section (Printf.sprintf "Current orders for %s: [%s]" symbol (String.concat "; " current_orders)) >>= fun () ->
+
     
     let has_buy = has_open_buy_order symbol in
     Lwt_log_core.info ~section (Printf.sprintf "has_open_buy_order for %s: %b" symbol has_buy) >>= fun () ->
     
     if not has_buy then (
-      Lwt_log_core.info ~section (Printf.sprintf "No open buy order found for %s, proceeding with order creation" symbol) >>= fun () ->
       match get_price symbol with
       | Some tick ->
           Lwt_log_core.info ~section (Printf.sprintf "Found price data for %s: bid=%s ask=%s" 
@@ -124,7 +122,6 @@ module State = struct
       | None ->
           Lwt_log_core.warning ~section (Printf.sprintf "No price info for %s" symbol)
     ) else (
-      Lwt_log_core.info ~section (Printf.sprintf "Open buy order already exists for %s, skipping order creation" symbol) >>= fun () ->
       Lwt.return_unit
     )
 

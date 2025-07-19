@@ -1,4 +1,4 @@
-(* src/exchange/kraken/orderbook.ml *)
+(* src/exchange/kraken/kraken_orderbook.ml *)
 
 open Lwt.Infix
 module Json = Yojson.Safe

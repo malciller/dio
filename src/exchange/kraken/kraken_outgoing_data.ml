@@ -1,4 +1,4 @@
-(* src/exchange/kraken/ws_exec.ml *)
+(* src/exchange/kraken/kraken_outgoing_data.ml *)
 open Lwt.Infix
 open Dio_types
 open Cohttp_lwt_unix 
