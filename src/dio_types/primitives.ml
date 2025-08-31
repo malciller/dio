@@ -90,7 +90,6 @@ end = struct
         Ok (of_string_exn ~scale s)
     | _ -> Error "Fixed.of_yojson: expected JSON string"
 
-  (* Calculate midpoint *)
   let midpoint p1 p2 =
     if p1.scale <> p2.scale then
       invalid_arg "Fixed.midpoint: scales must match";
@@ -98,20 +97,18 @@ end = struct
     let avg_raw = div (add p1.raw p2.raw) 2L in
     { raw = avg_raw; scale = p1.scale }
 
-  (* Equality *)
   let equal p1 p2 =
     p1.scale = p2.scale && p1.raw = p2.raw
 
-  (* Comparison *)
   let (<=) p1 p2 =
     if p1.scale <> p2.scale then
       invalid_arg "Fixed.(<=): scales must match";
     p1.raw <= p2.raw
-  
+
   let is_positive { raw; _ } = raw > 0L
 
-  (* Zero and One *)
   let zero scale = { raw = 0L; scale }
+  
   let one scale = { raw = pow10 scale; scale }
 end
 
@@ -119,14 +116,9 @@ end
 module Price = Fixed
 module Qty   = Fixed
 
-(*---------------------------------------------------------------------------
-  Misc primitives
----------------------------------------------------------------------------*)
 type timestamp = int64  [@@deriving yojson]   (* µs since epoch *)
 type symbol    = string [@@deriving yojson]
 type currency  = string [@@deriving yojson]
-
-
 module Id = struct
   let gen () =
     let r1 = Random.bits () land 0xFFFFFF in
@@ -139,5 +131,4 @@ let format_float_precision (value : float) (precision : int) : string =
   try
     Printf.sprintf "%.*f" precision value
   with _ ->
-    (* Fallback in case of formatting error *)
     string_of_float value

@@ -11,8 +11,8 @@ let section = Lwt_log_core.Section.make "kraken_orderbook"
 type price_level = {
   price: float;
   qty: float;
-  price_str: string; (* Original string representation for checksum *)
-  qty_str: string;   (* Original string representation for checksum *)
+  price_str: string; (* string representation for checksum *)
+  qty_str: string;   (* string representation for checksum *)
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
 (* Orderbook data structure *)

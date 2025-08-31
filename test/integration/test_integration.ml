@@ -3,7 +3,7 @@ open Alcotest_lwt
 open Dio_types
 
 
-(* Integration test: Config parsing + validation *)
+(* Config parsing + validation *)
 let test_config_parsing_and_validation _switch () =
   Lwt_io.printl "Testing config parsing and validation integration" >>= fun () ->
   
@@ -26,12 +26,12 @@ let test_config_parsing_and_validation _switch () =
       Lwt_io.printl ("Config validation failed: " ^ msg) >>= fun () ->
       Alcotest.fail ("Config validation failed: " ^ msg)
 
-(* Integration test: Engine components initialization *)
+(* Engine components initialization *)
 let test_engine_components_init _switch () =
   Lwt_io.printl "Testing engine components initialization" >>= fun () ->
   
   try
-    (* Test that we can create ring buffers (core engine component) *)
+    (* Test that we can create ring buffers *)
     let buffer_cap = 64 in
     let tick_buffer = Ringbuffer.create buffer_cap in
     let exec_buffer = Ringbuffer.create buffer_cap in
@@ -48,7 +48,7 @@ let test_engine_components_init _switch () =
     Lwt_io.printl ("Engine initialization failed: " ^ Printexc.to_string exn) >>= fun () ->
     Alcotest.fail ("Engine initialization failed: " ^ Printexc.to_string exn)
 
-(* Integration test: Type system consistency *)
+(* Type system consistency *)
 let test_type_system_consistency _switch () =
   Lwt_io.printl "Testing type system consistency across modules" >>= fun () ->
   

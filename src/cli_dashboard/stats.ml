@@ -4,18 +4,16 @@ let state = ref State.initial
 
 let start_ts = Unix.gettimeofday ()
 
-(* ─── Dashboard Log Storage ───────────────────────────────────── *)
-let max_dashboard_logs = 10 (* Max number of log lines to keep for the dashboard *)
+let max_dashboard_logs = 10 
 let dashboard_logs = ref []
 
 let add_dashboard_log (message : string) : unit =
   let updated_logs = message :: !dashboard_logs in
   dashboard_logs := 
     if List.length updated_logs > max_dashboard_logs then
-      List.rev (List.tl (List.rev updated_logs)) (* Remove the oldest (last in reversed list) *)
+      List.rev (List.tl (List.rev updated_logs)) 
     else
       updated_logs
-(* ─────────────────────────────────────────────────────────────── *)
 
 let get_price symbol = State.get_price symbol !state
 

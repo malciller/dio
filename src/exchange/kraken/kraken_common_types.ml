@@ -95,7 +95,6 @@ type asset_data = {
   precision: int; [@key "precision"]
   precision_display: int; [@key "precision_display"]
   status: string; [@key "status"]
-  (* Add other fields if needed *)
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
 (* Instrument Pair Data *)
@@ -106,7 +105,6 @@ type pair_data = {
   price_precision: int; [@key "price_precision"]
   qty_precision: int; [@key "qty_precision"]
   status: string; [@key "status"]
-  (* Add other fields if needed *)
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
 (* Instrument Channel Data Container *)
@@ -178,7 +176,7 @@ type add_order_request = {
   req_id: int option; [@yojson.option]
 } [@@deriving yojson]
 
-(* NEW: Types for Amend Order *) 
+(* Types for Amend Order *) 
 type amend_order_params = {
   order_id: string;      (* Kraken order ID *)
   order_qty: float;     (* New quantity *)
@@ -202,8 +200,6 @@ type state = {
   cmd_queue: Core.order_cmd Queue.t;
   cmd_cond: unit Lwt_condition.t;
 }
-
-
 
 type order = {
   order_id : string;

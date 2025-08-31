@@ -48,8 +48,7 @@ let setup_logging () =
   Lwt_log_core.default := default_logger;
 
   (* Specific rules for log levels and sections.*) 
-  Lwt_log.add_rule "engine.*" Lwt_log_core.Info;
-  Lwt_log.add_rule "engine.strategy.orderbook" Lwt_log_core.Info;
+  Lwt_log.add_rule "engine.*" Lwt_log_core.Info;  
   ()
 
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)

@@ -2,7 +2,7 @@ open Lwt.Infix
 open Notty
 open Notty.A
 open Dio_types
-module Stats = Stats (* Use Dio.Stats *)
+module Stats = Stats 
 module M = State.SMap
 
 (* ─── Color Palette & Styles ───────────────────────────────────────── *)
