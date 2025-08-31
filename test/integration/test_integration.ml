@@ -10,7 +10,7 @@ let test_config_parsing_and_validation _switch () =
   (* Test that config.json can be parsed and validated *)
   let config_result =
     try
-      let json = Yojson.Safe.from_file "/Users/malciller/dev/Dio/test/integration/config.json" in
+      let json = Yojson.Safe.from_file "config.json" in
       let runtime_cfg : Config.runtime_cfg = Config.runtime_cfg_of_yojson_exn json in
       Config.validate_runtime_cfg runtime_cfg
     with
@@ -18,7 +18,7 @@ let test_config_parsing_and_validation _switch () =
   in
   
   match config_result with
-  | Ok () -> 
+  | Ok () ->
       Lwt_io.printl "Config parsing and validation successful" >>= fun () ->
       Alcotest.(check bool "config should parse and validate successfully" true true);
       Lwt.return_unit

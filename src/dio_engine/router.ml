@@ -142,9 +142,7 @@ let start cfg ~cmd_buffer ~exec_buffer =
             )
           )
       );
-      
       cmd_loop ()
     )
   in
-  
-  cmd_loop () (* Run the command processing loop *)
+  cmd_loop ()

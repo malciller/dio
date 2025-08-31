@@ -27,10 +27,8 @@ let wait_for_instruments () = instruments_loaded
 (* Storage for instrument precisions: symbol -> (price_precision, qty_precision) *)
 let instrument_precisions : (string, (int * int)) Hashtbl.t = Hashtbl.create 16
 
-(* Getter for instrument precisions *)
 let get_precisions symbol : (int * int) option = Hashtbl.find_opt instrument_precisions symbol
 
-(* Getter for price precision *)
 let get_price_precision symbol : int option =
   match Hashtbl.find_opt instrument_precisions symbol with
   | Some (price_prec, _) -> Some price_prec

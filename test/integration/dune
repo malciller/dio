@@ -1,4 +1,5 @@
 (test
  (name test_integration)
  (libraries alcotest alcotest-lwt lwt.unix yojson dio.dio_types)
- (preprocess (pps lwt_ppx)))
+ (preprocess (pps lwt_ppx))
+ (deps config.json))
