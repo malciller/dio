@@ -1,7 +1,7 @@
 (* src/engine/router.ml *)
 open Lwt.Infix  
 open Dio_types
-
+open Lwt_log_core
 (* Response type for order operations *)
 type order_response = {
   success: bool;
@@ -58,25 +58,25 @@ module Kraken = struct
   let handle_order cfg exec_buffer cmd =
     match cmd with
     | Core.Add { symbol; side; price; qty; client_id; _ } ->
-        Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router.kraken")
-          (Printf.sprintf "Sending ADD order to Kraken: %s %s @ %s qty=%s (client_id=%s)"
+        info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
+          "Sending ADD order to Kraken: %s %s @ %s qty=%s (client_id=%s)"
             (match side with Buy -> "BUY" | Sell -> "SELL")
             symbol
             (Primitives.Price.to_string price)
             (Primitives.Qty.to_string qty)
-            client_id) >>= fun () ->
+            client_id >>= fun () ->
         Kraken.Kraken_outgoing_data.handle_router_command cfg cmd exec_buffer
     | Core.Amend { dst=_; order_id; symbol; new_price; new_qty; ts=_ } ->
-        Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router.kraken")
-          (Printf.sprintf "Sending AMEND order to Kraken: %s (%s) price=%s qty=%s"
+        info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
+          "Sending AMEND order to Kraken: %s (%s) price=%s qty=%s"
             order_id
             symbol
             (Primitives.Price.to_string new_price)
-            (Primitives.Qty.to_string new_qty)) >>= fun () ->
+            (Primitives.Qty.to_string new_qty) >>= fun () ->
         Kraken.Kraken_outgoing_data.handle_router_command cfg cmd exec_buffer
     | Core.Cancel { order_id; _ } ->
-        Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router.kraken")
-          (Printf.sprintf "Sending CANCEL order to Kraken: %s" order_id) >>= fun () ->
+        info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
+          "Sending CANCEL order to Kraken: %s" order_id >>= fun () ->
         Kraken.Kraken_outgoing_data.handle_router_command cfg cmd exec_buffer
 end
 
@@ -91,15 +91,14 @@ let start cfg ~cmd_buffer ~exec_buffer =
 
     (* Check for duplicates *)
     if OrderCache.is_duplicate cmd then (
-      Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.router")
-        (Printf.sprintf "Dropping duplicate order: %s"
+      warning_f ~section:(Lwt_log_core.Section.make "engine.router")
+        "Dropping duplicate order: %s"
           (match cmd with
           | Add { client_id; _ } -> client_id
           | Amend { order_id; _ } -> order_id
-          | Cancel { order_id; _ } -> order_id)) >>= fun () ->
+          | Cancel { order_id; _ } -> order_id) >>= fun () ->
       cmd_loop ()
     ) else (
-      (* Enhanced logging for commands *)
       let cmd_str = match cmd with
       | Add { dst; symbol; side; price; qty; tags; _ } ->
           Printf.sprintf "ADD order: %s %s %s @ %s qty=%s tags=[%s]"
@@ -121,8 +120,8 @@ let start cfg ~cmd_buffer ~exec_buffer =
       | Cancel { dst; order_id } ->
           Printf.sprintf "CANCEL order %s on %s" order_id dst
       in
-      Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router") 
-        (Printf.sprintf "Routing command: %s" cmd_str) >>= fun () -> 
+      info_f ~section:(Lwt_log_core.Section.make "engine.router") 
+        "Routing command: %s" cmd_str >>= fun () -> 
 
       (* Route command to appropriate exchange *)
       (match cmd with
@@ -132,13 +131,13 @@ let start cfg ~cmd_buffer ~exec_buffer =
             | "kraken" ->
                 Kraken.handle_order cfg exec_buffer cmd
             | _ ->
-                Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.router")
-                  (Printf.sprintf "Unknown exchange: %s" dst)
+                error_f ~section:(Lwt_log_core.Section.make "engine.router")
+                  "Unknown exchange: %s" dst
           in
           Lwt.async (fun () ->
             Lwt.catch handle_cmd (fun ex ->
-              Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.router")
-                (Printf.sprintf "Unhandled exception in command handler: %s" (Printexc.to_string ex))
+              error_f ~section:(Lwt_log_core.Section.make "engine.router")
+                "Unhandled exception in command handler: %s" (Printexc.to_string ex)
             )
           )
       );

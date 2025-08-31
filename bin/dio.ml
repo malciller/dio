@@ -3,20 +3,27 @@ open Conduit_lwt_unix
 open Dio_types
 open Dashboard 
 open Engine
+open Lwt_log_core (* Open Lwt_log_core to use its functions directly *)
 
 let mode_dash = ref false
+
+(* Define sections once at the top of the module *)
+let section = Section.make "dio.main"
+let config_section = Section.make "dio.config"
 
 (* Set up logging *)
 let setup_logging () =
   (* These base rules apply to all logs before specific section rules are checked.
      They will direct to whichever logger becomes the default. *)
-  Lwt_log.add_rule "*" Lwt_log_core.Error;
-  Lwt_log.add_rule "*" Lwt_log_core.Warning; 
+  Lwt_log.add_rule "*" Info;    
+  Lwt_log.add_rule "*" Warning; 
+  Lwt_log.add_rule "*" Error;   
+  (* Add Debug rule for more verbose output when needed *)
 
   let default_logger =
     if !mode_dash then
       (* Dashboard mode: logs with timestamps *)
-      Lwt_log_core.make
+      make
         ~output:(fun section level messages ->
           if List.length messages > 0 then
             let first_message_string = List.hd messages in
@@ -30,8 +37,8 @@ let setup_logging () =
             let formatted_message = 
               Printf.sprintf "[%s][%s|%s] %s" 
                 timestamp
-                (Lwt_log_core.Section.name section) 
-                (Lwt_log_core.string_of_level level) 
+                (Section.name section) 
+                (string_of_level level) 
                 first_message_string
             in
             Stats.add_dashboard_log formatted_message;
@@ -45,10 +52,10 @@ let setup_logging () =
       Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
   in
 
-  Lwt_log_core.default := default_logger;
+  default := default_logger;
 
-  (* Specific rules for log levels and sections.*) 
-  Lwt_log.add_rule "engine.*" Lwt_log_core.Info;  
+  (* Specific rules for log levels and sections. Amended to the rules above.*) 
+  Lwt_log.add_rule "engine.*" Info;  
   ()
 
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)
@@ -75,21 +82,21 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
         
         let all_symbols = List.map (fun (asset: Config.asset_cfg) -> asset.symbol) runtime_cfg.assets in
         
-        Printf.eprintf "[CONFIG] Grid strategy symbols: [%s]\n%!" (String.concat ", " grid_symbols);
-        Printf.eprintf "[CONFIG] Orderbook strategy symbols: [%s]\n%!" (String.concat ", " orderbook_symbols);
+        info_f ~section:config_section "[CONFIG] Grid strategy symbols: [%s]" (String.concat ", " grid_symbols) |> Lwt.ignore_result;
+        info_f ~section:config_section "[CONFIG] Orderbook strategy symbols: [%s]" (String.concat ", " orderbook_symbols) |> Lwt.ignore_result;
         
         let api_key = 
           match Sys.getenv_opt "KRAKEN_API_KEY" with 
           | Some key -> key 
           | None -> 
-              Printf.eprintf "FATAL: KRAKEN_API_KEY environment variable not set.\n%!"; 
+              Lwt_main.run (error_f ~section:config_section "FATAL: KRAKEN_API_KEY environment variable not set."); 
               exit 1
         in
         let api_secret = 
           match Sys.getenv_opt "KRAKEN_API_SECRET" with
           | Some secret -> secret
           | None -> 
-              Printf.eprintf "FATAL: KRAKEN_API_SECRET environment variable not set.\n%!";
+              Lwt_main.run (error_f ~section:config_section "FATAL: KRAKEN_API_SECRET environment variable not set.");
               exit 1
         in
 
@@ -121,17 +128,17 @@ let start_engine_logic () : unit Lwt.t =
     (fun () ->
       match read_config "_config.json" with
       | Error msg ->
-          Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.config") msg >>= fun () ->
+          error ~section:config_section msg >>= fun () ->
           Lwt.fail_with msg
       | Ok (runtime_cfg, core_cfg) ->
           (Lwt.catch 
             (fun () -> Kraken.Kraken_generate_auth_token.get_token () >>= fun token -> Lwt.return_some token)
             (fun exn -> 
               let backtrace = Printexc.get_backtrace () in 
-              Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.auth") 
-                (Printf.sprintf "Failed to retrieve auth token: %s\nBacktrace:\n%s" 
+              error_f ~section:(Section.make "engine.auth")
+                "Failed to retrieve auth token: %s\nBacktrace:\n%s" 
                    (Printexc.to_string exn) 
-                   backtrace) 
+                   backtrace
                 >>= fun () ->
                 Lwt.return_none
             )
@@ -152,19 +159,19 @@ let start_engine_logic () : unit Lwt.t =
           Engine.run ~grid_strategy ~orderbook_strategy ~router runtime_cfg core_cfg
     )
     (fun exn ->
-      Printf.eprintf "Error in engine: %s\n%!" (Printexc.to_string exn);
+      error_f ~section "Error in engine: %s" (Printexc.to_string exn) >>= fun () ->
       Lwt.return_unit
     )
 
 let main () =
   Mirage_crypto_rng_unix.use_default ();
 
-  (try Dotenv.export ~path:".env" () with _ -> Printf.eprintf "Warning: Failed to load .env file.\n%!"); 
+  (try Dotenv.export ~path:".env" () with _ -> Lwt_main.run (warning_f ~section "Failed to load .env file.")); 
   let key_check = match Sys.getenv_opt "KRAKEN_API_KEY" with Some _ -> "FOUND" | None -> "MISSING" in
   let secret_check = match Sys.getenv_opt "KRAKEN_API_SECRET" with Some _ -> "FOUND" | None -> "MISSING" in
-  Printf.eprintf "[DEBUG] Post Dotenv.export: KRAKEN_API_KEY status: %s, KRAKEN_API_SECRET status: %s\n%!" key_check secret_check;
+  Lwt_main.run (debug_f ~section "Post Dotenv.export: KRAKEN_API_KEY status: %s, KRAKEN_API_SECRET status: %s" key_check secret_check);
 
-  Arg.parse specs (fun anon_arg -> Printf.eprintf "Warning: Ignoring anonymous argument: %s\n" anon_arg) "dio options";
+  Arg.parse specs (fun anon_arg -> Lwt_main.run (warning_f ~section "Ignoring anonymous argument: %s" anon_arg)) "dio options";
 
   setup_logging ();
 
@@ -178,7 +185,7 @@ let main () =
 
     let dashboard_on_quit () =
       if not !cleanup_initiated then (
-        Printf.eprintf "\\n[!] Dashboard requested exit. Signaling main loop...\\n%!";
+        Lwt_main.run (info_f ~section "Dashboard requested exit. Signaling main loop...");
         Lwt.wakeup_later resolve_quit ();
       );
       Lwt.return_unit
@@ -190,8 +197,8 @@ let main () =
     final_engine_promise_ref := start_engine_logic (); 
     Lwt.async (fun () -> 
       Lwt.catch (fun () -> !final_engine_promise_ref) (fun ex -> 
-        Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.main") 
-          (Printf.sprintf "Engine task failed: %s" (Printexc.to_string ex))
+        error_f ~section:(Section.make "engine.main")
+          "Engine task failed: %s" (Printexc.to_string ex)
         >>= fun () -> 
           if not !cleanup_initiated then Lwt.wakeup_later resolve_quit (); 
           Lwt.return_unit
@@ -200,7 +207,7 @@ let main () =
 
     let _sighandler_id = Lwt_unix.on_signal Sys.sigint (fun _signum ->
         if not !cleanup_initiated then (
-          Printf.eprintf "\\n[!] SIGINT received, initiating exit...\\n%!";
+          Lwt_main.run (info_f ~section "SIGINT received, initiating exit...");
           Lwt.wakeup_later resolve_quit (); 
         )
       )
@@ -210,16 +217,16 @@ let main () =
       quit_promise >>= fun () ->
       if not !cleanup_initiated then (
         cleanup_initiated := true; 
-        Printf.eprintf "\\n[!] Main loop exiting, performing final cleanup...\\n%!";
+        Lwt_main.run (info_f ~section "Main loop exiting, performing final cleanup...");
         Lwt.cancel !final_engine_promise_ref; 
         (match !term_instance_ref with
         | Some ti -> Notty_lwt.Term.release ti
         | None -> Lwt.return_unit)
         >>= fun () -> 
-          Printf.eprintf "[!] Cleanup complete. Exiting application.\n%!";
+          Lwt_main.run (info_f ~section "Cleanup complete. Exiting application.");
           Lwt.return_unit
       ) else (
-        Printf.eprintf "[!] Cleanup already handled or in progress. Exiting application.\n%!";
+        Lwt_main.run (info_f ~section "Cleanup already handled or in progress. Exiting application.");
         Lwt.return_unit
       )
     );

@@ -3,4 +3,9 @@
  (public_name dio.dio_types)
  (modules primitives core event config ringbuffer)
  (preprocess (pps ppx_deriving_yojson))
- (libraries decimal lwt yojson))
+ (libraries
+  yojson
+  ppx_deriving_yojson
+  lwt
+  lwt_log
+ ))

@@ -1,5 +1,10 @@
+(* src/dio_state/state.ml *)
+
+
 open Dio_types
 module SMap = Map.Make(String)
+
+let section = Lwt_log_core.Section.make "dio_state"
 
 type t = {
   pending_orders: int SMap.t;
@@ -23,8 +28,7 @@ let dec_pending asset state =
     SMap.update asset
       (fun v_opt ->
          match v_opt with
-         | Some n when n > 1 -> Some (n - 1)
-         | Some 1 | Some _ | None -> None)
+         | Some n when n > 0 -> Some (n - 1) | _ -> None)
       state.pending_orders
   in
   { state with pending_orders }

@@ -1,11 +1,23 @@
 (* src/exchange/kraken/kraken_orderbook.ml *)
 
 open Lwt.Infix
+(* open Lwt.Syntax Removed, as Result.t bindings should use match or Result.bind directly *)
 module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
 open Dio_types
+open Lwt_log_core (* For logging functions like error_f, debug_f *)
 
-let section = Lwt_log_core.Section.make "kraken_orderbook"
+let section = Section.make "kraken_orderbook"
+
+(* Helper for sequencing results: transforms a list of results into a result of a list *)
+let sequence_results (lst : ('a, 'e) result list) : ('a list, 'e) result =
+  let folder acc res =
+    match acc, res with
+    | Result.Ok acc_lst, Result.Ok x -> Result.Ok (x :: acc_lst)
+    | Result.Error e, _ -> Result.Error e
+    | _, Result.Error e -> Result.Error e
+  in
+  List.fold_left folder (Result.Ok []) lst |> Result.map List.rev
 
 (* Price level data structure *)
 type price_level = {
@@ -34,7 +46,7 @@ type book_data = {
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
 (* Custom JSON parsers for book_data to handle optional timestamp *)
-let book_data_of_yojson ?(get_precisions = fun _ -> None) json =
+let book_data_of_yojson ?(get_precisions = fun _ -> None) json : (book_data, string) result = (* Returns Result.t directly *)
   let open Yojson.Safe.Util in
   try
     let symbol = json |> member "symbol" |> to_string in
@@ -44,40 +56,59 @@ let book_data_of_yojson ?(get_precisions = fun _ -> None) json =
       | None -> (8, 8) (* Default fallback *)
     in
     
-    let parse_price_level json =
-      let price_str = 
+    let parse_price_level json : (price_level, string) result = (* Returns Result.t directly *)
+      let price_str_res = 
         match json |> member "price" with
-        | `String s -> s
-        | `Float f -> Printf.sprintf "%.*f" price_precision f
-        | `Int i -> string_of_int i
-        | _ -> failwith "Invalid price format"
+        | `String s -> Result.Ok s
+        | `Float f -> Result.Ok (Printf.sprintf "%.*f" price_precision f)
+        | `Int i -> Result.Ok (string_of_int i)
+        | _ -> Result.Error "Invalid price format"
       in
-      let qty_str = 
+      let qty_str_res = 
         match json |> member "qty" with
-        | `String s -> s
-        | `Float f -> Printf.sprintf "%.*f" qty_precision f
-        | `Int i -> string_of_int i
-        | _ -> failwith "Invalid qty format"
+        | `String s -> Result.Ok s
+        | `Float f -> Result.Ok (Printf.sprintf "%.*f" qty_precision f)
+        | `Int i -> Result.Ok (string_of_int i)
+        | _ -> Result.Error "Invalid qty format"
       in
-      let price_float = Float.of_string price_str in
-      let qty_float = Float.of_string qty_str in
-      { price = price_float; qty = qty_float; price_str; qty_str }
+      
+      match price_str_res with
+      | Result.Ok price_str ->
+        (match qty_str_res with
+        | Result.Ok qty_str ->
+          let price_float = Float.of_string price_str in
+          let qty_float = Float.of_string qty_str in
+          Result.Ok { price = price_float; qty = qty_float; price_str; qty_str }
+        | Result.Error e -> Result.Error e)
+      | Result.Error e -> Result.Error e
     in
-    Ok {
-      asks = json |> member "asks" |> to_list |> List.map parse_price_level;
-      bids = json |> member "bids" |> to_list |> List.map parse_price_level;
-      checksum = json |> member "checksum" |> to_int |> Int32.of_int;
-      symbol;
-      timestamp = json |> member "timestamp" |> to_string_option;
-    }
+    
+    let asks_results = json |> member "asks" |> to_list |> List.map parse_price_level in
+    let bids_results = json |> member "bids" |> to_list |> List.map parse_price_level in
+    
+    match sequence_results asks_results with
+    | Result.Ok asks ->
+      (match sequence_results bids_results with
+      | Result.Ok bids ->
+        Result.Ok {
+          asks;
+          bids;
+          checksum = json |> member "checksum" |> to_int |> Int32.of_int;
+          symbol;
+          timestamp = json |> member "timestamp" |> to_string_option;
+        }
+      | Result.Error e -> Result.Error e)
+    | Result.Error e -> Result.Error e
   with 
-  | Yojson.Safe.Util.Type_error (msg, _) -> Error ("book_data: " ^ msg)
-  | exn -> Error ("book_data: " ^ Printexc.to_string exn)
+  | Yojson.Safe.Util.Type_error (msg, _) -> Result.Error ("book_data: " ^ msg)
+  | exn -> Result.Error ("book_data: " ^ Printexc.to_string exn)
 
-let book_data_of_yojson_exn json =
-  match book_data_of_yojson json with
-  | Ok v -> v
-  | Error msg -> failwith msg
+let book_data_of_yojson_exn ?(get_precisions = fun _ -> None) json : book_data Lwt.t =
+  match book_data_of_yojson ~get_precisions json with (* Call the non-Lwt version *)
+  | Result.Ok v -> Lwt.return v
+  | Result.Error msg ->
+    error_f ~section "Failed to parse book data: %s" msg >>= fun () ->
+    Lwt.fail (Failure msg)
 
 type book_response = {
   channel: string;
@@ -107,15 +138,15 @@ let log_top_of_book_update (symbol: string) (sorted_bids: price_level list) (sor
     
     if should_log then (
       Hashtbl.replace previous_top_of_book symbol current_top;
-      Lwt_log_core.info ~section
-        (Printf.sprintf "Top-of-book update for %s: bid=%.8f@%.8f ask=%.8f@%.8f spread=%.8f"
-           symbol top_bid.price top_bid.qty top_ask.price top_ask.qty (top_ask.price -. top_bid.price))
+      info_f ~section
+        "Top-of-book update for %s: bid=%.8f@%.8f ask=%.8f@%.8f spread=%.8f"
+           symbol top_bid.price top_bid.qty top_ask.price top_ask.qty (top_ask.price -. top_bid.price)
     ) else
       Lwt.return_unit
   | [], _ ->
-    Lwt_log_core.warning ~section (Printf.sprintf "No bids available for %s" symbol)
+    warning_f ~section "No bids available for %s" symbol
   | _, [] ->
-    Lwt_log_core.warning ~section (Printf.sprintf "No asks available for %s" symbol)
+    warning_f ~section "No asks available for %s" symbol
 
 (* Take first n elements from list *)
 let take n lst =
@@ -169,9 +200,9 @@ let calculate_crc32_checksum (symbol: string) (bids: price_level list) (asks: pr
   let combined_string = asks_string ^ bids_string in
   
   (* Debug logging for checksum calculation *)
-  Lwt_log_core.debug ~section 
-    (Printf.sprintf "CRC32 checksum calculation for %s: combined_string length = %d" 
-       symbol (String.length combined_string)) |> ignore;
+  debug_f ~section
+    "CRC32 checksum calculation for %s: combined_string length = %d"
+       symbol (String.length combined_string) |> ignore;
   
   (* Calculate proper CRC32 checksum *)
   let crc32_table = Array.make 256 0l in
@@ -238,20 +269,20 @@ let validate_checksum (book: book_data) : bool =
   let calculated_checksum = calculate_crc32_checksum book.symbol sorted_bids sorted_asks in
   let result = Int32.equal calculated_checksum book.checksum in
   if not result then
-    Lwt_log_core.warning ~section 
-      (Printf.sprintf "Checksum mismatch for %s: calculated=0x%lx, expected=0x%lx" 
-         book.symbol calculated_checksum book.checksum) |> ignore;
+    warning_f ~section
+      "Checksum mismatch for %s: calculated=0x%lx, expected=0x%lx"
+         book.symbol calculated_checksum book.checksum |> ignore;
   result
 
 (* Process book snapshot *)
 let process_book_snapshot (book_data: book_data) : unit Lwt.t =
-  Lwt_log_core.debug ~section 
-    (Printf.sprintf "Processing book snapshot for %s" book_data.symbol) >>= fun () ->
+  debug_f ~section
+    "Processing book snapshot for %s" book_data.symbol >>= fun () ->
   
   (* Validate checksum *)
   if not (validate_checksum book_data) then (
-    Lwt_log_core.error ~section 
-      (Printf.sprintf "Checksum validation failed for %s snapshot" book_data.symbol) >>= fun () ->
+    error_f ~section
+      "Checksum validation failed for %s snapshot" book_data.symbol >>= fun () ->
     Lwt.return_unit
   ) else (
     let sorted_bids = sort_bids book_data.bids in
@@ -267,21 +298,21 @@ let process_book_snapshot (book_data: book_data) : unit Lwt.t =
     
     Hashtbl.replace orderbooks book_data.symbol orderbook_record;
     
-    Lwt_log_core.info ~section 
-      (Printf.sprintf "Book snapshot processed for %s: %d bids, %d asks" 
-         book_data.symbol (List.length sorted_bids) (List.length sorted_asks)) >>= fun () ->
+    info_f ~section
+      "Book snapshot processed for %s: %d bids, %d asks"
+         book_data.symbol (List.length sorted_bids) (List.length sorted_asks) >>= fun () ->
     log_top_of_book_update book_data.symbol sorted_bids sorted_asks
   )
 
 (* Process book update *)
 let process_book_update (book_data: book_data) : unit Lwt.t =
-  Lwt_log_core.debug ~section 
-    (Printf.sprintf "Processing book update for %s" book_data.symbol) >>= fun () ->
+  debug_f ~section
+    "Processing book update for %s" book_data.symbol >>= fun () ->
   
   match Hashtbl.find_opt orderbooks book_data.symbol with
   | None ->
-    Lwt_log_core.warning ~section 
-      (Printf.sprintf "Received update for unknown symbol %s" book_data.symbol) >>= fun () ->
+    warning_f ~section
+      "Received update for unknown symbol %s" book_data.symbol >>= fun () ->
     Lwt.return_unit
   | Some current_book ->
     (* Update bids and asks *)
@@ -301,8 +332,8 @@ let process_book_update (book_data: book_data) : unit Lwt.t =
     
     (* Validate checksum *)
     if not (validate_checksum updated_book_data) then (
-      Lwt_log_core.error ~section 
-        (Printf.sprintf "Checksum validation failed for %s update" book_data.symbol) >>= fun () ->
+      error_f ~section
+        "Checksum validation failed for %s update" book_data.symbol >>= fun () ->
       Lwt.return_unit
     ) else (
       let updated_orderbook_record : orderbook = {
@@ -315,9 +346,9 @@ let process_book_update (book_data: book_data) : unit Lwt.t =
       
       Hashtbl.replace orderbooks book_data.symbol updated_orderbook_record;
       
-      Lwt_log_core.debug ~section 
-        (Printf.sprintf "Book update processed for %s: %d bids, %d asks" 
-           book_data.symbol (List.length sorted_bids) (List.length sorted_asks)) >>= fun () ->
+      debug_f ~section
+        "Book update processed for %s: %d bids, %d asks"
+           book_data.symbol (List.length sorted_bids) (List.length sorted_asks) >>= fun () ->
       log_top_of_book_update book_data.symbol sorted_bids sorted_asks
     )
 
@@ -325,7 +356,7 @@ let process_book_update (book_data: book_data) : unit Lwt.t =
 let handle_book_message ?(get_precisions = fun _ -> None) (json: Json.t) : unit Lwt.t =
   (* Parse the book response with custom parsing for data *)
   let open Yojson.Safe.Util in
-  try
+  Lwt.catch (fun () ->
     let channel = json |> member "channel" |> to_string in
     let msg_type = json |> member "type" |> to_string in
     let data_list = json |> member "data" |> to_list in
@@ -333,27 +364,27 @@ let handle_book_message ?(get_precisions = fun _ -> None) (json: Json.t) : unit 
     if channel = "book" then
       Lwt_list.iter_s (fun data_json ->
         match book_data_of_yojson ~get_precisions data_json with
-        | Ok book_data ->
+        | Result.Ok book_data -> 
           (match msg_type with
            | "snapshot" -> process_book_snapshot book_data
            | "update" -> process_book_update book_data
            | _ ->
-             Lwt_log_core.warning ~section 
-               (Printf.sprintf "Unknown book message type: %s" msg_type) >>= fun () ->
+             warning_f ~section 
+               "Unknown book message type: %s" msg_type >>= fun () ->
              Lwt.return_unit)
-        | Error err ->
-          Lwt_log_core.error ~section 
-            (Printf.sprintf "Failed to parse book data: %s" err) >>= fun () ->
+        | Result.Error err -> 
+          error_f ~section 
+            "Failed to parse book data: %s" err >>= fun () ->
           Lwt.return_unit
       ) data_list
     else
-      Lwt_log_core.warning ~section "Received non-book message in book handler" >>= fun () ->
+      warning_f ~section "Received non-book message in book handler" >>= fun () ->
       Lwt.return_unit
-  with
-  | exn ->
-    Lwt_log_core.error ~section 
-      (Printf.sprintf "Failed to parse book message: %s" (Printexc.to_string exn)) >>= fun () ->
+  ) (fun exn ->
+    error_f ~section 
+      "Failed to parse book message: %s" (Printexc.to_string exn) >>= fun () ->
     Lwt.return_unit
+  )
 
 (* Generate Book events from orderbook *)
 let generate_book_events (symbol: string) : Core.market_event list =
@@ -430,13 +461,13 @@ let get_orderbook_stats (symbol: string) : (int * int) option =
 let debug_print_orderbook (symbol: string) : unit Lwt.t =
   match Hashtbl.find_opt orderbooks symbol with
   | None ->
-    Lwt_log_core.debug ~section 
-      (Printf.sprintf "No orderbook data for %s" symbol)
+    debug_f ~section 
+      "No orderbook data for %s" symbol
   | Some book ->
     let top_bids = take (min 5 (List.length book.bids)) book.bids in
     let top_asks = take (min 5 (List.length book.asks)) book.asks in
     let bid_str = String.concat ", " (List.map (fun l -> Printf.sprintf "%.8f@%.8f" l.price l.qty) top_bids) in
     let ask_str = String.concat ", " (List.map (fun l -> Printf.sprintf "%.8f@%.8f" l.price l.qty) top_asks) in
-    Lwt_log_core.debug ~section 
-      (Printf.sprintf "Orderbook for %s - Bids: [%s] Asks: [%s] Checksum: %ld" 
-         symbol bid_str ask_str book.checksum)
+    debug_f ~section 
+      "Orderbook for %s - Bids: [%s] Asks: [%s] Checksum: %ld" 
+         symbol bid_str ask_str book.checksum

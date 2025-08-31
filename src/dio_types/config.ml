@@ -1,6 +1,12 @@
 (* src/types/config.ml *)
 open Primitives
 
+
+let section = Lwt_log_core.Section.make "dio_types.config" 
+
+(* Helper to format error messages consistently *)
+let format_error_message fmt = Printf.sprintf fmt
+
 type strategy_type = 
   | Grid
   | Orderbook
@@ -17,7 +23,9 @@ let strategy_type_of_yojson = function
 let strategy_type_of_yojson_exn json =
   match strategy_type_of_yojson json with
   | Ok v -> v
-  | Error msg -> failwith msg
+  | Error msg -> 
+    Lwt_main.run (Lwt_log_core.error_f ~section "Failed to parse strategy_type: %s" msg); (* Log the error *)
+    failwith msg 
 
 type asset_cfg = {
   symbol        : symbol;
@@ -50,17 +58,17 @@ let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
   let errors = ref [] in
   
   if not (Qty.is_positive asset.qty) then
-    errors := (Printf.sprintf "Asset '%s': qty must be positive." asset.symbol) :: !errors;
+    errors := (format_error_message "Asset '%s': qty must be positive." asset.symbol) :: !errors;
   
   (match asset.strategy with
   | Grid ->
       if not (Fixed.is_positive asset.grid_interval) then
-        errors := (Printf.sprintf "Asset '%s' (Grid): grid_interval must be positive." asset.symbol) :: !errors;
+        errors := (format_error_message "Asset '%s' (Grid): grid_interval must be positive." asset.symbol) :: !errors;
       
       if not (Fixed.is_positive asset.sell_mult) then
-        errors := (Printf.sprintf "Asset '%s' (Grid): sell_mult must be positive." asset.symbol) :: !errors
+        errors := (format_error_message "Asset '%s' (Grid): sell_mult must be positive." asset.symbol) :: !errors
       else if Fixed.(<=) (Fixed.one asset.sell_mult.scale) asset.sell_mult then
-        errors := (Printf.sprintf "Asset '%s' (Grid): sell_mult should typically be less than 1.0 for profit-taking." asset.symbol) :: !errors
+        errors := (format_error_message "Asset '%s' (Grid): sell_mult should typically be less than 1.0 for profit-taking." asset.symbol) :: !errors
   | Orderbook -> ()
   );
 
