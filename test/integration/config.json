@@ -1,0 +1,13 @@
+{
+    "assets": [
+      {
+        "symbol": "BTC/USD",
+        "qty": "0.00100000",
+        "grid_interval": "100.00000000",
+        "sell_mult": "0.990",
+        "strategy": "Grid"
+      }
+    ],
+    "debounce_ms": 100,
+    "queues_cap": 1024
+  }
