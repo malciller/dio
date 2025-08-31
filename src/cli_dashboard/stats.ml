@@ -1,5 +1,6 @@
 open Dio_types
-include State (* This includes all the state functions *)
+
+let state = ref State.initial
 
 let start_ts = Unix.gettimeofday ()
 
@@ -15,6 +16,8 @@ let add_dashboard_log (message : string) : unit =
     else
       updated_logs
 (* ─────────────────────────────────────────────────────────────── *)
+
+let get_price symbol = State.get_price symbol !state
 
 let get_orders_for_symbol symbol =
   let orders = Kraken.Kraken_incoming_data.get_all_open_orders () in

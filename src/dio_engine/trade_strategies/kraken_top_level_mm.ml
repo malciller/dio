@@ -102,12 +102,10 @@ module State = struct
               (match buy_order, sell_order with
               | Some buy_cmd, Some sell_cmd ->
                   Lwt_log_core.info ~section (Printf.sprintf "Successfully created both orders for %s, pushing to buffer" symbol) >>= fun () ->
-                  if not (Ringbuffer.push cmd_buffer buy_cmd) then
-                    Lwt_log_core.warning ~section "Command buffer full! Dropping buy command."
-                  else Lwt_log_core.info ~section (Printf.sprintf "Buy order pushed to buffer for %s" symbol) >>= fun () ->
-                  if not (Ringbuffer.push cmd_buffer sell_cmd) then
-                    Lwt_log_core.warning ~section "Command buffer full! Dropping sell command."
-                  else Lwt_log_core.info ~section (Printf.sprintf "Sell order pushed to buffer for %s" symbol)
+                  Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
+                  Lwt_log_core.info ~section (Printf.sprintf "Buy order pushed to buffer for %s" symbol) >>= fun () ->
+                  Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                  Lwt_log_core.info ~section (Printf.sprintf "Sell order pushed to buffer for %s" symbol)
               | Some _, None ->
                   Lwt_log_core.error ~section (Printf.sprintf "Failed to create sell order for %s" symbol) >>= fun () ->
                   Lwt.return_unit
@@ -168,10 +166,8 @@ module State = struct
                 new_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty);
                 ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
               } in
-              if not (Ringbuffer.push cmd_buffer amend_cmd) then
-                Lwt_log_core.warning ~section "Command buffer full! Dropping amend command."
-              else
-                Lwt_log_core.info ~section (Printf.sprintf "Amending order %s to new price %s" order.order_id (Primitives.Price.to_string top_bid_price))
+              Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+              Lwt_log_core.info ~section (Printf.sprintf "Amending order %s to new price %s" order.order_id (Primitives.Price.to_string top_bid_price))
             ) else (
               Lwt_log_core.debug ~section (Printf.sprintf "Order %s price %.8f matches top bid %.8f exactly, no amendment needed" 
                 order.order_id order_price_float top_bid_price_float) >>= fun () ->
@@ -358,43 +354,40 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   Lwt_log_core.info ~section
     (Printf.sprintf "Starting orderbook strategy for symbols: [%s]" (String.concat ", " orderbook_symbols)) >>= fun () ->
 
-  let rec loop () =
-    (* First process any executions *)
-    (match Ringbuffer.pop_opt exec_buffer with
-    | Some event ->
-        Lwt_log_core.debug ~section (Printf.sprintf "Processing execution event: %s" 
-          (match event with
-          | Core.Fill { symbol; _ } -> Printf.sprintf "Fill for %s" symbol
-          | Core.Ack { order_id; state; _ } -> Printf.sprintf "Ack for %s, state: %s" order_id 
-            (match state with Open -> "Open" | Filled -> "Filled" | Canceled -> "Canceled" | Rejected -> "Rejected")
-          | _ -> "Other")) >>= fun () ->
-        State.handle_execution runtime_cfg cmd_buffer orderbook_symbols event >>= fun () ->
-        loop ()
-    | None ->
-        (* Then process any ticks *)
-        match Ringbuffer.pop_opt tick_buffer with
-        | Some (tick : Event.tick) ->
-            Lwt_log_core.debug ~section (Printf.sprintf "Processing tick for %s: bid=%s ask=%s" 
-              tick.symbol 
-              (Primitives.Price.to_string tick.bid) 
-              (Primitives.Price.to_string tick.ask)) >>= fun () ->
-            State.update_price tick >>= fun () ->
-            if List.mem tick.symbol orderbook_symbols then (
-              Lwt_log_core.debug ~section (Printf.sprintf "%s is in orderbook symbols, checking and adjusting orders" tick.symbol) >>= fun () ->
-              (* Sync orders first to ensure we have the latest state *)
-              State.sync_open_orders () >>= fun () ->
-              State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
-              (* Also try to create initial orders if none exist *)
-              State.create_initial_order runtime_cfg tick.symbol cmd_buffer >>= fun () ->
-              loop ()
-            ) else (
-              Lwt_log_core.debug ~section (Printf.sprintf "%s is not in orderbook symbols [%s], skipping" 
-                tick.symbol (String.concat ", " orderbook_symbols)) >>= fun () ->
-              loop ()
-            )
-        | None -> 
-            Lwt_log_core.debug ~section "No ticks or executions to process, sleeping" >>= fun () ->
-            Lwt_unix.sleep 0.01 >>= loop (* Sleep briefly if buffer empty *)
-    )
+  (* --- Task 1: Process executions --- *)
+  let rec execution_loop () =
+    Ringbuffer.pop exec_buffer >>= fun event ->
+    Lwt_log_core.debug ~section (Printf.sprintf "Processing execution event: %s" 
+      (match event with
+      | Core.Fill { symbol; _ } -> Printf.sprintf "Fill for %s" symbol
+      | Core.Ack { order_id; state; _ } -> Printf.sprintf "Ack for %s, state: %s" order_id 
+        (match state with Open -> "Open" | Filled -> "Filled" | Canceled -> "Canceled" | Rejected -> "Rejected")
+      | _ -> "Other")) >>= fun () ->
+    State.handle_execution runtime_cfg cmd_buffer orderbook_symbols event >>= fun () ->
+    execution_loop ()
   in
-  loop () 
+
+  (* --- Task 2: Process ticks --- *)
+  let rec tick_loop () =
+    Ringbuffer.pop tick_buffer >>= fun (tick : Event.tick) ->
+    Lwt_log_core.debug ~section (Printf.sprintf "Processing tick for %s: bid=%s ask=%s" 
+      tick.symbol 
+      (Primitives.Price.to_string tick.bid) 
+      (Primitives.Price.to_string tick.ask)) >>= fun () ->
+    (if List.mem tick.symbol orderbook_symbols then (
+      Lwt_log_core.debug ~section (Printf.sprintf "%s is in orderbook symbols, checking and adjusting orders" tick.symbol) >>= fun () ->
+      (* Sync orders first to ensure we have the latest state *)
+      State.update_price tick >>= fun () ->
+      State.sync_open_orders () >>= fun () ->
+      State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
+      (* Also try to create initial orders if none exist *)
+      State.create_initial_order runtime_cfg tick.symbol cmd_buffer
+    ) else (
+      Lwt_log_core.debug ~section (Printf.sprintf "%s is not in orderbook symbols [%s], skipping" 
+        tick.symbol (String.concat ", " orderbook_symbols))
+    )) >>= fun () ->
+    tick_loop ()
+  in
+
+  (* Run both loops in parallel *)
+  Lwt.join [execution_loop (); tick_loop ()] 

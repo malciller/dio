@@ -30,8 +30,13 @@ module Fixed : sig
   (* Equality *)
   val equal : t -> t -> bool
 
-  (* Zero value *)
+  (* Comparison *)
+  val (<=) : t -> t -> bool
+  val is_positive : t -> bool
+
+  (* Zero and One *)
   val zero : int -> t
+  val one : int -> t
 end = struct             
 
   type t = { raw : int64; scale : int }
@@ -97,8 +102,17 @@ end = struct
   let equal p1 p2 =
     p1.scale = p2.scale && p1.raw = p2.raw
 
-  (* Zero value *)
+  (* Comparison *)
+  let (<=) p1 p2 =
+    if p1.scale <> p2.scale then
+      invalid_arg "Fixed.(<=): scales must match";
+    p1.raw <= p2.raw
+  
+  let is_positive { raw; _ } = raw > 0L
+
+  (* Zero and One *)
   let zero scale = { raw = 0L; scale }
+  let one scale = { raw = pow10 scale; scale }
 end
 
 (* Aliases for clarity – they inherit to_yojson/of_yojson *)

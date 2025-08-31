@@ -1,5 +1,5 @@
 (test
  (name test_ringbuffer)
- (libraries dio.dio_types alcotest)
+ (libraries dio.dio_types alcotest alcotest-lwt lwt lwt.unix)
  (preprocess (pps lwt_ppx))
  (package dio))

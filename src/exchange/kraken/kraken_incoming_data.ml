@@ -49,6 +49,30 @@ let safe_string json key default = JsonUtil.(member key json |> to_string_option
 let safe_float json key default = JsonUtil.(member key json |> to_float_option |> Option.value ~default)
 let debug_log msg = Lwt_log_core.debug ~section msg
 
+let state : State.t ref = ref State.initial
+
+let redact_token_in_json_string (json_str : string) : string =
+  try
+    let json = Yojson.Safe.from_string json_str in
+    match json with
+    | `Assoc assoc ->
+        let redactor (key, value) =
+          if key = "params" then
+            match value with
+            | `Assoc params_assoc ->
+                let redacted_params = List.map (fun (k, v) ->
+                  if k = "token" then (k, `String "[REDACTED]") else (k, v)
+                ) params_assoc in
+                (key, `Assoc redacted_params)
+            | _ -> (key, value)
+          else
+            (key, value)
+        in
+        `Assoc (List.map redactor assoc) |> Yojson.Safe.to_string
+    | _ -> json_str (* Not the expected structure, return original *)
+  with
+  | _ -> json_str (* Parsing failed, return original *)
+
 (* Order Side Parsing *)
 let parse_order_side = function
   | "buy" -> Some Core.Buy
@@ -271,7 +295,7 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                             else
                               last_price
                           in
-                          State.update_price symbol current_price;
+                          state := State.update_price symbol current_price !state;
                           let event_tick : Event.tick = {
                             src = "kraken";
                             symbol;
@@ -449,7 +473,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
         match Hashtbl.find_opt pending_orders order_id with
         | Some po ->
             Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Calling dec_pending for %s (canceled/pending)" po.order_symbol) >>= fun () -> 
-            dec_pending po.order_symbol;
+            state := dec_pending po.order_symbol !state;
             Hashtbl.remove pending_orders order_id;
             Lwt_log_core.debug ~section (format_order_log po ("CANCELED (from Pending State)" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
             Lwt.return true
@@ -473,7 +497,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
         match Hashtbl.find_opt pending_orders order_id with
         | Some po ->
             Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Calling dec_pending for %s (filled/expired/pending)" po.order_symbol) >>= fun () -> (* Added Log *)
-            dec_pending po.order_symbol;
+            state := dec_pending po.order_symbol !state;
             Hashtbl.remove pending_orders order_id;
             Lwt_log_core.debug ~section (format_order_log po ((String.uppercase_ascii item_exec_type) ^ " (from Pending State)" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
             Lwt.return true
@@ -536,7 +560,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
             | "pending_new" ->
                 Hashtbl.replace pending_orders order_id order;
                 Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order is pending_new: Calling inc_pending for %s (%s)" order.order_symbol context_msg_type) >>= fun () ->
-                inc_pending order.order_symbol; (* Increment pending count *)
+                state := inc_pending order.order_symbol !state; (* Increment pending count *)
                 Lwt.return (format_order_log order ("PENDING" ^ suffix))
             | "new" ->
                 let was_pending_internally = Hashtbl.mem pending_orders order_id in
@@ -545,17 +569,17 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
 
                 if was_pending_internally then (
                   Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order moved from internal pending to new: Calling dec_pending for %s (%s)" order.order_symbol context_msg_type) |> Lwt.ignore_result;
-                  dec_pending order.order_symbol (* Was counted as 'pending_new', now it's 'new', so adjust. *)
+                  state := dec_pending order.order_symbol !state (* Was counted as 'pending_new', now it's 'new', so adjust. *)
                 );
 
                 (* Now, count it as an active/open order for pacdash visibility *)
                 Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order is new/open on exchange: Calling inc_pending for %s (%s)" order.order_symbol context_msg_type) |> Lwt.ignore_result;
-                inc_pending order.order_symbol;
+                state := inc_pending order.order_symbol !state;
 
                 Lwt.return (format_order_log order ("NEW" ^ suffix))
             | "trade" ->
                 Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Calling inc_trades for %s" order.order_symbol) >>= fun () -> (* Added Log *)
-                inc_trades order.order_symbol; (* Increment trade count *)
+                state := inc_trades order.order_symbol !state; (* Increment trade count *)
                 let last_qty_val = Option.value last_qty_opt ~default:0.0 in
                 let last_price_val = Option.value last_price_opt ~default:0.0 in
                 if status = Core.Open then (* If order is still open (e.g. partially_filled) *)
@@ -572,7 +596,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
                   let was_pending = Hashtbl.mem pending_orders order_id in
                   Hashtbl.remove all_open_orders order_id;
                   Hashtbl.remove pending_orders order_id;
-                  if was_pending then dec_pending order.order_symbol; (* Decrement pending count *)
+                  if was_pending then state := dec_pending order.order_symbol !state; (* Decrement pending count *)
                   Lwt.return (Printf.sprintf "[ORDER FILL%s] %f %s at %.2f (Order now terminal)" suffix last_qty_val order.order_symbol last_price_val)
             | "amended" -> Hashtbl.replace all_open_orders order_id order; Lwt.return (format_order_log order ("AMENDED" ^ suffix))
             | "restated" | "status" -> Hashtbl.replace all_open_orders order_id order; Lwt.return (format_order_log order ((String.uppercase_ascii item_exec_type) ^ suffix))
@@ -596,7 +620,8 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
               let error_opt = JsonUtil.(member "error" json |> to_string_option) in
               let req_id_str = Option.map string_of_int req_id_opt |> Option.value ~default:"N/A" in
               if not success then
-                let err_msg = Option.value error_opt ~default:("unknown error, payload: " ^ frame.content) in
+                let redacted_payload = redact_token_in_json_string frame.content in
+                let err_msg = Option.value error_opt ~default:("unknown error, payload: " ^ redacted_payload) in
                 Lwt_log_core.error ~section (Printf.sprintf "Auth subscription failed (req_id=%s): %s" req_id_str err_msg)
               else
                 let channel_subscribed = JsonUtil.(member "result" json |> member "channel" |> to_string_option |> Option.value ~default:"N/A") in
@@ -781,7 +806,8 @@ let start_executions (cfg : Config.engine_config) ~on_execution =
           Lwt_log_core.info ~section "Successfully connected to auth endpoint." >>= fun () ->
           let subscribe_msg = make_subscribe_message ~req_id:2 cfg `Executions in
           Lwt_log_core.info ~section "Subscribing to executions feed" >>= fun () ->
-          Lwt_log_core.debug ~section (Printf.sprintf "Sending executions subscribe message: %s" subscribe_msg.content) >>= fun () ->
+          let redacted_content = redact_token_in_json_string subscribe_msg.content in
+          Lwt_log_core.debug ~section (Printf.sprintf "Sending executions subscribe message: %s" redacted_content) >>= fun () ->
           Websocket_lwt_unix.write conn subscribe_msg >>= fun () ->
           Lwt_log_core.info ~section "Starting auth message loop..." >>= fun () ->
           loop conn

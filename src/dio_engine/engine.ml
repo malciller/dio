@@ -6,20 +6,13 @@ module Kraken = Kraken
 
 
 
-(* Helper: Push a single tick onto the buffer, logging if full *)
-let push_tick_to_buffer tick_buffer tick = 
-  if not (Ringbuffer.push tick_buffer tick) then
-    Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.feed") "Tick buffer full! Dropping tick."
-  else
-    Lwt.return_unit
+(* Helper: Asynchronously push a single tick onto the buffer *)
+let push_tick_to_buffer tick_buffer tick =
+  Ringbuffer.push tick_buffer tick
 
-(* Helper: Push a list of execution events onto the buffer, logging if full *) 
+(* Helper: Asynchronously push a list of execution events onto the buffer *)
 let push_execs_to_buffer exec_buffer events =
-  List.iter (fun event ->
-    if not (Ringbuffer.push exec_buffer event) then
-      Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.feed") "Execution buffer full! Dropping event." |> ignore
-  ) events;
-  Lwt.return_unit
+  Lwt_list.iter_s (Ringbuffer.push exec_buffer) events
 
 (* Adapter function that starts both feed streams using ring buffers *)
 let start_feed (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config) (tick_buffer: Event.tick Ringbuffer.t) (exec_buffer: Core.market_event Ringbuffer.t) =
@@ -30,11 +23,11 @@ let start_feed (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config
 
 (* Main run function that orchestrates all components *)
 let run ~grid_strategy ~orderbook_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config) =
-  (* Create the ring buffers *)
-  (* TODO: Potentially use runtime_cfg.queues_cap here? For now, keep fixed size. *)
-  let tick_buffer = Ringbuffer.create 1024 in
-  let exec_buffer = Ringbuffer.create 1024 in 
-  let cmd_buffer  = Ringbuffer.create 1024 in
+  (* Create the ring buffers with configurable capacity *)
+  let buffer_cap = runtime_cfg.queues_cap in
+  let tick_buffer = Ringbuffer.create buffer_cap in
+  let exec_buffer = Ringbuffer.create buffer_cap in
+  let cmd_buffer  = Ringbuffer.create buffer_cap in
 
   (* Start all components via the supervisor *)
   Supervisor.start 

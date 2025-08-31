@@ -43,3 +43,61 @@ type engine_config = {
   kraken_api_secret : string;
 }
 
+(* --- Validation --- *)
+
+let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
+  let open Primitives in
+  let errors = ref [] in
+  
+  if not (Qty.is_positive asset.qty) then
+    errors := (Printf.sprintf "Asset '%s': qty must be positive." asset.symbol) :: !errors;
+  
+  (match asset.strategy with
+  | Grid ->
+      if not (Fixed.is_positive asset.grid_interval) then
+        errors := (Printf.sprintf "Asset '%s' (Grid): grid_interval must be positive." asset.symbol) :: !errors;
+      
+      if not (Fixed.is_positive asset.sell_mult) then
+        errors := (Printf.sprintf "Asset '%s' (Grid): sell_mult must be positive." asset.symbol) :: !errors
+      else if Fixed.(<=) (Fixed.one asset.sell_mult.scale) asset.sell_mult then
+        errors := (Printf.sprintf "Asset '%s' (Grid): sell_mult should typically be less than 1.0 for profit-taking." asset.symbol) :: !errors
+  | Orderbook -> ()
+  );
+
+  if !errors = [] then
+    Ok ()
+  else
+    Error (String.concat "\n" (List.rev !errors))
+
+let validate_runtime_cfg (cfg : runtime_cfg) : (unit, string) result =
+  let errors = ref [] in
+  
+  if cfg.assets = [] then
+    errors := "Config must contain at least one asset." :: !errors;
+  
+  if cfg.debounce_ms < 0 then
+    errors := "debounce_ms cannot be negative." :: !errors;
+    
+  if cfg.queues_cap <= 0 then
+    errors := "queues_cap must be positive." :: !errors;
+
+  (* Check for duplicate symbols *)
+  let symbols = List.map (fun a -> a.symbol) cfg.assets in
+  let unique_symbols = List.sort_uniq String.compare symbols in
+  if List.length symbols <> List.length unique_symbols then
+    errors := "Duplicate symbols found in assets configuration." :: !errors;
+
+  (* Validate each asset *)
+  let asset_errors = List.filter_map (fun asset ->
+    match validate_asset_cfg asset with
+    | Ok () -> None
+    | Error msg -> Some msg
+  ) cfg.assets in
+
+  let all_errors = !errors @ asset_errors in
+
+  if all_errors = [] then
+    Ok ()
+  else
+    Error (String.concat "\n" (List.rev all_errors))
+

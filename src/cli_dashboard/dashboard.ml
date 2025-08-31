@@ -3,7 +3,7 @@ open Notty
 open Notty.A
 open Dio_types
 module Stats = Stats (* Use Dio.Stats *)
-module M = Stats.SMap
+module M = State.SMap
 
 (* ─── Color Palette & Styles ───────────────────────────────────────── *)
 let style_primary_text    = A.fg (A.rgb ~r:(180*5/255) ~g:(180*5/255) ~b:(180*5/255)) (* Approx r:3 g:3 b:3 *)
@@ -308,8 +308,8 @@ let render state =
     I.vcat [line0; line1; line2; line3; line4; line5; line6]
   in
 
-  let asset_rows = List.map row_of_asset 
-    (M.fold (fun asset _ acc -> asset :: acc) !Stats.pending_orders [] |> List.sort compare_assets)
+  let asset_rows = List.map row_of_asset
+    (M.fold (fun asset _ acc -> asset :: acc) (!Stats.state).pending_orders [] |> List.sort compare_assets)
   in
   let diogrid_label_text = " DioGrid " in
   let diogrid_label_style = style_logs_accent_text ++ A.st A.bold in 

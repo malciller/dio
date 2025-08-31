@@ -210,8 +210,7 @@ let handle_router_command (cfg : Config.engine_config) cmd exec_buffer : unit Lw
   Lwt_log_core.debug ~section (Printf.sprintf "Handling router command via REST: %s" (Core.order_cmd_to_yojson cmd |> Yojson.Safe.to_string)) >>= fun () ->
   
   let on_event event = 
-    let _ = Ringbuffer.push exec_buffer event in
-    Lwt.return_unit
+    Ringbuffer.push exec_buffer event
   in
   
   send_order_command cfg cmd ~on_event

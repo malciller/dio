@@ -156,35 +156,29 @@ module State = struct
                 
                 (* Create and push sell order first with adjusted quantity *)
                 let sell_cmd = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
-                (if not (Ringbuffer.push cmd_buffer sell_cmd) then
-                  Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy") 
-                    "Command buffer full! Dropping sell command."
-                else
-                  match sell_cmd with
-                  | Add order ->
-                      Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                        (Printf.sprintf "Successfully pushed sell order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
-                          order.client_id
-                          order.symbol
-                          (Primitives.Price.to_string order.price)
-                          (Primitives.Qty.to_string order.qty))
-                  | _ -> Lwt.return_unit) >>= fun () ->
+                Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                (match sell_cmd with
+                | Add order ->
+                    Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+                      (Printf.sprintf "Successfully pushed sell order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
+                        order.client_id
+                        order.symbol
+                        (Primitives.Price.to_string order.price)
+                        (Primitives.Qty.to_string order.qty))
+                | _ -> Lwt.return_unit) >>= fun () ->
 
                 (* Create and push buy order second with base quantity *)
                 let buy_cmd = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
-                (if not (Ringbuffer.push cmd_buffer buy_cmd) then
-                  Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy") 
-                    "Command buffer full! Dropping buy command."
-                else
-                  match buy_cmd with
-                  | Add order ->
-                      Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                        (Printf.sprintf "Successfully pushed buy order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
-                          order.client_id
-                          order.symbol
-                          (Primitives.Price.to_string order.price)
-                          (Primitives.Qty.to_string order.qty))
-                  | _ -> Lwt.return_unit) >>= fun () ->
+                Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
+                (match buy_cmd with
+                | Add order ->
+                    Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+                      (Printf.sprintf "Successfully pushed buy order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
+                        order.client_id
+                        order.symbol
+                        (Primitives.Price.to_string order.price)
+                        (Primitives.Qty.to_string order.qty))
+                | _ -> Lwt.return_unit) >>= fun () ->
                 
                 Lwt.return_unit
             | None ->
@@ -292,12 +286,12 @@ module State = struct
                    price_diff_pct) >>= fun () ->
                
                (* Push the amend command *)
-               let pushed = Ringbuffer.push cmd_buffer amend_cmd in
+               Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
                Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
                  (Printf.sprintf "Amend command %s pushed to buffer: %b" 
-                   order.order_id pushed) >>= fun () ->
+                   order.order_id true) >>= fun () ->
                
-               if not pushed then
+               if not true then
                  Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.strategy")
                    "Command buffer full! Dropping amend command."
                else
@@ -601,14 +595,10 @@ module State = struct
                           ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
                         } in
 
-                        if Ringbuffer.push cmd_buffer amend_cmd then
-                          Lwt_log_core.info ~section
-                            (Printf.sprintf "Grid Verify [%s]: FAILED & AMENDING."
-                              symbol)
-                        else
-                          Lwt_log_core.warning ~section
-                            (Printf.sprintf "Grid Verify [%s]: FAILED & AMEND FAILED (Buffer Full)."
-                              symbol)
+                        Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+                        Lwt_log_core.info ~section
+                          (Printf.sprintf "Grid Verify [%s]: FAILED & AMENDING."
+                            symbol)
         else
           Lwt_log_core.info ~section
             (Printf.sprintf "Grid Verify [%s]: Skipping, not enough buy/sell orders to form a grid (Buys: %d, Sells: %d)."
@@ -660,63 +650,59 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
     (Printf.sprintf "Starting grid strategy for symbols: [%s]" (String.concat ", " grid_symbols)) >>= fun () ->
 
-  let rec loop () =
-    (* First process any executions *)
-    begin match Ringbuffer.pop_opt exec_buffer with
-    | Some event -> 
-        State.handle_execution runtime_cfg cmd_buffer grid_symbols event >>= fun () ->
-        loop () (* Continue processing executions *)
-    | None ->
-        (* Then process any ticks *)
-        (match Ringbuffer.peek_opt tick_buffer with
-        | Some (tick : Event.tick) ->
-            ignore (Ringbuffer.pop_opt tick_buffer); (* ALWAYS pop the peeked tick *)
-            (* Only process ticks for grid strategy symbols *)
-            if List.mem tick.symbol grid_symbols then (
-              let should_update =
-                match State.get_price tick.symbol with
-                | Some prev_tick ->
-                    not (prev_tick.bid = tick.bid && prev_tick.ask = tick.ask)
-                | None -> true
-              in
-              if should_update then (
-                (* Only update state if price changed *)
-                Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                  (Printf.sprintf "Processing price update for %s" tick.symbol) >>= fun () ->
-                State.update_price tick >>= fun () ->
-                State.sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
-                (* First check and adjust existing orders *)
-                Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                  (Printf.sprintf "Checking existing orders for %s" tick.symbol) >>= fun () ->
-                State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
-                (* Then create new orders only if we don't have any for this symbol *)
-                (let has_orders = State.has_buy_order tick.symbol in
-                Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                  (Printf.sprintf "%s has buy order: %b" tick.symbol has_orders) >>= fun () ->
-                if not has_orders then
-                  State.create_initial_orders runtime_cfg tick.symbol cmd_buffer
-                else
-                  Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                    (Printf.sprintf "Skipping order creation for %s - already has buy order" tick.symbol) >>= fun () ->
-                  Lwt.return_unit) >>= fun () ->
-                (* Verify grid spacing after potential order adjustments or creations *)
-                let current_price_for_verify = Float.of_string (Primitives.Price.to_string tick.current_price) in
-                State.verify_grid_spacing runtime_cfg tick.symbol cmd_buffer current_price_for_verify >>= fun () ->
-                loop ()
-              ) else (
-                (* Price unchanged, state not updated, just loop *)
-                Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                  (Printf.sprintf "Skipping update for %s - price unchanged" tick.symbol) >>= fun () ->
-                loop ()
-              )
-            ) else (
-              (* Skip processing non-grid strategy symbols *)
-              Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
-                (Printf.sprintf "Skipping tick for %s - not a grid strategy symbol" tick.symbol) >>= fun () ->
-              loop ()
-            )
-        | None -> Lwt_unix.sleep 0.01 >>= loop (* Sleep briefly if buffer empty *)
-        )
-    end (* End of outer begin for exec/tick processing *)
+  (* --- Task 1: Process executions --- *)
+  let rec execution_loop () =
+    Ringbuffer.pop exec_buffer >>= fun event ->
+    State.handle_execution runtime_cfg cmd_buffer grid_symbols event >>= fun () ->
+    execution_loop ()
   in
-  loop ()
+
+  (* --- Task 2: Process ticks --- *)
+  let rec tick_loop () =
+    Ringbuffer.pop tick_buffer >>= fun (tick : Event.tick) ->
+    (* Only process ticks for grid strategy symbols *)
+    (if List.mem tick.symbol grid_symbols then (
+      let should_update =
+        match State.get_price tick.symbol with
+        | Some prev_tick ->
+            not (prev_tick.bid = tick.bid && prev_tick.ask = tick.ask)
+        | None -> true
+      in
+      if should_update then (
+        (* Only update state if price changed *)
+        Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.strategy")
+          (Printf.sprintf "Processing price update for %s" tick.symbol) >>= fun () ->
+        State.update_price tick >>= fun () ->
+        State.sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
+        (* First check and adjust existing orders *)
+        Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+          (Printf.sprintf "Checking existing orders for %s" tick.symbol) >>= fun () ->
+        State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
+        (* Then create new orders only if we don't have any for this symbol *)
+        (let has_orders = State.has_buy_order tick.symbol in
+        Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+          (Printf.sprintf "%s has buy order: %b" tick.symbol has_orders) >>= fun () ->
+        if not has_orders then
+          State.create_initial_orders runtime_cfg tick.symbol cmd_buffer
+        else
+          Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+            (Printf.sprintf "Skipping order creation for %s - already has buy order" tick.symbol) >>= fun () ->
+          Lwt.return_unit) >>= fun () ->
+        (* Verify grid spacing after potential order adjustments or creations *)
+        let current_price_for_verify = Float.of_string (Primitives.Price.to_string tick.current_price) in
+        State.verify_grid_spacing runtime_cfg tick.symbol cmd_buffer current_price_for_verify
+      ) else (
+        (* Price unchanged, state not updated, just loop *)
+        Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+          (Printf.sprintf "Skipping update for %s - price unchanged" tick.symbol)
+      )
+    ) else (
+      (* Skip processing non-grid strategy symbols *)
+      Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "engine.strategy")
+        (Printf.sprintf "Skipping tick for %s - not a grid strategy symbol" tick.symbol)
+    )) >>= fun () ->
+    tick_loop () (* Continue to next tick *)
+  in
+
+  (* Run both loops in parallel *)
+  Lwt.join [execution_loop (); tick_loop ()]

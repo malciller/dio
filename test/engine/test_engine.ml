@@ -4,7 +4,6 @@
 
 open Dio_types
 
-
 let test_buffer_push_pop _switch () =
   let buffer = Ringbuffer.create 4 in
 
@@ -26,17 +25,16 @@ let test_buffer_push_pop _switch () =
       high = 0.0; last_price = 0.0; low = 0.0; volume = 0.0; vwap = 0.0 }
   in
 
-  Alcotest.(check bool) "push1" true (Ringbuffer.push buffer tick1);
-  Alcotest.(check bool) "push2" true (Ringbuffer.push buffer tick2);
-  Alcotest.(check int ) "len=2" 2    (Ringbuffer.length buffer);
+  let%lwt () = Ringbuffer.push buffer tick1 in
+  let%lwt () = Ringbuffer.push buffer tick2 in
+  
+  Alcotest.(check int) "len=2" 2 (Ringbuffer.length buffer);
 
-  (match Ringbuffer.pop_opt buffer with
-   | Some t -> Alcotest.(check string) "pop1" "BTC/USD" t.symbol
-   | None   -> Alcotest.fail "expected tick1");
+  let%lwt t1 = Ringbuffer.pop buffer in
+  Alcotest.(check string) "pop1" "BTC/USD" t1.symbol;
 
-  (match Ringbuffer.pop_opt buffer with
-   | Some t -> Alcotest.(check string) "pop2" "ETH/USD" t.symbol
-   | None   -> Alcotest.fail "expected tick2");
+  let%lwt t2 = Ringbuffer.pop buffer in
+  Alcotest.(check string) "pop2" "ETH/USD" t2.symbol;
 
   Alcotest.(check bool) "empty" true (Ringbuffer.is_empty buffer);
   Lwt.return_unit

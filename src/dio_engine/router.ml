@@ -86,62 +86,65 @@ let start cfg ~cmd_buffer ~exec_buffer =
     (* Periodically clean up expired cache entries *)
     OrderCache.cleanup ();
 
-    match Ringbuffer.pop_opt cmd_buffer with
-    | Some cmd ->
-        (* Check for duplicates *)
-        if OrderCache.is_duplicate cmd then (
-          Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.router")
-            (Printf.sprintf "Dropping duplicate order: %s"
-              (match cmd with
-              | Add { client_id; _ } -> client_id
-              | Amend { order_id; _ } -> order_id
-              | Cancel { order_id; _ } -> order_id)) >>= fun () ->
-          cmd_loop ()
-        ) else (
-          (* Enhanced logging for commands *)
-          let cmd_str = match cmd with
-          | Add { dst; symbol; side; price; qty; tags; _ } ->
-              Printf.sprintf "ADD order: %s %s %s @ %s qty=%s tags=[%s]"
-                (match side with Buy -> "BUY" | Sell -> "SELL")
-                symbol
-                dst
-                (Primitives.Price.to_string price)
-                (Primitives.Qty.to_string qty)
-                (String.concat ";" (List.map (function 
-                  | `Grid -> "grid" 
-                  | `Manual -> "manual" 
-                  | `Rebalance -> "rebalance") tags))
-          | Amend { dst; order_id; new_price; new_qty; _ } ->
-              Printf.sprintf "AMEND order order_id=%s on %s: price=%s qty=%s"
-                order_id
-                dst
-                (Primitives.Price.to_string new_price)
-                (Primitives.Qty.to_string new_qty)
-          | Cancel { dst; order_id } ->
-              Printf.sprintf "CANCEL order %s on %s" order_id dst
-          in
-          Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router") 
-            (Printf.sprintf "Routing command: %s" cmd_str) >>= fun () -> 
+    (* Asynchronously wait for a command from the buffer *)
+    Ringbuffer.pop cmd_buffer >>= fun cmd ->
 
-          (* Route command to appropriate exchange *)
+    (* Check for duplicates *)
+    if OrderCache.is_duplicate cmd then (
+      Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "engine.router")
+        (Printf.sprintf "Dropping duplicate order: %s"
           (match cmd with
-          | Add { dst; _ } | Amend { dst; _ } | Cancel { dst; _ } ->
-              match dst with
-              | "kraken" ->
-                  (* Call handle_order (which calls handle_router_command)
-                     and expect unit Lwt.t *)
-                  Kraken.handle_order cfg exec_buffer cmd
-              | _ ->
-                  Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.router")
-                    (Printf.sprintf "Unknown exchange: %s" dst) >>= fun () ->
-                  (* No response to return here, just log *)
-                  Lwt.return_unit
-          ) >>= fun () -> 
-          
-          cmd_loop ()
-        )
-    | None -> 
-        Lwt_unix.sleep 0.01 >>= cmd_loop (* Sleep briefly if buffer is empty *)
+          | Add { client_id; _ } -> client_id
+          | Amend { order_id; _ } -> order_id
+          | Cancel { order_id; _ } -> order_id)) >>= fun () ->
+      cmd_loop ()
+    ) else (
+      (* Enhanced logging for commands *)
+      let cmd_str = match cmd with
+      | Add { dst; symbol; side; price; qty; tags; _ } ->
+          Printf.sprintf "ADD order: %s %s %s @ %s qty=%s tags=[%s]"
+            (match side with Buy -> "BUY" | Sell -> "SELL")
+            symbol
+            dst
+            (Primitives.Price.to_string price)
+            (Primitives.Qty.to_string qty)
+            (String.concat ";" (List.map (function 
+              | `Grid -> "grid" 
+              | `Manual -> "manual" 
+              | `Rebalance -> "rebalance") tags))
+      | Amend { dst; order_id; new_price; new_qty; _ } ->
+          Printf.sprintf "AMEND order order_id=%s on %s: price=%s qty=%s"
+            order_id
+            dst
+            (Primitives.Price.to_string new_price)
+            (Primitives.Qty.to_string new_qty)
+      | Cancel { dst; order_id } ->
+          Printf.sprintf "CANCEL order %s on %s" order_id dst
+      in
+      Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.router") 
+        (Printf.sprintf "Routing command: %s" cmd_str) >>= fun () -> 
+
+      (* Route command to appropriate exchange *)
+      (match cmd with
+      | Add { dst; _ } | Amend { dst; _ } | Cancel { dst; _ } ->
+          let handle_cmd () =
+            match dst with
+            | "kraken" ->
+                Kraken.handle_order cfg exec_buffer cmd
+            | _ ->
+                Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.router")
+                  (Printf.sprintf "Unknown exchange: %s" dst)
+          in
+          Lwt.async (fun () ->
+            Lwt.catch handle_cmd (fun ex ->
+              Lwt_log_core.error ~section:(Lwt_log_core.Section.make "engine.router")
+                (Printf.sprintf "Unhandled exception in command handler: %s" (Printexc.to_string ex))
+            )
+          )
+      );
+      
+      cmd_loop ()
+    )
   in
   
   cmd_loop () (* Run the command processing loop *)
