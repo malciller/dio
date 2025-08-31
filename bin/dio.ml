@@ -3,11 +3,10 @@ open Conduit_lwt_unix
 open Dio_types
 open Dashboard 
 open Engine
-open Lwt_log_core (* Open Lwt_log_core to use its functions directly *)
+open Lwt_log_core 
 
 let mode_dash = ref false
 
-(* Define sections once at the top of the module *)
 let section = Section.make "dio.main"
 let config_section = Section.make "dio.config"
 
