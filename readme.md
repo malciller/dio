@@ -244,6 +244,7 @@ We welcome contributions! Please:
 - **Discussions**: [GitHub Discussions](https://github.com/malciller/dio/discussions)
 - **Documentation**: Check `_docs/workflow.md` for detailed architecture
 
----
+## License
+- This project is licensed under the MIT license. Please see LICENSE file for details.
 
 **Legal Disclaimer**: This software is provided "as is" without warranty. The authors are not responsible for any financial losses, damages, or other liabilities arising from its use. Always consult with financial professionals before engaging in cryptocurrency trading.
