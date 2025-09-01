@@ -2,7 +2,4 @@
  (name state)
  (public_name dio.state)
  (modules state)
- (libraries 
-  dio.dio_types
-  lwt
-  lwt_log))
+ (libraries dio.dio_types lwt lwt_log))

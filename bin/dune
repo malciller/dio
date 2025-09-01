@@ -2,7 +2,8 @@
  (name dio)
  (public_name dio_exec)
  (modules dio)
- (preprocess (pps lwt_ppx))
+ (preprocess
+  (pps lwt_ppx))
  (libraries
   cmdliner
   conduit-lwt-unix
@@ -20,6 +21,4 @@
   sexplib0
   yojson
   lwt_ppx
-  ssl
- )
-)
+  ssl))

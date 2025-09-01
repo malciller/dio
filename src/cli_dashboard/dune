@@ -2,15 +2,13 @@
  (name dashboard)
  (public_name dio.dashboard)
  (modules dashboard stats)
- (libraries 
+ (libraries
   dio.state
   dio.dio_types
   dio.exchange.kraken
   lwt
   yojson
   sexplib0
-  notty 
-  notty.lwt 
-  lwt_log
- )
-)
+  notty
+  notty.lwt
+  lwt_log))

@@ -1,5 +1,4 @@
 (test
  (name test_router)
  (libraries dio.dio_types dio.engine alcotest-lwt alcotest lwt.unix)
- (modules test_router)
-)
+ (modules test_router))
