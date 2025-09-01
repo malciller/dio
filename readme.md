@@ -5,7 +5,7 @@
 
 A high-performance, real-time cryptocurrency trading engine built in OCaml. Dio connects to Kraken exchange via WebSocket and REST APIs to execute automated trading strategies with live market data.
 
-## ⚡ Features
+## Features
 
 - **Real-time Trading**: WebSocket connections for live price feeds and instant order execution
 - **Multiple Strategies**: Grid trading and top-level orderbook market making
@@ -15,13 +15,13 @@ A high-performance, real-time cryptocurrency trading engine built in OCaml. Dio 
 - **Robust Infrastructure**: Comprehensive logging, error handling, and retry mechanisms
 - **Kraken Integration**: Full API integration with authentication and order management
 
-## 📋 Requirements
+## Requirements
 
 - **OCaml** 4.14+ with opam package manager
 - **Kraken API** credentials (API key and secret)
 - **Unix-like OS** (macOS, Linux, or WSL)
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Clone & Setup
 ```bash
@@ -65,7 +65,7 @@ Edit `_config.json`:
 ./_build/default/bin/dio.exe
 ```
 
-## 🎯 Trading Strategies
+## Trading Strategies
 
 ### Grid Strategy
 Creates a dynamic grid of buy/sell orders around current market price:
@@ -81,7 +81,7 @@ Market making at the top of the orderbook:
 - **Volume Management**: Dynamic quantity adjustment
 - **Ideal for**: High-liquidity pairs with competitive fees
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -111,7 +111,7 @@ Market making at the top of the orderbook:
 - **Feed**: Real-time market data ingestion via WebSocket
 - **Dashboard**: Terminal-based monitoring and control interface
 
-## ⚙️ Configuration Reference
+## Configuration Reference
 
 ### Asset Configuration
 ```json
@@ -132,7 +132,7 @@ Market making at the top of the orderbook:
 }
 ```
 
-## 🎮 Dashboard Interface
+## Dashboard Interface
 
 The terminal dashboard provides real-time monitoring:
 
@@ -154,9 +154,8 @@ Commands: q=quit | Press any key to refresh
 - Real-time price ladders with order visualization
 - Order status tracking and execution monitoring
 - System logs and performance metrics
-- Hot-reload configuration (planned)
 
-## 🔧 Development
+## Development
 
 ### Building
 ```bash
@@ -188,7 +187,7 @@ dune fmt
 dune build @doc
 ```
 
-## 📊 Monitoring & Logging
+## Monitoring & Logging
 
 Dio provides comprehensive logging at multiple levels:
 
@@ -199,7 +198,7 @@ Dio provides comprehensive logging at multiple levels:
 
 Logs are timestamped and categorized by component for easy debugging.
 
-## ⚠️ Risk Management
+## Risk Management
 
 **CRITICAL**: This software is for educational and research purposes only.
 
@@ -215,9 +214,8 @@ Logs are timestamped and categorized by component for easy debugging.
 - Implement proper stop-loss mechanisms
 - Monitor API usage and account balances
 - Keep multiple backup configurations
-- Test extensively in simulation mode (planned feature)
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please:
 
@@ -233,18 +231,14 @@ We welcome contributions! Please:
 - Update documentation
 - Ensure CI passes
 
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - Built with [OCaml](https://ocaml.org/) and modern functional programming
 - Powered by [LWT](https://github.com/ocsigen/lwt) for concurrency
 - Inspired by high-frequency trading systems and algorithmic strategies
 - Thanks to the OCaml ecosystem for excellent libraries
 
-## 📞 Support & Contact
+## Support & Contact
 
 - **Issues**: [GitHub Issues](https://github.com/malciller/dio/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/malciller/dio/discussions)
@@ -252,4 +246,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**⚠️ Legal Disclaimer**: This software is provided "as is" without warranty. The authors are not responsible for any financial losses, damages, or other liabilities arising from its use. Always consult with financial professionals before engaging in cryptocurrency trading.
+**Legal Disclaimer**: This software is provided "as is" without warranty. The authors are not responsible for any financial losses, damages, or other liabilities arising from its use. Always consult with financial professionals before engaging in cryptocurrency trading.
