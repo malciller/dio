@@ -33,43 +33,43 @@ let get_api_credentials_from_env () : (string * string) Lwt.t =
 let get_token () : string Lwt.t =
   get_api_credentials_from_env () >>= fun (api_key, api_secret) ->
   let path = "/0/private/GetWebSocketsToken" in
-  let nonce = Kraken_common_types.nonce () in
-  let body_str = "nonce=" ^ nonce in 
-  let signature = Kraken_common_types.sign ~secret:api_secret ~path ~body:body_str ~nonce in 
+  Kraken_common_types.nonce () >>= fun nonce ->
+  let body_str = "nonce=" ^ nonce in
+  let signature = Kraken_common_types.sign ~secret:api_secret ~path ~body:body_str ~nonce in
   let headers = Cohttp.Header.add_list (Cohttp.Header.init ()) [
     ("API-Key", api_key);
     ("API-Sign", signature);
-    ("Content-Type", "application/x-www-form-urlencoded"); 
+    ("Content-Type", "application/x-www-form-urlencoded");
   ] in
-  let request_body = Cohttp_lwt.Body.of_string body_str in 
-  Client.post ~headers ~body:request_body (Uri.of_string (endpoint ^ path)) >>= fun (resp, resp_body) -> 
-  
-  (* Check HTTP status code first *) 
+  let request_body = Cohttp_lwt.Body.of_string body_str in
+  Client.post ~headers ~body:request_body (Uri.of_string (endpoint ^ path)) >>= fun (resp, resp_body) ->
+
+  (* Check HTTP status code first *)
   let status_code = Cohttp.Response.status resp |> Cohttp.Code.code_of_status in
   if status_code <> 200 then (
-    resp_body |> Cohttp_lwt.Body.to_string >>= fun body_str -> 
+    resp_body |> Cohttp_lwt.Body.to_string >>= fun body_str ->
     error_f ~section "Kraken API HTTP Error %d: %s" status_code body_str >>= fun () ->
     Lwt.fail_with (Printf.sprintf "Kraken API request failed with HTTP status %d" status_code)
   ) else (
     resp_body |> Cohttp_lwt.Body.to_string >>= fun body_str ->
     let json = from_string body_str in
-    
-    (* Check for API errors in JSON before accessing result *) 
+
+    (* Check for API errors in JSON before accessing result *)
     match Util.member "error" json with
-    | `List (_ :: _ as errors) -> (* Check if error list is non-empty *) 
-        let error_msg = 
-          errors 
-          |> List.map to_string 
-          |> String.concat "; " 
+    | `List (_ :: _ as errors) -> (* Check if error list is non-empty *)
+        let error_msg =
+          errors
+          |> List.map to_string
+          |> String.concat "; "
         in
         error_f ~section "Kraken API Error Response (JSON): %s" error_msg >>= fun () ->
         Lwt.fail_with ("Kraken API error: " ^ error_msg)
-    | `Null | `List [] -> (* No error or empty error list, proceed *) 
-        (match Util.member "result" json with 
-         | `Null -> 
+    | `Null | `List [] -> (* No error or empty error list, proceed *)
+        (match Util.member "result" json with
+         | `Null ->
             error_f ~section "Kraken API Unexpected Response (no result field)" >>= fun () ->
             Lwt.fail_with "Kraken API error: Missing 'result' field in response"
-         | result_json -> 
+         | result_json ->
             match Util.member "token" result_json with
             | `String token ->
                 Lwt.return token
@@ -77,7 +77,7 @@ let get_token () : string Lwt.t =
                 error_f ~section "Kraken API Unexpected Token Format (token field is not a string)" >>= fun () ->
                 Lwt.fail_with "Kraken API error: Token field is not a string"
         )
-    | other_error -> (* Unexpected error format *) 
+    | other_error -> (* Unexpected error format *)
         error_f ~section "Kraken API Unexpected Error Format: %s" (to_string other_error) >>= fun () ->
         Lwt.fail_with ("Kraken API error: Unexpected format in 'error' field: " ^ (to_string other_error))
   )

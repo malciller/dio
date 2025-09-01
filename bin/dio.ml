@@ -55,6 +55,7 @@ let setup_logging () =
 
   (* Specific rules for log levels and sections. Amended to the rules above.*) 
   Lwt_log.add_rule "engine.*" Info;  
+  Lwt_log.add_rule "kraken_nonce" Debug;  
   ()
 
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)

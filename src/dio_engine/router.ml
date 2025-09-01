@@ -54,33 +54,42 @@ module OrderCache = struct
 end
 
 (* Exchange-specific handlers *)
-module Kraken = struct
-  let handle_order cfg exec_buffer cmd =
-    match cmd with
-    | Core.Add { symbol; side; price; qty; client_id; _ } ->
-        info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
-          "Sending ADD order to Kraken: %s %s @ %s qty=%s (client_id=%s)"
-            (match side with Buy -> "BUY" | Sell -> "SELL")
-            symbol
-            (Primitives.Price.to_string price)
-            (Primitives.Qty.to_string qty)
-            client_id >>= fun () ->
-        Kraken.Kraken_outgoing_data.handle_router_command cfg cmd exec_buffer
-    | Core.Amend { dst=_; order_id; symbol; new_price; new_qty; ts=_ } ->
-        info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
-          "Sending AMEND order to Kraken: %s (%s) price=%s qty=%s"
-            order_id
-            symbol
-            (Primitives.Price.to_string new_price)
-            (Primitives.Qty.to_string new_qty) >>= fun () ->
-        Kraken.Kraken_outgoing_data.handle_router_command cfg cmd exec_buffer
-    | Core.Cancel { order_id; _ } ->
-        info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
-          "Sending CANCEL order to Kraken: %s" order_id >>= fun () ->
-        Kraken.Kraken_outgoing_data.handle_router_command cfg cmd exec_buffer
+module KrakenHandler = struct
+  let kraken_cmd_queue = Ringbuffer.create 1000 (* The queue for Kraken commands *)
+ 
+  let handle_order _cfg _exec_buffer cmd =
+    Ringbuffer.push kraken_cmd_queue cmd
+ 
+  let rec process_kraken_commands cfg exec_buffer () =
+    Ringbuffer.pop kraken_cmd_queue >>= fun cmd ->
+    (* Re-introduce Kraken-specific logging before sending the command *)
+    (match cmd with
+     | Core.Add { symbol; side; price; qty; client_id; _ } ->
+         info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
+           "Sending ADD order to Kraken: %s %s @ %s qty=%s (client_id=%s)"
+             (match side with Buy -> "BUY" | Sell -> "SELL")
+             symbol
+             (Primitives.Price.to_string price)
+             (Primitives.Qty.to_string qty)
+             client_id
+     | Core.Amend { dst=_; order_id; symbol; new_price; new_qty; ts=_ } ->
+         info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
+           "Sending AMEND order to Kraken: %s (%s) price=%s qty=%s"
+             order_id
+             symbol
+             (Primitives.Price.to_string new_price)
+             (Primitives.Qty.to_string new_qty)
+     | Core.Cancel { order_id; _ } ->
+         info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
+           "Sending CANCEL order to Kraken: %s" order_id
+    ) >>= fun () ->
+    Kraken.Kraken_outgoing_data.handle_router_command cfg cmd exec_buffer >>= fun () ->
+    process_kraken_commands cfg exec_buffer ()
 end
 
 let start cfg ~cmd_buffer ~exec_buffer =
+  (* Start the Kraken command processing loop as an Lwt thread *)
+  Lwt.async (KrakenHandler.process_kraken_commands cfg exec_buffer);
   (* Process commands from cmd_buffer and route to appropriate exchange handler *)
   let rec cmd_loop () =
     (* Periodically clean up expired cache entries *)
@@ -129,19 +138,22 @@ let start cfg ~cmd_buffer ~exec_buffer =
           let handle_cmd () =
             match dst with
             | "kraken" ->
-                Kraken.handle_order cfg exec_buffer cmd
+                KrakenHandler.handle_order cfg exec_buffer cmd >>= fun () ->
+                Lwt.return_unit
             | _ ->
                 error_f ~section:(Lwt_log_core.Section.make "engine.router")
-                  "Unknown exchange: %s" dst
+                  "Unknown exchange: %s" dst >>= fun () ->
+                Lwt.return_unit
           in
           Lwt.async (fun () ->
             Lwt.catch handle_cmd (fun ex ->
               error_f ~section:(Lwt_log_core.Section.make "engine.router")
-                "Unhandled exception in command handler: %s" (Printexc.to_string ex)
+                "Unhandled exception in command handler: %s" (Printexc.to_string ex) >>= fun () ->
+              Lwt.return_unit
             )
-          )
-      );
-      cmd_loop ()
+          );
+          cmd_loop ()
+      )
     )
   in
   cmd_loop ()

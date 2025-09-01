@@ -20,7 +20,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let api_path = "/0/private/AddOrder" in
       let api_host = "api.kraken.com" in 
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      let nonce = Kraken_common_types.nonce () in 
+      Kraken_common_types.nonce () >>= fun nonce -> (* Changed here *)
       let price_str =
         let raw_price_float = float_of_price price in
         match Kraken_incoming_data.get_precisions symbol with 
@@ -96,7 +96,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let api_path = "/0/private/AmendOrder" in
       let api_host = "api.kraken.com" in
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      let nonce = Kraken_common_types.nonce () in
+      Kraken_common_types.nonce () >>= fun nonce -> (* Changed here *)
       let price_prec_opt, qty_prec_opt = 
         match Kraken_incoming_data.get_precisions symbol with
         | Some (pp, qp) -> (Some pp, Some qp)
@@ -160,7 +160,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let api_path = "/0/private/CancelOrder" in
       let api_host = "api.kraken.com" in
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      let nonce = Kraken_common_types.nonce () in
+      Kraken_common_types.nonce () >>= fun nonce -> (* Changed here *)
       let params = [
         ("nonce", [nonce]);
         ("txid", [order_id]); 

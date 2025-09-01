@@ -1,6 +1,12 @@
+
+
+
 (* src/exchange/kraken/kraken_common_types.ml *)
 open Dio_types
+open Lwt_log_core (* Add this line for logging *)
+open Lwt.Infix (* Add this line *)
 
+let section = Section.make "kraken_nonce" (* Add this section definition *)
 
 (* Channel-specific subscription parameters *)
 type channel_params =
@@ -212,17 +218,25 @@ type order = {
 }
 
 (* Global, mutable reference for the last used nonce.
-   Initialize with current time in microseconds to ensure it's likely higher than
-   any nonce from a previous session and provides good granularity.
-   Using microseconds (Unix.time() *. 1_000_000.0) for initialization
-   and incrementing ensures it's always increasing during a session.
+   Initialize with current time in nanoseconds to ensure it's likely higher than
+   any nonce from a previous session and provides maximum granularity.
+   Kraken requires nanosecond precision for nonces.
 *)
 let last_nonce =
-  ref (Unix.gettimeofday () *. 1_000_000.0 |> Int64.of_float)
+  ref (Unix.gettimeofday () *. 1_000_000_000.0 |> Int64.of_float)
+
+let nonce_mutex = Lwt_mutex.create ()
 
 let nonce () =
-  last_nonce := Int64.add !last_nonce 1L; 
-  Int64.to_string !last_nonce       
+  Lwt_mutex.with_lock nonce_mutex (fun () ->
+    let current_nanos = Unix.gettimeofday () *. 1_000_000_000.0 |> Int64.of_float in
+    let old_last_nonce = !last_nonce in (* Capture old value *)
+    let next_nonce = Int64.max current_nanos (Int64.add old_last_nonce 1L) in
+    last_nonce := next_nonce;
+    Lwt_log_core.debug ~section (Printf.sprintf "Generated Nonce: current_nanos=%Ld, old_last_nonce=%Ld, next_nonce=%Ld"
+                                   current_nanos old_last_nonce next_nonce) >>= fun () ->
+    Lwt.return (Int64.to_string !last_nonce)
+  )
 
 (* Kraken signing function *)
 let sign ~secret ~path ~body ~nonce =

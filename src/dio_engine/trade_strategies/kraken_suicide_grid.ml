@@ -1,3 +1,4 @@
+(* src/engine/strategy/kraken_suicide_grid.ml *)
 (*
   Position sizing for BTC: 0.00025 BTC x (unrealized value of portfolio / 100)
   Position sizing for alts: $10 order size min, adjust to maintain new $5 thresholds on 
@@ -7,16 +8,13 @@
       threshold in USD value.
 *)
 
-(* src/engine/strategy/kraken_suicide_grid.ml *)
-open Lwt.Infix  (* for >>= *)
+open Lwt.Infix  
 open Dio_types 
-open Lwt_log_core (* Added Lwt_log_core for consistent logging *)
+open Lwt_log_core 
+module K = Kraken 
 
-module K = Kraken (* To get open orders *)
+let section = Lwt_log_core.Section.make "engine.strategy.kraken_suicide_grid" 
 
-let section = Lwt_log_core.Section.make "engine.strategy.kraken_suicide_grid" (* Define module-level section *)
-
-(* Module-level state *)
 module State = struct
   let price_info : (string, Event.tick) Hashtbl.t = Hashtbl.create 16
 
@@ -580,7 +578,7 @@ module State = struct
                           (Printf.sprintf "%.*f" price_prec highest_buy_order.limit_price)
                       in
 
-                      if Stdlib.compare new_buy_price_primitive existing_buy_price_primitive = 0 then
+                      if Primitives.Price.equal new_buy_price_primitive existing_buy_price_primitive then
                         info_f ~section:verify_section
                           "Grid Verify [%s]: PASSED."
                           symbol
