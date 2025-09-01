@@ -3,7 +3,7 @@
 [![OCaml](https://img.shields.io/badge/Language-OCaml-blue.svg)](https://ocaml.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A high-performance, real-time cryptocurrency trading engine built in OCaml. Dio connects to Kraken exchange via WebSocket and REST APIs to execute automated trading strategies with live market data.
+A high-performance, real-time cryptocurrency trading engine built in OCaml. Dio connects to the Kraken exchange via WebSocket and REST APIs to execute automated trading strategies with live market data. 
 
 ## Features
 
@@ -49,6 +49,13 @@ Edit `_config.json`:
       "grid_interval": "1.0",
       "sell_mult": "0.999",
       "strategy": "Grid"
+    },    
+    {
+      "symbol": "USDT/USD",
+      "qty": "100.0",
+      "grid_interval": "0.01",
+      "sell_mult": "1.0",
+      "strategy": "Orderbook"
     }
   ],
   "debounce_ms": 1000,
@@ -226,7 +233,6 @@ We welcome contributions! Please:
 5. Open a Pull Request
 
 ### Development Guidelines
-- Follow OCaml formatting standards
 - Add tests for new functionality
 - Update documentation
 - Ensure CI passes
