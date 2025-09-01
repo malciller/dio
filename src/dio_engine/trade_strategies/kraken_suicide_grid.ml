@@ -667,12 +667,31 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
     Ringbuffer.pop tick_buffer >>= fun (tick : Event.tick) ->
     (* Only process ticks for grid strategy symbols *)
     (if List.mem tick.symbol grid_symbols then (
-      let should_update =
+      (* Determine if we should update based on price changes *)
+      let (should_update, bid_changed, ask_changed) =
         match State.get_price tick.symbol with
         | Some prev_tick ->
-            not (prev_tick.bid = tick.bid && prev_tick.ask = tick.ask)
-        | None -> true
+            let bid_changed = not (Primitives.Price.equal prev_tick.bid tick.bid) in
+            let ask_changed = not (Primitives.Price.equal prev_tick.ask tick.ask) in
+            let should_update = bid_changed || ask_changed in
+            (should_update, bid_changed, ask_changed)
+        | None -> (true, false, false)  (* No previous price, always update *)
       in
+      
+      (* Do debug logging after determining the boolean value *)
+      (if bid_changed || ask_changed then
+        match State.get_price tick.symbol with
+        | Some prev_tick ->
+            debug_f ~section
+              "Price changed for %s: bid %s->%s, ask %s->%s" tick.symbol
+              (Primitives.Price.to_string prev_tick.bid) (Primitives.Price.to_string tick.bid)
+              (Primitives.Price.to_string prev_tick.ask) (Primitives.Price.to_string tick.ask)
+        | None -> Lwt.return_unit
+      else if not should_update then
+        debug_f ~section "Price unchanged for %s" tick.symbol
+      else
+        Lwt.return_unit) >>= fun () ->
+      
       if should_update then (
         (* Only update state if price changed *)
         info_f ~section
