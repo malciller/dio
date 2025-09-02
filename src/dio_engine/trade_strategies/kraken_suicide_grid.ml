@@ -573,12 +573,12 @@ module State = struct
                         Primitives.Price.of_string_exn ~scale:price_prec
                           (Printf.sprintf "%.*f" price_prec new_target_buy_price_float)
                       in
-                      let existing_buy_price_primitive = (* Convert existing float price to primitive for accurate comparison *)
-                        Primitives.Price.of_string_exn ~scale:price_prec
-                          (Printf.sprintf "%.*f" price_prec highest_buy_order.limit_price)
-                      in
-
-                      if Primitives.Price.equal new_buy_price_primitive existing_buy_price_primitive then
+                      
+                      (* Compare formatted strings directly to avoid precision loss *)
+                      let existing_price_formatted = Printf.sprintf "%.*f" price_prec highest_buy_order.limit_price in
+                      let new_price_formatted = Printf.sprintf "%.*f" price_prec new_target_buy_price_float in
+                      
+                      if String.equal existing_price_formatted new_price_formatted then
                         info_f ~section:verify_section
                           "Grid Verify [%s]: PASSED."
                           symbol
