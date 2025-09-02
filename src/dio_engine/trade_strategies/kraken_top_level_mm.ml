@@ -1,3 +1,4 @@
+(* src/engine/strategy/kraken_top_level_orderbook_mm.ml *)
 (*
   Top-level order book market-making.
   - Ideal for 0 fee pegged assets (hft)
@@ -7,7 +8,7 @@
 
 *)
 
-(* src/engine/strategy/kraken_top_level_orderbook_mm.ml *)
+
 open Lwt.Infix
 open Dio_types
 open Lwt_log_core
@@ -65,7 +66,6 @@ module State = struct
 
   let create_initial_order (runtime_cfg : Config.runtime_cfg) symbol cmd_buffer =
     
-    (* First, let's log what orders we currently have *)
     let _current_orders = Hashtbl.fold (fun order_id (order : K.Kraken_common_types.order) acc ->
       if String.equal order.order_symbol symbol then
         let side_str = match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown" in

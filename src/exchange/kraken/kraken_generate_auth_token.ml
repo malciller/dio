@@ -1,12 +1,13 @@
 (* src/exchange/kraken/kraken_generate_auth_token.ml *)
+
 open Lwt.Infix
 open Cohttp_lwt_unix
 open Yojson.Safe
-open Lwt_log_core (* Added Lwt_log_core *)
+open Lwt_log_core 
 
 let endpoint = "https://api.kraken.com"
 
-let section = Section.make "kraken.auth_token" (* Defined section *)
+let section = Section.make "kraken.auth_token" 
 
 let load_env_file () : unit Lwt.t =
   Lwt.catch
@@ -56,7 +57,7 @@ let get_token () : string Lwt.t =
 
     (* Check for API errors in JSON before accessing result *)
     match Util.member "error" json with
-    | `List (_ :: _ as errors) -> (* Check if error list is non-empty *)
+    | `List (_ :: _ as errors) -> 
         let error_msg =
           errors
           |> List.map to_string
@@ -64,7 +65,7 @@ let get_token () : string Lwt.t =
         in
         error_f ~section "Kraken API Error Response (JSON): %s" error_msg >>= fun () ->
         Lwt.fail_with ("Kraken API error: " ^ error_msg)
-    | `Null | `List [] -> (* No error or empty error list, proceed *)
+    | `Null | `List [] -> 
         (match Util.member "result" json with
          | `Null ->
             error_f ~section "Kraken API Unexpected Response (no result field)" >>= fun () ->
@@ -77,7 +78,7 @@ let get_token () : string Lwt.t =
                 error_f ~section "Kraken API Unexpected Token Format (token field is not a string)" >>= fun () ->
                 Lwt.fail_with "Kraken API error: Token field is not a string"
         )
-    | other_error -> (* Unexpected error format *)
+    | other_error -> 
         error_f ~section "Kraken API Unexpected Error Format: %s" (to_string other_error) >>= fun () ->
         Lwt.fail_with ("Kraken API error: Unexpected format in 'error' field: " ^ (to_string other_error))
   )

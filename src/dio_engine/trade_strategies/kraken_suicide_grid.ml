@@ -86,7 +86,6 @@ module State = struct
             qty_str |> ignore;
         order
     | None -> 
-        (* Log error and potentially raise an exception or return an error type *)
         Lwt_main.run (error_f ~section "Precisions not found for symbol: %s. Cannot create order." symbol);
         failwith ("Precision data missing for symbol: " ^ symbol)
 
@@ -122,15 +121,6 @@ module State = struct
                 let buy_price = Primitives.Price.of_string_exn ~scale:current_price.scale 
                   (Printf.sprintf "%.*f" current_price.scale buy_price_raw) in
                 
-                (* Log the price calculations *)
-                info_f ~section
-                  "Calculating grid prices for %s: current=%.2f buy=%.2f sell=%.2f interval=%.1f%%" 
-                    symbol
-                    current_price_float
-                    buy_price_raw
-                    sell_price_raw
-                    grid_pct >>= fun () ->
-                
                 (* Calculate sell quantity by applying sell_mult *)
                 let base_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
                 let sell_mult_float = Float.of_string (Primitives.Fixed.to_string asset_cfg.sell_mult) in
@@ -144,7 +134,6 @@ module State = struct
                         (Printf.sprintf "%.*f" asset_cfg.qty.scale sell_qty_float)
                 in
 
-                (* Log quantities with more precision to verify calculation *)
                 info_f ~section
                   "Order quantities for %s: buy=%.8f sell=%.8f (mult=%.3f -> %.8f * %.3f = %.8f)" 
                     symbol
@@ -207,7 +196,6 @@ module State = struct
         let grid_pct = Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval) in
         let max_distance_pct = grid_pct *. 2.0 in (* 2x grid interval *)
         
-        (* Log the price and grid settings *)
         debug_f ~section
           "Checking orders for %s - Current Price: %.8f, Grid Interval: %.2f%%, Max Distance: %.2f%%" 
             tick.symbol current_price_float grid_pct max_distance_pct >>= fun () ->
@@ -215,13 +203,11 @@ module State = struct
         (* Get all open orders for this symbol *)
         let orders = Hashtbl.to_seq_values (K.Kraken_incoming_data.get_all_open_orders ()) |> List.of_seq in
         
-        (* Log how many orders we're checking *)
         debug_f ~section
           "Found %d open orders to check" (List.length orders) >>= fun () ->
         
         (* Process each order *)
         Lwt_list.iter_s (fun (order : K.Kraken_common_types.order) ->
-          (* Log each order we're examining *)
           debug_f ~section
             "Examining order %s: symbol=%s side=%s price=%.8f" 
               order.order_id 
@@ -234,7 +220,6 @@ module State = struct
              let price_diff_pct = 
                ((order.limit_price -. current_price_float) /. current_price_float) *. -100.0 in
                
-             (* Log the price difference *)
              debug_f ~section
                "Order %s price difference: %.2f%% (max allowed: %.2f%%)" 
                  order.order_id price_diff_pct max_distance_pct >>= fun () ->
@@ -276,8 +261,7 @@ module State = struct
                  new_qty = current_qty; 
                  ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
                } in
-               
-               (* Log the adjustment *)
+
                info_f ~section
                  "Adjusting order %s price from %.2f to %.2f (current: %.2f, diff: %.1f%%)"
                    order.order_id
@@ -488,7 +472,6 @@ module State = struct
       log_promise :: promises
     ) exchange_orders [] in
     
-    (* Wait for all logging to complete, then log summary *)
     Lwt.join log_promises >>= fun () ->
     info_f ~section
       "Initialized %d open orders from exchange" (Hashtbl.length open_orders)
@@ -540,7 +523,7 @@ module State = struct
                 Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval)
               in
               let expected_total_spread_pct = 2.0 *. configured_grid_interval_pct in
-              let tolerance_pct = 0.0 (* Tolerance for comparison, e.g., 0.1% *) in
+              let tolerance_pct = 0.0 (* Tolerance for comparison *) in
               let diff_pct = abs_float (actual_spread_pct_of_mid -. expected_total_spread_pct) in
 
               if diff_pct <= tolerance_pct then
@@ -550,12 +533,6 @@ module State = struct
               else
                 (* Grid check FAILED, attempt to amend the highest buy order *)
                 let new_target_buy_price_float = min_sell_price_float *. (1.0 -. (expected_total_spread_pct /. 100.0)) in
-
-                (if String.equal symbol "USDG/USD" then
-                  debug_f ~section:verify_section (* Use specific section for USDG/USD debugging *)
-                    "USDG/USD verify: current=%.8f, min_sell=%.8f, grid_pct=%.4f, expected_spread_pct=%.4f, raw_new_float=%.8f"
-                      current_market_price_float min_sell_price_float configured_grid_interval_pct expected_total_spread_pct new_target_buy_price_float
-                else Lwt.return_unit) >>= fun () ->
 
                 if new_target_buy_price_float >= current_market_price_float then
                   info_f ~section:verify_section
@@ -577,6 +554,19 @@ module State = struct
                       (* Compare formatted strings directly to avoid precision loss *)
                       let existing_price_formatted = Printf.sprintf "%.*f" price_prec highest_buy_order.limit_price in
                       let new_price_formatted = Printf.sprintf "%.*f" price_prec new_target_buy_price_float in
+                      
+                      (* see the actual values being compared *)
+                      (if String.equal symbol "BTC/USD" then
+                        debug_f ~section:verify_section
+                          "Grid Verify [%s] DEBUG: existing_price=%.8f (formatted: %s), new_price=%.8f (formatted: %s), equal=%b"
+                          symbol
+                          highest_buy_order.limit_price
+                          existing_price_formatted
+                          new_target_buy_price_float
+                          new_price_formatted
+                          (String.equal existing_price_formatted new_price_formatted) >>= fun () ->
+                        Lwt.return_unit
+                      else Lwt.return_unit) >>= fun () ->
                       
                       if String.equal existing_price_formatted new_price_formatted then
                         info_f ~section:verify_section
@@ -609,7 +599,7 @@ module State = struct
     let all_feed_orders = K.Kraken_incoming_data.get_all_open_orders () in
     let orders = Hashtbl.to_seq_values all_feed_orders |> List.of_seq in
     List.filter_map (fun (order : K.Kraken_common_types.order) -> 
-      match order.side with (* Replaced failwith with proper error handling *)
+      match order.side with 
       | Some s -> Some {
           order_id = order.order_id;
           symbol = order.order_symbol;
@@ -624,7 +614,6 @@ module State = struct
 end
 
 let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
-  (* Log the runtime config to use the variable *)
   info_f ~section
     "Strategy received runtime_cfg: %s" 
        (Yojson.Safe.to_string (Config.runtime_cfg_to_yojson runtime_cfg)) >>= fun () ->
@@ -675,10 +664,10 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
             let ask_changed = not (Primitives.Price.equal prev_tick.ask tick.ask) in
             let should_update = bid_changed || ask_changed in
             (should_update, bid_changed, ask_changed)
-        | None -> (true, false, false)  (* No previous price, always update *)
+        (* No previous price, always update *)
+        | None -> (true, false, false)  
       in
       
-      (* Do debug logging after determining the boolean value *)
       (if bid_changed || ask_changed then
         match State.get_price tick.symbol with
         | Some prev_tick ->
@@ -702,7 +691,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
         debug_f ~section
           "Checking existing orders for %s" tick.symbol >>= fun () ->
         State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
-        (* Then create new orders only if we don't have any for this symbol *)
+        (* create new orders only if we don't have any for this symbol *)
         (let has_orders = State.has_buy_order tick.symbol in
         debug_f ~section
           "%s has buy order: %b" tick.symbol has_orders >>= fun () ->
@@ -725,7 +714,8 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
       debug_f ~section
         "Skipping tick for %s - not a grid strategy symbol" tick.symbol
     )) >>= fun () ->
-    tick_loop () (* Continue to next tick *)
+    (* Continue to next tick *)
+    tick_loop ()
   in
 
   (* Run both loops in parallel *)

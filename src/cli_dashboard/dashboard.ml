@@ -22,8 +22,8 @@ let style_keybinding_text = style_primary_text
 
 (* ─── Updated ASCII/Unicode Sprites ────────────────────────────────────── *)
 let spr_power_pellet  = I.string style_logs_accent_text "\u{2726}"  (* ✦ Sparkle *)
-let spr_buy_order     = I.string style_buy_order_text "\u{2193}"    (* ↓ Sleek Down Arrow *)
-let spr_sell_order    = I.string style_sell_order_text "\u{2191}"   (* ↑ Sleek Up Arrow *)
+let spr_buy_order     = I.string style_buy_order_text "\u{2193}"    (* ↓ Down Arrow *)
+let spr_sell_order    = I.string style_sell_order_text "\u{2191}"   (* ↑ Up Arrow *)
 let spr_price_now     = I.string (style_current_price_text ++ A.st A.bold) "\u{25C7}" (* ◇ Open Diamond, bold, no blink *)
 
 

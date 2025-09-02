@@ -24,7 +24,7 @@ let strategy_type_of_yojson_exn json =
   match strategy_type_of_yojson json with
   | Ok v -> v
   | Error msg -> 
-    Lwt_main.run (Lwt_log_core.error_f ~section "Failed to parse strategy_type: %s" msg); (* Log the error *)
+    Lwt_main.run (Lwt_log_core.error_f ~section "Failed to parse strategy_type: %s" msg); 
     failwith msg 
 
 type asset_cfg = {

@@ -1,12 +1,10 @@
-
-
-
 (* src/exchange/kraken/kraken_common_types.ml *)
-open Dio_types
-open Lwt_log_core (* Add this line for logging *)
-open Lwt.Infix (* Add this line *)
 
-let section = Section.make "kraken_nonce" (* Add this section definition *)
+open Dio_types
+open Lwt_log_core 
+open Lwt.Infix 
+
+let section = Section.make "kraken_nonce" 
 
 (* Channel-specific subscription parameters *)
 type channel_params =
@@ -22,7 +20,7 @@ type channel_params =
       ratecounter: bool;
       token: string;
     }
-  | Instrument of { (* New variant for instrument channel *)
+  | Instrument of { 
       snapshot: bool;
     }
   | Book of {
@@ -49,7 +47,7 @@ type ticker_data = {
   change: float; [@key "change"]
   change_pct: float; [@key "change_pct"]
   high: float; [@key "high"]
-  last: float; [@key "last"] (* API uses 'last', will be mapped to 'last_price' in Event.tick *)
+  last: float; [@key "last"] 
   low: float; [@key "low"]
   volume: float; [@key "volume"]
   vwap: float; [@key "vwap"]
@@ -94,7 +92,6 @@ type heartbeat_response = {
   channel: string; [@key "channel"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* START: Instrument Channel Types *)
 (* Instrument Asset Data *)
 type asset_data = {
   id: string; [@key "id"]
@@ -125,7 +122,6 @@ type instrument_response = {
   type_: string; [@key "type"]
   data: instrument_data; (* Note: data is an object here, not list *)
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
-(* END: Instrument Channel Types *)
 
 (* Execution Report *)
 type fee = {
@@ -162,8 +158,7 @@ type executions_response = {
   data: execution_report list; [@key "data"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* WS_EXEC *)
-(* Type definitions for Kraken WS v2 API messages *)
+(* Kraken WS v2 API messages *)
 type add_order_params = {
   order_type: string;
   side: string;
@@ -182,12 +177,12 @@ type add_order_request = {
   req_id: int option; [@yojson.option]
 } [@@deriving yojson]
 
-(* Types for Amend Order *) 
+(* Amend Order *) 
 type amend_order_params = {
-  order_id: string;      (* Kraken order ID *)
-  order_qty: float;     (* New quantity *)
-  limit_price: float;   (* New limit price *)
-  post_only: bool;       (* Must be true *)
+  order_id: string;     
+  order_qty: float;     
+  limit_price: float;  
+  post_only: bool;       
 } [@@deriving yojson]
 
 type amend_order_request = {
@@ -209,19 +204,15 @@ type state = {
 
 type order = {
   order_id : string;
-  client_id : string option; (* Mapped from userref *)
+  client_id : string option; 
   order_symbol : string;
   side : Core.side option;
   status : Core.order_state;
   limit_price : float;
-  qty: float; (* Mapped from vol *)
+  qty: float; 
 }
 
-(* Global, mutable reference for the last used nonce.
-   Initialize with current time in nanoseconds to ensure it's likely higher than
-   any nonce from a previous session and provides maximum granularity.
-   Kraken requires nanosecond precision for nonces.
-*)
+(* Global, mutable reference for the last used nonce. *)
 let last_nonce =
   ref (Unix.gettimeofday () *. 1_000_000_000.0 |> Int64.of_float)
 
@@ -238,7 +229,7 @@ let nonce () =
     Lwt.return (Int64.to_string !last_nonce)
   )
 
-(* Kraken signing function *)
+(* signing function *)
 let sign ~secret ~path ~body ~nonce =
   let payload = nonce ^ body in 
   let sha256_hash_raw = Digestif.SHA256.digest_string payload |> Digestif.SHA256.to_raw_string in

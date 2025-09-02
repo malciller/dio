@@ -10,7 +10,7 @@ open State
 
 let section = Lwt_log_core.Section.make "kraken_ws_feed"
 
-(* Helper function to get orderbook symbols from config *)
+(* get orderbook symbols from config *)
 let get_orderbook_symbols (runtime_cfg : Config.runtime_cfg) : string list =
   List.filter_map (fun (asset : Config.asset_cfg) ->
     match asset.strategy with
@@ -34,7 +34,6 @@ let get_price_precision symbol : int option =
   | Some (price_prec, _) -> Some price_prec
   | None -> None
 
-(* Utility Functions *)
 let float_to_price ~scale f =
   let s = Printf.sprintf "%.*f" scale f in
   Primitives.Price.of_string_exn ~scale s
@@ -379,9 +378,9 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                             ask = ask_price_primitive;
                             current_price;
                             ts;
-                            ask_qty = 0.0; (* Book doesn't provide qty aggregates *)
+                            ask_qty = 0.0; 
                             bid_qty = 0.0;
-                            change = 0.0;  (* Book doesn't provide change info *)
+                            change = 0.0;  
                             change_pct = 0.0;
                             high = 0.0;
                             last_price = 0.0;
@@ -454,7 +453,6 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
       | None -> symbol_opt 
   in
 
-  (* Detailed log for easier debugging of incoming data for state changes *)
   debug_log (Printf.sprintf "[StateProc:%s] ID:%s, ExecType:%s, Status:%s, Symbol:%s, Side:%s, UserRef:%s, LimitPx:%s, OrderQty:%s, LastPx:%s, LastQty:%s"
     (String.capitalize_ascii context_msg_type) order_id item_exec_type order_status_str
     (Option.value symbol_for_stats ~default:"N/A") (Option.value side_str_opt ~default:"N/A")
@@ -484,11 +482,11 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
           debug_log (format_order_log existing_order ("CANCELED" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
           handle_order_cancellation order_id symbol >>= fun () ->
           log_open_orders ()
-      | None -> (* Not in all_open_orders *)
+      | None -> 
           if not was_in_pending_and_stat_handled then
             Lwt_log_core.debug ~section (Printf.sprintf "[ORDER CANCELED UNKNOWN] ID: %s not found in open or pending." order_id)
           else
-            Lwt.return_unit (* Was pending, stat handled, and not in all_open_orders. Log for pending cancel already occurred. *)
+            Lwt.return_unit
       )
   | "filled" | "expired" ->
       let%lwt was_in_pending_and_stat_handled =
@@ -503,18 +501,16 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
       in
       (match Hashtbl.find_opt all_open_orders order_id with
       | Some existing_order ->
-          (* The dec_pending call based on symbol_for_stats (derived from all_open_orders) is removed here *)
           Hashtbl.remove all_open_orders order_id;
-          (* Removal from pending_orders is handled above if it was pending *)
           debug_log (format_order_log existing_order (String.uppercase_ascii item_exec_type ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
           log_open_orders ()
-      | None -> (* Not in all_open_orders *)
+      | None -> 
           if not was_in_pending_and_stat_handled then
             Lwt_log_core.debug ~section (Printf.sprintf "[ORDER %s UNKNOWN] ID: %s not found in open or pending." (String.uppercase_ascii item_exec_type) order_id)
           else
-            Lwt.return_unit (* Was pending, stat handled, and not in all_open_orders. Log for pending already occurred. *)
+            Lwt.return_unit 
       )
-  | _ -> (* Handles "new", "pending_new", "amended", "restated", "status", "trade", etc. *)
+  | _ -> 
       let symbol =
         match item_exec_type, symbol_opt with
         | ("amended" | "new"), _ -> (* Prioritize existing order's symbol for consistency *)
@@ -558,7 +554,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
             | "pending_new" ->
                 Hashtbl.replace pending_orders order_id order;
                 Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order is pending_new: Calling inc_pending for %s (%s)" order.order_symbol context_msg_type) >>= fun () ->
-                state := inc_pending order.order_symbol !state; (* Increment pending count *)
+                state := inc_pending order.order_symbol !state; 
                 Lwt.return (format_order_log order ("PENDING" ^ suffix))
             | "new" ->
                 let was_pending_internally = Hashtbl.mem pending_orders order_id in
@@ -567,20 +563,19 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
 
                 if was_pending_internally then (
                   Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order moved from internal pending to new: Calling dec_pending for %s (%s)" order.order_symbol context_msg_type) |> Lwt.ignore_result;
-                  state := dec_pending order.order_symbol !state (* Was counted as 'pending_new', now it's 'new', so adjust. *)
+                  state := dec_pending order.order_symbol !state 
                 );
 
-                (* Now, count it as an active/open order for pacdash visibility *)
                 Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order is new/open on exchange: Calling inc_pending for %s (%s)" order.order_symbol context_msg_type) |> Lwt.ignore_result;
                 state := inc_pending order.order_symbol !state;
 
                 Lwt.return (format_order_log order ("NEW" ^ suffix))
             | "trade" ->
                 Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Calling inc_trades for %s" order.order_symbol) >>= fun () -> (* Added Log *)
-                state := inc_trades order.order_symbol !state; (* Increment trade count *)
+                state := inc_trades order.order_symbol !state; 
                 let last_qty_val = Option.value last_qty_opt ~default:0.0 in
                 let last_price_val = Option.value last_price_opt ~default:0.0 in
-                if status = Core.Open then (* If order is still open (e.g. partially_filled) *)
+                if status = Core.Open then 
                   (match Hashtbl.find_opt all_open_orders order_id with
                    | Some existing ->
                        let remaining_qty = existing.qty -. last_qty_val in
@@ -589,12 +584,12 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
                        Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Remaining qty: %.8f)" suffix last_qty_val order.order_symbol last_price_val remaining_qty)
                    | None ->
                        Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (No existing order found)" suffix last_qty_val order.order_symbol last_price_val))
-                else (* If trade results in Filled or other terminal state *)
+                else 
                   (* Check if it was pending before moving *)
                   let was_pending = Hashtbl.mem pending_orders order_id in
                   Hashtbl.remove all_open_orders order_id;
                   Hashtbl.remove pending_orders order_id;
-                  if was_pending then state := dec_pending order.order_symbol !state; (* Decrement pending count *)
+                  if was_pending then state := dec_pending order.order_symbol !state; 
                   Lwt.return (Printf.sprintf "[ORDER FILL%s] %f %s at %.2f (Order now terminal)" suffix last_qty_val order.order_symbol last_price_val)
             | "amended" -> Hashtbl.replace all_open_orders order_id order; Lwt.return (format_order_log order ("AMENDED" ^ suffix))
             | "restated" | "status" -> Hashtbl.replace all_open_orders order_id order; Lwt.return (format_order_log order ((String.uppercase_ascii item_exec_type) ^ suffix))
@@ -603,7 +598,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
           debug_log log_msg_lwt >>= fun () ->
           if List.mem item_exec_type ["new"; "amended"; "restated"; "status"; "pending_new"] then log_open_orders () else Lwt.return_unit
       else
-        Lwt.return_unit (* Skip untracked symbol *)
+        Lwt.return_unit 
 
 let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
   match frame.Websocket.Frame.opcode with
@@ -624,7 +619,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
               else
                 let channel_subscribed = JsonUtil.(member "result" json |> member "channel" |> to_string_option |> Option.value ~default:"N/A") in
                 Lwt_log_core.info ~section (Printf.sprintf "Auth subscription successful (req_id=%s, channel=%s)" req_id_str channel_subscribed)
-          | _ -> (* Handle data messages *)
+          | _ -> 
               let channel_opt = JsonUtil.(member "channel" json |> to_string_option) in
               match channel_opt with
               | Some "executions" ->
@@ -658,7 +653,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                           let core_state = kraken_status_to_core_state order_status_str in
 
                           match symbol_opt with
-                          | None -> (* Cannot generate event without symbol for Fill *)
+                          | None -> 
                               if List.mem item_exec_type ["canceled"; "expired"; "rejected"] || core_state != Core.Open then
                                 [Core.Ack { order_id; client_id; state = core_state; ts }]
                               else []
@@ -675,16 +670,16 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                                    with ex -> 
                                      Lwt_log_core.error ~section (Printf.sprintf "Failed converting Fill data for update %s: %s" order_id (Printexc.to_string ex)) |> Lwt.ignore_result; 
                                      [Core.Ack { order_id; client_id; state = core_state; ts }])
-                              | _ -> (* For any other exec_type or if not a valid trade for Fill, generate Ack *)
+                              | _ -> 
                                   [Core.Ack { order_id; client_id; state = core_state; ts }]
                       ) data_json_list) in
 
-                      (* NEW: Step 2: Update Internal State (moved before calling on_execution to avoid race condition) *)
+                      (* Step 2: Update Internal State (moved before calling on_execution to avoid race condition) *)
                       Lwt_list.iter_s (fun order_json ->
                           process_execution_order_item_state order_json cfg "update"
                       ) data_json_list >>= fun () ->
 
-                      (* NEW: Step 3: Call on_execution (after state update) *)
+                      (* Step 3: Call on_execution (after state update) *)
                       if market_events <> [] then (
                         debug_log (Printf.sprintf "Calling on_execution with %d events from update" (List.length market_events)) >>= fun () ->
                         on_execution market_events
@@ -742,7 +737,6 @@ let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
         handle_public_frame conn cfg frame ~on_tick >>= fun () ->
         loop conn)
       (fun exn ->
-        (* Log the error and re-throw it to be caught by Feed.start's retry mechanism *)
         Lwt_log_core.error_f ~section "Error in public feed read loop: %s" (Printexc.to_string exn) >>= fun () ->
         (* Send a close frame if possible, but don't wait for it to complete *)
         Lwt.catch

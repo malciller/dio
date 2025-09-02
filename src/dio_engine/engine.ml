@@ -1,16 +1,14 @@
 (* src/engine/engine.ml *)
-open Dio_types (* For Event.tick *)
 
+open Dio_types 
 module Feed = Feed
 module Kraken = Kraken
 
-
-
-(* Helper: Asynchronously push a single tick onto the buffer *)
+(* Asynchronously push a single tick onto the buffer *)
 let push_tick_to_buffer tick_buffer tick =
   Ringbuffer.push tick_buffer tick
 
-(* Helper: Asynchronously push a list of execution events onto the buffer *)
+(* Asynchronously push a list of execution events onto the buffer *)
 let push_execs_to_buffer exec_buffer events =
   Lwt_list.iter_s (Ringbuffer.push exec_buffer) events
 

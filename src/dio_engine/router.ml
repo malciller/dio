@@ -2,7 +2,8 @@
 open Lwt.Infix  
 open Dio_types
 open Lwt_log_core
-(* Response type for order operations *)
+
+(* order operations *)
 type order_response = {
   success: bool;
   error: string option;
@@ -55,7 +56,8 @@ end
 
 (* Exchange-specific handlers *)
 module KrakenHandler = struct
-  let kraken_cmd_queue = Ringbuffer.create 1000 (* The queue for Kraken commands *)
+   (* The queue for Kraken commands *)
+  let kraken_cmd_queue = Ringbuffer.create 1000
  
   let handle_order _cfg _exec_buffer cmd =
     Ringbuffer.push kraken_cmd_queue cmd

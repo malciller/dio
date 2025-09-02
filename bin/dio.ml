@@ -14,10 +14,10 @@ let config_section = Section.make "dio.config"
 let setup_logging () =
   (* These base rules apply to all logs before specific section rules are checked.
      They will direct to whichever logger becomes the default. *)
-  Lwt_log.add_rule "*" Info;    
+  Lwt_log.add_rule "*" Error;  
   Lwt_log.add_rule "*" Warning; 
-  Lwt_log.add_rule "*" Error;   
-  (* Add Debug rule for more verbose output when needed *)
+  Lwt_log.add_rule "*" Info;  
+  (*Lwt_log.add_rule "*" Debug; *)
 
   let default_logger =
     if !mode_dash then

@@ -1,10 +1,10 @@
 (* src/engine/feed.ml *)
-open Lwt.Infix  (* for >>= *)
+open Lwt.Infix 
 open Dio_types
 
 
 
-(* 1. Define the WebSocket Interface using Core.config *)
+(* Define the WebSocket Interface using Core.config *)
 module type WS = sig
   type config = Config.engine_config 
 
@@ -13,7 +13,7 @@ module type WS = sig
   val get_open_buy_orders : unit -> (string, Kraken.Kraken_common_types.order) Hashtbl.t
 end
 
-(* 2. Implement the Functor *)
+(* Implement the Functor *)
 module Make (W : WS) = struct
   let section = Lwt_log_core.Section.make "engine.feed"
 
@@ -45,7 +45,7 @@ module Make (W : WS) = struct
         Lwt.return_unit
 end
 
-(* 3. Define the production implementation using the real Kraken_incoming_data *)
+(* Define the production implementation using the real Kraken_incoming_data *)
 module Kraken_ws : WS with type config = Config.engine_config = struct
   type config = Config.engine_config 
 

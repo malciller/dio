@@ -1,10 +1,10 @@
 (* src/exchange/kraken/kraken_outgoing_data.ml *)
+
 open Lwt.Infix
 open Dio_types
 open Cohttp_lwt_unix 
 
 
-(* Helper functions *)
 let float_of_price price =
   float_of_string (Primitives.Price.to_string price)
 
@@ -12,15 +12,15 @@ let float_of_qty qty =
   float_of_string (Primitives.Qty.to_string qty)
 
 (* Order command processing via REST *)
-let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_event : unit Lwt.t = (* Removed _state *)
-  let section = Lwt_log_core.Section.make "kraken_rest_exec" in (* Renamed section for clarity *)
+let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_event : unit Lwt.t =
+  let section = Lwt_log_core.Section.make "kraken_rest_exec" in 
   match cmd with
   | Add { symbol; side; price; qty; client_id; _ } -> 
       Lwt_log_core.debug ~section (Printf.sprintf "Processing REST Add Order for client_id: %s" client_id) >>= fun () ->
       let api_path = "/0/private/AddOrder" in
       let api_host = "api.kraken.com" in 
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      Kraken_common_types.nonce () >>= fun nonce -> (* Changed here *)
+      Kraken_common_types.nonce () >>= fun nonce -> 
       let price_str =
         let raw_price_float = float_of_price price in
         match Kraken_incoming_data.get_precisions symbol with 
@@ -96,7 +96,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let api_path = "/0/private/AmendOrder" in
       let api_host = "api.kraken.com" in
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      Kraken_common_types.nonce () >>= fun nonce -> (* Changed here *)
+      Kraken_common_types.nonce () >>= fun nonce -> 
       let price_prec_opt, qty_prec_opt = 
         match Kraken_incoming_data.get_precisions symbol with
         | Some (pp, qp) -> (Some pp, Some qp)
@@ -160,7 +160,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let api_path = "/0/private/CancelOrder" in
       let api_host = "api.kraken.com" in
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      Kraken_common_types.nonce () >>= fun nonce -> (* Changed here *)
+      Kraken_common_types.nonce () >>= fun nonce -> 
       let params = [
         ("nonce", [nonce]);
         ("txid", [order_id]); 
@@ -185,7 +185,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         if List.length errors > 0 then
           let error_msgs = String.concat "; " (List.map Yojson.Safe.Util.to_string errors) in
           Lwt_log_core.error ~section (Printf.sprintf "REST CancelOrder failed for order_id %s: %s" order_id error_msgs) >>= fun () ->
-          let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_FAIL"; state = Core.Rejected; ts } in (* Or Open if unsure *)
+          let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_FAIL"; state = Core.Rejected; ts } in 
           on_event ack
         else
           match Yojson.Safe.Util.(member "result" json_resp |> member "count" |> to_int_option) with
@@ -193,15 +193,15 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
               Lwt_log_core.info ~section (Printf.sprintf "REST CancelOrder successful for order_id %s. Count: %d" order_id count) >>= fun () ->
               let ack = Core.Ack { order_id; client_id = "N/A_CANCEL"; state = Core.Canceled; ts } in
               on_event ack
-          | Some _ (* count = 0 or other value *) | None -> 
+          | Some _ | None -> 
               Lwt_log_core.error ~section (Printf.sprintf "REST CancelOrder: 'count' not positive or not found for order_id %s. Body: %s" order_id body_str) >>= fun () ->
-              let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_NO_COUNT"; state = Core.Rejected; ts } in (* Or Open *)
+              let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_NO_COUNT"; state = Core.Rejected; ts } in 
               on_event ack
       ) (fun ex ->
         let err_msg = Printexc.to_string ex in
         Lwt_log_core.error ~section (Printf.sprintf "Exception during REST CancelOrder for order_id %s: %s" order_id err_msg) >>= fun () ->
         let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
-        let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_EXN"; state = Core.Rejected; ts } in (* Or Open *)
+        let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_EXN"; state = Core.Rejected; ts } in 
         on_event ack
       )
 

@@ -1,15 +1,14 @@
 (* src/exchange/kraken/kraken_orderbook.ml *)
 
 open Lwt.Infix
-(* open Lwt.Syntax Removed, as Result.t bindings should use match or Result.bind directly *)
 module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
 open Dio_types
-open Lwt_log_core (* For logging functions like error_f, debug_f *)
+open Lwt_log_core 
 
 let section = Section.make "kraken_orderbook"
 
-(* Helper for sequencing results: transforms a list of results into a result of a list *)
+(* sequencing results: transforms a list of results into a result of a list *)
 let sequence_results (lst : ('a, 'e) result list) : ('a list, 'e) result =
   let folder acc res =
     match acc, res with
@@ -23,11 +22,10 @@ let sequence_results (lst : ('a, 'e) result list) : ('a list, 'e) result =
 type price_level = {
   price: float;
   qty: float;
-  price_str: string; (* string representation for checksum *)
-  qty_str: string;   (* string representation for checksum *)
+  price_str: string; 
+  qty_str: string;  
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Orderbook data structure *)
 type orderbook = {
   symbol: string;
   bids: price_level list;
@@ -36,7 +34,6 @@ type orderbook = {
   timestamp: string option;
 }
 
-(* Book channel types for parsing *)
 type book_data = {
   asks: price_level list;
   bids: price_level list;
@@ -45,7 +42,7 @@ type book_data = {
   timestamp: string option;
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Custom JSON parsers for book_data to handle optional timestamp *)
+(* JSON parsers for book_data to handle optional timestamp *)
 let book_data_of_yojson ?(get_precisions = fun _ -> None) json : (book_data, string) result = (* Returns Result.t directly *)
   let open Yojson.Safe.Util in
   try
@@ -53,10 +50,10 @@ let book_data_of_yojson ?(get_precisions = fun _ -> None) json : (book_data, str
     let (price_precision, qty_precision) = 
       match get_precisions symbol with
       | Some (price_prec, qty_prec) -> (price_prec, qty_prec)
-      | None -> (8, 8) (* Default fallback *)
+      | None -> (8, 8) 
     in
     
-    let parse_price_level json : (price_level, string) result = (* Returns Result.t directly *)
+    let parse_price_level json : (price_level, string) result = 
       let price_str_res = 
         match json |> member "price" with
         | `String s -> Result.Ok s
@@ -104,7 +101,7 @@ let book_data_of_yojson ?(get_precisions = fun _ -> None) json : (book_data, str
   | exn -> Result.Error ("book_data: " ^ Printexc.to_string exn)
 
 let book_data_of_yojson_exn ?(get_precisions = fun _ -> None) json : book_data Lwt.t =
-  match book_data_of_yojson ~get_precisions json with (* Call the non-Lwt version *)
+  match book_data_of_yojson ~get_precisions json with 
   | Result.Ok v -> Lwt.return v
   | Result.Error msg ->
     error_f ~section "Failed to parse book data: %s" msg >>= fun () ->
@@ -131,7 +128,7 @@ let log_top_of_book_update (symbol: string) (sorted_bids: price_level list) (sor
     
     (* Check if top-of-book changed *)
     let should_log = match previous_top with
-      | None -> true (* First time seeing this symbol *)
+      | None -> true 
       | Some (prev_bid, prev_ask) -> 
         not (Float.equal prev_bid top_bid.price && Float.equal prev_ask top_ask.price)
     in
@@ -163,7 +160,7 @@ let calculate_crc32_checksum (symbol: string) (bids: price_level list) (asks: pr
   let top_bids = take (min 10 (List.length bids)) bids in
   let top_asks = take (min 10 (List.length asks)) asks in
   
-  (* Helper function to remove leading zeros *)
+  (* remove leading zeros *)
   let remove_leading_zeros s =
     let rec remove_zeros i =
       if i >= String.length s then "0"
@@ -198,8 +195,7 @@ let calculate_crc32_checksum (symbol: string) (bids: price_level list) (asks: pr
   
   (* Concatenate asks + bids *)
   let combined_string = asks_string ^ bids_string in
-  
-  (* Debug logging for checksum calculation *)
+
   debug_f ~section
     "CRC32 checksum calculation for %s: combined_string length = %d"
        symbol (String.length combined_string) |> ignore;
@@ -394,13 +390,11 @@ let generate_book_events (symbol: string) : Core.market_event list =
     match book.bids, book.asks with
     | top_bid :: _, top_ask :: _ ->
       let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
-      let price_prec = 8 in (* Default precision, should be retrieved from instrument data *)
+      let price_prec = 8 in 
       let bid_price = Primitives.Price.of_string_exn ~scale:price_prec (Printf.sprintf "%.8f" top_bid.price) in
       let ask_price = Primitives.Price.of_string_exn ~scale:price_prec (Printf.sprintf "%.8f" top_ask.price) in
       [Core.Book { symbol; bid = bid_price; ask = ask_price; ts }]
     | _ -> []
-
-(* Public API functions *)
 
 (* Get current orderbook *)
 let get_orderbook (symbol: string) : orderbook option =
@@ -457,7 +451,6 @@ let get_orderbook_stats (symbol: string) : (int * int) option =
   | None -> None
   | Some book -> Some (List.length book.bids, List.length book.asks)
 
-(* Debug: Print orderbook state *)
 let debug_print_orderbook (symbol: string) : unit Lwt.t =
   match Hashtbl.find_opt orderbooks symbol with
   | None ->

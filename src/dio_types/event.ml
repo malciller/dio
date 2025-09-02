@@ -1,4 +1,5 @@
 (* src/types/event.ml *)
+
 open Primitives
 
 (** Which exchange produced this event *)
@@ -7,8 +8,8 @@ type exchange = string
 
 (** Unified market tick *)
 type tick = {
-  src    : exchange;    (* e.g. "kraken" *)
-  symbol : string;      (* normalized, e.g. "BTC/USD" *)
+  src    : exchange;    
+  symbol : string;     
   bid    : Price.t;
   ask    : Price.t;
   current_price : Price.t; (* Midpoint of bid/ask *)
@@ -18,7 +19,7 @@ type tick = {
   change: float;
   change_pct: float;
   high: float;
-  last_price: float; (* Corresponds to 'last' in the API schema *)
+  last_price: float; 
   low: float;
   volume: float;
   vwap: float;

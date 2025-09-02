@@ -1,7 +1,8 @@
 (* src/engine/supervisor.ml *)
-open Lwt.Infix  (* for >>= *)
+open Lwt.Infix 
 open Dio_types 
-(* Supervision helper: restart a fiber on failure, with logging and delay *)
+
+(* restart a fiber on failure, with logging and delay *)
 let supervise name fiber_fun =
   let section = Lwt_log_core.Section.make ("engine.supervisor." ^ name) in
   let rec loop () =
@@ -29,7 +30,7 @@ let start ~(feed_initializer_fn : unit -> unit Lwt.t)
     ~(cmd_buffer: Core.order_cmd Ringbuffer.t) 
     (runtime_cfg : Config.runtime_cfg) 
     (core_cfg : Config.engine_config) =     
-  (* Coordinator: launch the four main fibers and supervise them *)
+  (* launch the four main fibers and supervise them *)
   let feed_fut = supervise "feed" feed_initializer_fn in
   let grid_strat_fut = supervise "grid_strategy" (fun () -> grid_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
   let orderbook_strat_fut = supervise "orderbook_strategy" (fun () -> orderbook_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in 

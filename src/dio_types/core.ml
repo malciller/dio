@@ -1,4 +1,5 @@
 (* src/types/core.ml *)
+
 open Primitives
 
 type side  = Buy | Sell                 [@@deriving yojson]
@@ -41,22 +42,22 @@ type market_event =
 [@@deriving yojson]
 
 
-(* Type for strategy component *) 
+(* strategy component *) 
 type grid_strategy = {
   start: Config.runtime_cfg -> Config.engine_config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
 
-(* Type for orderbook strategy component *)
+(* orderbook strategy component *)
 type orderbook_strategy = {
   start: Config.runtime_cfg -> Config.engine_config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
 
-(* Type for router component *) 
+(* router component *) 
 type router = {
   start: Config.engine_config -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
 
-(* Response type for order operations *)
+(* order operations *)
 type order_response = {
   success: bool;
   error: string option;
