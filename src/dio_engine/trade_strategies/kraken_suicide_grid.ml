@@ -20,6 +20,8 @@ module State = struct
 
   let open_orders : (string, K.Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
   
+  let pending_amends : (string, (Primitives.Price.t * Primitives.Qty.t)) Hashtbl.t = Hashtbl.create 16
+
   let initialized_symbols : (string, bool) Hashtbl.t = Hashtbl.create 16
 
   type open_order = {
@@ -413,11 +415,30 @@ module State = struct
                   Lwt.return_unit
                 )
             | Open ->
-                (* When an order is amended/opened (including after partial fills), just sync *)
-                debug_f ~section
-                  "Order %s state updated to Open - syncing orders" order_id >>= fun () ->
-                sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
-                Lwt.return_unit
+                begin match Hashtbl.find_opt pending_amends order_id with
+                | Some (new_price, new_qty) ->
+                    (* This is a confirmation of our amend. Update local state immediately. *)
+                    debug_f ~section "Processing confirmed amend for order %s" order_id >>= fun () ->
+                    begin match Hashtbl.find_opt open_orders order_id with
+                    | Some order ->
+                        let updated_order = { order with
+                          limit_price = float_of_string (Primitives.Price.to_string new_price);
+                          qty = float_of_string (Primitives.Qty.to_string new_qty);
+                        } in
+                        Hashtbl.replace open_orders order_id updated_order;
+                        Hashtbl.remove pending_amends order_id;
+                        Lwt.return_unit
+                    | None ->
+                        (* Order not found, might have been filled/cancelled. Syncing is safe here. *)
+                        Hashtbl.remove pending_amends order_id;
+                        sync_open_orders runtime_cfg cmd_buffer ()
+                    end
+                | None ->
+                    (* Not a pending amend, just a regular Open ack. Sync state. *)
+                    debug_f ~section
+                      "Order %s state updated to Open - syncing orders" order_id >>= fun () ->
+                    sync_open_orders runtime_cfg cmd_buffer ()
+                end
             | Filled ->
                 (* For Ack Filled (confirmation after final partial) *)
                 sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
@@ -602,10 +623,17 @@ module State = struct
                             ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
                           } in
 
-                          Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
-                          info_f ~section:verify_section
-                            "Grid Verify [%s]: FAILED & AMENDING."
-                            symbol
+                          if Hashtbl.mem pending_amends highest_buy_order.order_id then
+                            debug_f ~section:verify_section
+                              "Grid Verify [%s]: Skipping amend for %s, already pending."
+                              symbol highest_buy_order.order_id
+                          else (
+                            Hashtbl.add pending_amends highest_buy_order.order_id (new_buy_price_primitive, existing_qty_primitive);
+                            Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+                            info_f ~section:verify_section
+                              "Grid Verify [%s]: FAILED & AMENDING."
+                              symbol
+                          )
         else
           info_f ~section:verify_section
             "Grid Verify [%s]: Skipping, not enough buy/sell orders to form a grid (Buys: %d, Sells: %d)."

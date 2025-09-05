@@ -148,6 +148,9 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         else
           match Yojson.Safe.Util.(member "result" json_resp |> member "amend_id" |> to_string_option) with
           | Some amend_id ->
+              let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
+              let ack = Core.Ack { order_id; client_id = "N/A_AMEND_OK"; state = Core.Open; ts } in
+              on_event ack >>= fun () ->
               Lwt_log_core.info ~section (Printf.sprintf "REST AmendOrder successful for order_id %s. Amend ID: %s" order_id amend_id)
           | None -> 
               Lwt_log_core.error ~section (Printf.sprintf "REST AmendOrder: amend_id not found in successful response for order_id %s. Body: %s" order_id body_str)
