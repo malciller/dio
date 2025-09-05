@@ -477,7 +477,7 @@ module State = struct
       "Initialized %d open orders from exchange" (Hashtbl.length open_orders)
 
   let verify_grid_spacing (runtime_cfg : Config.runtime_cfg) (symbol : string) (cmd_buffer : Core.order_cmd Ringbuffer.t) (current_market_price_float : float) : unit Lwt.t =
-    let verify_section = Lwt_log_core.Section.make "engine.strategy.grid_verify" in (* Use a local section for this function *)
+    let verify_section = Lwt_log_core.Section.make "engine.strategy.grid_verify" in 
     match List.find_opt (fun (asset : Config.asset_cfg) -> String.equal asset.symbol symbol) runtime_cfg.assets with
     | None ->
         warning_f ~section:verify_section
@@ -523,7 +523,7 @@ module State = struct
                 Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval)
               in
               let expected_total_spread_pct = 2.0 *. configured_grid_interval_pct in
-              let tolerance_pct = 0.0 (* Tolerance for comparison *) in
+              let tolerance_pct = 0.01 (* Tolerance for comparison *) in
               let diff_pct = abs_float (actual_spread_pct_of_mid -. expected_total_spread_pct) in
 
               if diff_pct <= tolerance_pct then
@@ -556,40 +556,56 @@ module State = struct
                       let new_price_formatted = Printf.sprintf "%.*f" price_prec new_target_buy_price_float in
                       
                       (* see the actual values being compared *)
-                      (if String.equal symbol "BTC/USD" then
-                        debug_f ~section:verify_section
-                          "Grid Verify [%s] DEBUG: existing_price=%.8f (formatted: %s), new_price=%.8f (formatted: %s), equal=%b"
-                          symbol
-                          highest_buy_order.limit_price
-                          existing_price_formatted
-                          new_target_buy_price_float
-                          new_price_formatted
-                          (String.equal existing_price_formatted new_price_formatted) >>= fun () ->
-                        Lwt.return_unit
-                      else Lwt.return_unit) >>= fun () ->
+                      debug_f ~section:verify_section
+                        "Grid Verify [%s] DEBUG: existing_price=%.8f (formatted: %s), new_price=%.8f (formatted: %s), equal=%b"
+                        symbol
+                        highest_buy_order.limit_price
+                        existing_price_formatted
+                        new_target_buy_price_float
+                        new_price_formatted
+                        (String.equal existing_price_formatted new_price_formatted) >>= fun () ->
+                      Lwt.return_unit >>= fun () ->
                       
                       if String.equal existing_price_formatted new_price_formatted then
                         info_f ~section:verify_section
                           "Grid Verify [%s]: PASSED."
                           symbol
                       else
-                        (* Prices are different after formatting, proceed with amend *)
-                        let existing_qty_primitive =
-                           Primitives.Qty.of_string_exn ~scale:qty_prec (Printf.sprintf "%.*f" qty_prec highest_buy_order.qty)
-                        in
-                        let amend_cmd = Core.Amend {
-                          dst = "kraken";
-                          order_id = highest_buy_order.order_id;
-                          symbol = symbol;
-                          new_price = new_buy_price_primitive;
-                          new_qty = existing_qty_primitive;
-                          ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-                        } in
+                        (* Check if price difference is meaningful enough for amendment *)
+                        let existing_formatted_float = float_of_string existing_price_formatted in
+                        let new_formatted_float = float_of_string new_price_formatted in
+                        let price_diff = abs_float (existing_formatted_float -. new_formatted_float) in
+                        let min_price_diff = 10.0 ** (-.float_of_int price_prec) *. 2.0 in (* 2x the precision minimum *)
 
-                        Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
-                        info_f ~section:verify_section
-                          "Grid Verify [%s]: FAILED & AMENDING."
+                        debug_f ~section:verify_section
+                          "Grid Verify [%s] DEBUG: price_diff=%.8f, min_diff=%.8f, amendable=%b"
                           symbol
+                          price_diff
+                          min_price_diff
+                          (price_diff >= min_price_diff) >>= fun () ->
+
+                        if price_diff < min_price_diff then
+                          info_f ~section:verify_section
+                            "Grid Verify [%s]: SKIPPED (price diff too small)."
+                            symbol
+                        else
+                          (* Prices are different and difference is meaningful, proceed with amend *)
+                          let existing_qty_primitive =
+                             Primitives.Qty.of_string_exn ~scale:qty_prec (Printf.sprintf "%.*f" qty_prec highest_buy_order.qty)
+                          in
+                          let amend_cmd = Core.Amend {
+                            dst = "kraken";
+                            order_id = highest_buy_order.order_id;
+                            symbol = symbol;
+                            new_price = new_buy_price_primitive;
+                            new_qty = existing_qty_primitive;
+                            ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+                          } in
+
+                          Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+                          info_f ~section:verify_section
+                            "Grid Verify [%s]: FAILED & AMENDING."
+                            symbol
         else
           info_f ~section:verify_section
             "Grid Verify [%s]: Skipping, not enough buy/sell orders to form a grid (Buys: %d, Sells: %d)."
@@ -608,7 +624,7 @@ module State = struct
           limit_price = order.limit_price;
         }
       | None -> 
-          Lwt_main.run (error_f ~section "Invalid side in order: %s (Order ID: %s)" order.order_id order.order_id); (* Log the error *)
+          Lwt_main.run (error_f ~section "Invalid side in order: %s (Order ID: %s)" order.order_id order.order_id); 
           None (* Return None to filter out invalid orders *)
     ) orders
 end

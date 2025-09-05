@@ -7,8 +7,6 @@
   - Buy order updated to maintain top-level of order book.
 
 *)
-
-
 open Lwt.Infix
 open Dio_types
 open Lwt_log_core
@@ -146,11 +144,10 @@ module State = struct
             let order_price_float = order.limit_price in
             let top_bid_price_float = Float.of_string (Primitives.Price.to_string top_bid_price) in
             
-            (* More detailed logging to debug precision issues *)
             debug_f ~section "Price comparison for order %s: order_price_float=%.8f top_bid_price_float=%.8f"
               order.order_id order_price_float top_bid_price_float >>= fun () ->
             
-            (* No tolerance - any price change triggers an amend *)
+            (* No tolerance, any price change triggers an amend *)
             let price_diff = abs_float (order_price_float -. top_bid_price_float) in
             
             debug_f ~section "Price difference: %.10f, needs_amend: %b"

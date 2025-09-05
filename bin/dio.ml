@@ -17,7 +17,8 @@ let setup_logging () =
   Lwt_log.add_rule "*" Error;  
   Lwt_log.add_rule "*" Warning; 
   Lwt_log.add_rule "*" Info;  
-  (*Lwt_log.add_rule "*" Debug; *)
+
+  
 
   let default_logger =
     if !mode_dash then
@@ -46,16 +47,37 @@ let setup_logging () =
             Lwt.return_unit
         )
         ~close:(fun () -> Lwt.return_unit)
-    else
-      (* Normal mode: logs go to stdout *)
-      Lwt_log.channel ~close_mode:`Keep ~channel:Lwt_io.stdout ()
-  in
-
+      else
+        (* Normal mode: logs go to stdout *)
+        make
+          ~output:(fun section level messages ->
+            if List.length messages > 0 then
+              let first_message_string = List.hd messages in
+              let timestamp = 
+                let tm = Unix.localtime (Unix.time ()) in
+                Printf.sprintf "%02d:%02d:%02d" 
+                  tm.Unix.tm_hour 
+                  tm.Unix.tm_min 
+                  tm.Unix.tm_sec
+              in
+              let formatted_message = 
+                Printf.sprintf "[%s][%s|%s] %s" 
+                  timestamp
+                  (Section.name section) 
+                  (string_of_level level) 
+                  first_message_string
+              in
+              Lwt_io.printf "%s\n" formatted_message
+            else
+              Lwt.return_unit
+          )
+          ~close:(fun () -> Lwt.return_unit)
+            in
   default := default_logger;
 
   (* Specific rules for log levels and sections. Amended to the rules above.*) 
-  Lwt_log.add_rule "engine.*" Info;  
-  Lwt_log.add_rule "kraken_nonce" Debug;  
+  Lwt_log.add_rule "engine.strategy.grid_verify" Debug; 
+
   ()
 
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)

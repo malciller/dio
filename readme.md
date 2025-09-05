@@ -8,7 +8,7 @@ A high-performance, real-time cryptocurrency trading engine built in OCaml. Dio 
 ## Features
 
 - **Real-time Trading**: WebSocket connections for live price feeds and instant order execution
-- **Multiple Strategies**: Grid trading and top-level orderbook market making
+- **Multiple Example Strategies**: Grid trading and top-level orderbook market making
 - **Terminal Dashboard**: Real-time CLI interface with price visualization and order tracking
 - **Modular Architecture**: Clean separation between strategies, routing, and data feeds
 - **Configuration-Driven**: JSON-based configuration for easy strategy deployment

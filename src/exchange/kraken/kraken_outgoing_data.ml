@@ -126,7 +126,8 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         ("post_only", ["true"]); 
       ] in
       let encoded_post_data = Uri.encoded_of_query params in 
-      Lwt_log_core.debug ~section (Printf.sprintf "REST AmendOrder POST data: %s" encoded_post_data) >>= fun () ->
+      let payload_section = Lwt_log_core.Section.make "kraken_rest_exec.amend_payload" in
+      Lwt_log_core.debug ~section:payload_section encoded_post_data >>= fun () ->
       let signature = Kraken_common_types.sign ~secret:cfg.kraken_api_secret ~path:api_path ~body:encoded_post_data ~nonce in
       let headers = Cohttp.Header.of_list [
         ("API-Key", cfg.kraken_api_key);
