@@ -12,6 +12,7 @@
 .env*
 *.sh
 
-*.py
+
 *.csv
 *.html
+__pycache__/

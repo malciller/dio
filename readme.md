@@ -256,7 +256,7 @@ We welcome contributions! Please:
 **Legal Disclaimer**: This software is provided "as is" without warranty. The authors are not responsible for any financial losses, damages, or other liabilities arising from its use. Always consult with financial professionals before engaging in cryptocurrency trading.
 
 
-## Example Performance
+## Example Performance - $4,500 Capital
 
 # Monthly Portfolio Metrics
 | Month | Gains | Volume USD | Return % | ROC % | Trades | Avg Gain | Fees | Fees % | Capital | Margin | Cost USD |
