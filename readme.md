@@ -393,6 +393,8 @@ We welcome contributions! Please:
 ## Asset Analysis
 
 | Symbol | Gains | Volume(USD) | Gains/Vol% | Trades | Avg Gain |
+|--------|--------|-------------|------------|--------|----------|
+| BTC/USD | $485.73 | $165505 | 0.29% | 2794 | $0.17 |
 | BTC/USD | $485.73 | $165505 | 0.29% | 2794 | $0.17 |
 | ETH/USD | $179.36 | $13275 | 1.35% | 1164 | $0.15 |
 | SOL/USD | $155.36 | $24727 | 0.63% | 2392 | $0.06 |
