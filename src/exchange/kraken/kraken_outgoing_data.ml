@@ -144,7 +144,23 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         let errors = Yojson.Safe.Util.(member "error" json_resp |> to_list) in
         if List.length errors > 0 then
           let error_msgs = String.concat "; " (List.map Yojson.Safe.Util.to_string errors) in
-          Lwt_log_core.error ~section (Printf.sprintf "REST AmendOrder failed for order_id %s: %s" order_id error_msgs)
+          Lwt_log_core.error ~section (Printf.sprintf "REST AmendOrder failed for order_id %s: %s" order_id error_msgs) >>= fun () ->
+          let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
+          (* Check if this is an "Unknown order" error, which means the order was already filled/cancelled *)
+          let is_unknown_order = 
+            let needle = "EOrder:Unknown order" in
+            let needle_len = String.length needle in
+            let haystack_len = String.length error_msgs in
+            let rec check i =
+              if i > haystack_len - needle_len then false
+              else if String.sub error_msgs i needle_len = needle then true
+              else check (i + 1)
+            in
+            check 0
+          in
+          let state = if is_unknown_order then Core.Canceled else Core.Rejected in
+          let ack = Core.Ack { order_id; client_id = "N/A_AMEND_FAILED"; state; ts } in
+          on_event ack
         else
           match Yojson.Safe.Util.(member "result" json_resp |> member "amend_id" |> to_string_option) with
           | Some amend_id ->

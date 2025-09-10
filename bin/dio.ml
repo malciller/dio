@@ -76,8 +76,8 @@ let setup_logging () =
   default := default_logger;
 
   (* Specific rules for log levels and sections. Amended to the rules above.*) 
-  Lwt_log.add_rule "engine.strategy.grid_verify" Debug; 
-  Lwt_log.add_rule "kraken_rest_exec.amend_payload" Debug; 
+  (*Lwt_log.add_rule "engine.strategy.grid_verify" Debug; *)
+
   ()
 
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)
