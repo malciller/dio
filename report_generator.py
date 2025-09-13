@@ -260,7 +260,8 @@ def fetch_current_prices(assets):
         'KSM': 'KSMUSD',
         'BABY': 'BABYUSD',
         'EIGEN': 'EIGENUSD',
-        'USDG': 'USDGUSD'
+        'USDG': 'USDGUSD',
+        'USDR': 'USDRUSD'
         # Removed: QQQ, SCHD, VTI (stocks/ETFs not available as crypto trading pairs)
     }
 

@@ -76,7 +76,7 @@ let setup_logging () =
   default := default_logger;
 
   (* Specific rules for log levels and sections. Amended to the rules above.*) 
-  (* Lwt_log.add_rule "kraken_triangular_arb" Debug; *)
+  (* Lwt_log.add_rule "kraken_arbitrage" Debug; *)
 
   ()
 
@@ -176,7 +176,7 @@ let start_engine_logic () : unit Lwt.t =
             start = Kraken_top_level_mm.start
           } in
           let arbitrage_strategy : Core.arbitrage_strategy = {
-            start = Kraken_triangular_arb.start
+            start = Kraken_arbitrage.start
           } in
           let router : Core.router = {
             start = Router.start

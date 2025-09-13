@@ -88,6 +88,14 @@ Market making at the top of the orderbook:
 - **Volume Management**: Dynamic quantity adjustment
 - **Ideal for**: High-liquidity pairs with competitive fees
 
+### Arbitrage Strategy
+Detects and executes multi-leg arbitrage opportunities across different trading pairs. This strategy runs automatically on all assets defined in `_config.json` and does not need to be assigned to a specific asset.
+- **Graph-Based Detection**: Builds a real-time graph of all available assets to find profitable cycles.
+- **Bellman-Ford Algorithm**: Uses an optimized Bellman-Ford algorithm to efficiently identify arbitrage opportunities from price discrepancies.
+- **Liquidity Aware**: Calculates trade sizes based on available order book depth and current balances to minimize slippage and ensure execution.
+- **Automated Execution**: Submits a rapid sequence of orders to execute all legs of a profitable cycle.
+- **Ideal for**: Exploiting short-lived, cross-pair mispricings in real-time.
+
 ## Architecture
 
 ```
