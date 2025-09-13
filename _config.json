@@ -41,6 +41,13 @@
       "grid_interval": "0.01",
       "sell_mult": "1.0",
       "strategy": "Orderbook"
+    },
+    {
+      "symbol": "USDR/USD",
+      "qty": "100.0",
+      "grid_interval": "0.01",
+      "sell_mult": "1.0",
+      "strategy": "Orderbook"
     }
   ],
   "debounce_ms": 1000,

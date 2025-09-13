@@ -22,7 +22,7 @@ let setup_logging () =
 
   let default_logger =
     if !mode_dash then
-      (* Dashboard mode: logs with timestamps *)
+      (* Dashboard mode *)
       make
         ~output:(fun section level messages ->
           if List.length messages > 0 then
@@ -48,7 +48,7 @@ let setup_logging () =
         )
         ~close:(fun () -> Lwt.return_unit)
       else
-        (* Normal mode: logs go to stdout *)
+        (* Normal mode *)
         make
           ~output:(fun section level messages ->
             if List.length messages > 0 then

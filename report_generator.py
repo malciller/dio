@@ -1132,7 +1132,7 @@ def calculate_gains(csv_file):
         all_assets = sorted(asset_monthly_data.keys())
 
         # Table 1: Gains
-        lines.append("| Asset | " + " | ".join(sorted_months) + " | **Total** |")
+        lines.append("| Asset | " + " | ".join(sorted_months) + " | Total |")
         lines.append("| " + " | ".join(["---"] * (len(sorted_months) + 2)) + " |")
 
         for symbol in all_assets:
@@ -1158,7 +1158,7 @@ def calculate_gains(csv_file):
         lines.append("### Trading Volume by Asset")
 
         # Table 2: Volume
-        lines.append("| Asset | " + " | ".join(sorted_months) + " | **Total** |")
+        lines.append("| Asset | " + " | ".join(sorted_months) + " | Total |")
         lines.append("| " + " | ".join(["---"] * (len(sorted_months) + 2)) + " |")
 
         for symbol in all_assets:
@@ -1184,7 +1184,7 @@ def calculate_gains(csv_file):
         lines.append("### Return Percentage by Asset")
 
         # Table 3: Return %
-        lines.append("| Asset | " + " | ".join(sorted_months) + " | **Total** |")
+        lines.append("| Asset | " + " | ".join(sorted_months) + " | Total |")
         lines.append("| " + " | ".join(["---"] * (len(sorted_months) + 2)) + " |")
 
         for symbol in all_assets:
@@ -1215,7 +1215,7 @@ def calculate_gains(csv_file):
         lines.append("### Trade Count by Asset")
 
         # Table 4: Trades
-        lines.append("| Asset | " + " | ".join(sorted_months) + " | **Total** |")
+        lines.append("| Asset | " + " | ".join(sorted_months) + " | Total |")
         lines.append("| " + " | ".join(["---"] * (len(sorted_months) + 2)) + " |")
 
         for symbol in all_assets:

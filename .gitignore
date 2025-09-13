@@ -11,7 +11,7 @@
 # --- env / secrets ---
 .env*
 *.sh
-
+get_asset_fee.py
 
 *.csv
 *.html
