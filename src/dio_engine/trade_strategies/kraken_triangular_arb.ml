@@ -98,7 +98,7 @@ let build_exchange_graph symbols : (string, graph_node) Hashtbl.t Lwt.t =
             let base_to_quote_edge = {
               from_asset = base_asset;
               to_asset = quote_asset;
-              rate = ask_price;  (* Buy quote with base *)
+              rate = ask_price;  (* Sell base for quote *)
               fee_rate;
               capacity = top_ask.qty;
               pair = symbol;
@@ -109,7 +109,7 @@ let build_exchange_graph symbols : (string, graph_node) Hashtbl.t Lwt.t =
               to_asset = base_asset;
               rate = 1.0 /. bid_price;  (* Buy base with quote *)
               fee_rate;
-              capacity = top_bid.qty;
+              capacity = top_bid.qty *. bid_price; (* Capacity in quote asset *)
               pair = symbol;
             } in
 
@@ -249,23 +249,24 @@ let calculate_trade_sizes cycle graph =
   let path = cycle.path in
   if List.length path < 4 then cycle else  (* Need at least 3 edges + closing *)
 
-  (* Find the bottleneck capacity along the cycle *)
-  let rec find_bottleneck remaining_path min_capacity =
+  (* Find the bottleneck capacity along the cycle, normalized to the start asset *)
+  let rec find_bottleneck remaining_path min_capacity current_rate =
     match remaining_path with
     | [_] -> min_capacity
     | current :: next :: rest ->
-        let edge_capacity = match Hashtbl.find_opt graph current with
-          | Some node ->
-              List.find_opt (fun edge -> edge.to_asset = next) node.edges
-              |> Option.map (fun edge -> edge.capacity)
-              |> Option.value ~default:0.0
-          | None -> 0.0
-        in
-        find_bottleneck (next :: rest) (min min_capacity edge_capacity)
+        (match Hashtbl.find_opt graph current with
+         | Some node ->
+             (match List.find_opt (fun edge -> edge.to_asset = next) node.edges with
+              | Some edge ->
+                  let normalized_capacity = edge.capacity *. current_rate in
+                  let next_rate = current_rate *. effective_rate edge in
+                  find_bottleneck (next :: rest) (min min_capacity normalized_capacity) next_rate
+              | None -> min_capacity)
+         | None -> min_capacity)
     | [] -> min_capacity
   in
 
-  let bottleneck = find_bottleneck path max_float in
+  let bottleneck = find_bottleneck path max_float 1.0 in
   let trade_size = min bottleneck 1.0 in  (* Limit to 1 unit for safety *)
 
   { cycle with
@@ -305,11 +306,25 @@ let create_arbitrage_orders cycle graph cmd_buffer =
          | Some node ->
              (match List.find_opt (fun edge -> edge.to_asset = next) node.edges with
               | Some edge ->
-                  (* Create order for this leg *)
-                  let side = Core.Buy in  (* Assume we're buying the next asset *)
-                  let price_str = Printf.sprintf "%.8f" (effective_rate edge) in
+                  (* Determine order side and quantity *)
+                  let base_asset, quote_asset = extract_assets edge.pair in
+                  let side, order_qty, next_size =
+                    if edge.from_asset = quote_asset && edge.to_asset = base_asset then
+                      (* Buy base with quote *)
+                      let qty = current_size /. edge.rate in
+                      (Core.Buy, qty, qty)
+                    else if edge.from_asset = base_asset && edge.to_asset = quote_asset then
+                      (* Sell base for quote *)
+                      let next_size = current_size *. effective_rate edge in
+                      (Core.Sell, current_size, next_size)
+                    else
+                      (* Should not happen with a well-formed graph *)
+                      (Core.Buy, 0.0, 0.0)
+                  in
+
+                  let price_str = Printf.sprintf "%.8f" edge.rate in
                   let price = Primitives.Price.of_string_exn ~scale:8 price_str in
-                  let qty_str = Printf.sprintf "%.8f" current_size in
+                  let qty_str = Printf.sprintf "%.8f" order_qty in
                   let qty = Primitives.Qty.of_string_exn ~scale:8 qty_str in
 
                   let order_cmd = Core.Add {
@@ -326,11 +341,11 @@ let create_arbitrage_orders cycle graph cmd_buffer =
                   info_f ~section "Creating arbitrage order: %s %s %.8f@%s"
                     edge.pair
                     (match side with Buy -> "BUY" | Sell -> "SELL")
-                    current_size
+                    order_qty
                     price_str >>= fun () ->
 
                   Ringbuffer.push cmd_buffer order_cmd >>= fun () ->
-                  create_orders (next :: rest) current_size
+                  create_orders (next :: rest) next_size
               | None ->
                   warning_f ~section "No edge found from %s to %s" current next >>= fun () ->
                   Lwt.return_unit)
