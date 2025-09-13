@@ -34,11 +34,11 @@ let section = Section.make "kraken_arbitrage"
   Profit threshold accounts for taker fees while remaining economically viable.
 *)
 
-let profit_threshold_pct = 0.0005  (* 0.1% minimum profit after fees *)
+let profit_threshold_pct = 0.0010  (* 0.10% min profit after fees *)
 let max_cycle_length = 4         (* Maximum arbitrage cycle length *)
-let taker_fee_pct = 0.0035       (* 0.35% taker fee for most pairs *)
-let maker_fee_pct = 0.0020       (* 0.20% maker fee for most pairs *)
-let stable_fee_pct = 0.0001     (* 0.20% fee for USD stablecoins *)
+let taker_fee_pct       = 0.0035  (* 0.35% *)
+let maker_fee_pct       = 0.0020  (* 0.20% *)
+let stable_fee_pct      = 0.0010  (* 0.10%, adjust if you truly have discount *)
 
 let asset_min_order_sizes = [
   ("XXBTZUSD", 0.0001);   (* BTC/USD: 0.0001 BTC *)
@@ -180,13 +180,13 @@ let update_asset_balance asset delta =
       asset current_balance new_balance delta
   )
 
-let get_fee_rate pair_symbol =
-  let pair = String.uppercase_ascii pair_symbol in
-  if String.contains pair 'G' && String.contains pair 'U' && String.contains pair 'D' ||
-     String.contains pair 'R' && String.contains pair 'U' && String.contains pair 'D' then
-    stable_fee_pct  (* USDG/USDR pairs have no fees, but adding slight variation for ease of use *)
-  else
-    taker_fee_pct   (* Standard taker fee for crypto pairs *)
+let is_stable_pair s =
+  let p = String.uppercase_ascii s in
+  List.exists (fun pref -> String.starts_with ~prefix:pref p)
+    ["USDTZUSD"; "USDCZUSD"]
+
+let get_fee_rate pair =
+  if is_stable_pair pair then stable_fee_pct else taker_fee_pct
 
 let update_symbol_edges symbol =
   match Kraken.Kraken_orderbook.get_orderbook symbol with
@@ -205,18 +205,18 @@ let update_symbol_edges symbol =
           let base_to_quote_edge = {
             from_asset = base_asset;
             to_asset = quote_asset;
-            rate = ask_price;
+            rate = bid_price;             (* SELL base -> receive quote at bid *)
             fee_rate;
-            capacity = top_ask.qty;
+            capacity = top_bid.qty;       (* qty in BASE you can sell into the bid *)
             pair = symbol;
           } in
 
           let quote_to_base_edge = {
             from_asset = quote_asset;
             to_asset = base_asset;
-            rate = 1.0 /. bid_price;
+            rate = 1.0 /. ask_price;      (* BUY base with quote at ask *)
             fee_rate;
-            capacity = top_bid.qty *. bid_price;
+            capacity = top_ask.qty *. ask_price;  (* quote capacity that can lift ask *)
             pair = symbol;
           } in
 
@@ -237,7 +237,7 @@ let update_symbol_edges symbol =
           update_node_edges quote_asset quote_to_base_edge base_asset base_to_quote_edge;
 
           debug_f ~section "Updated edges for %s: %s->%s@%.8f, %s->%s@%.8f"
-            symbol base_asset quote_asset ask_price quote_asset base_asset (1.0 /. bid_price) >>= fun () ->
+            symbol base_asset quote_asset bid_price quote_asset base_asset (1.0 /. ask_price) >>= fun () ->
 
           Hashtbl.remove dirty_symbols symbol;
           Lwt.return_unit
@@ -352,6 +352,24 @@ let extract_cycle predecessors start_asset =
   let visited = Hashtbl.create 16 in
   build_path start_asset [] visited
 
+let profit_pct_of_path graph (path : string list) =
+  let rec loop acc = function
+    | a :: b :: tl ->
+        let rate =
+          match Hashtbl.find_opt graph a with
+          | Some node ->
+              (match List.find_opt (fun e -> e.to_asset = b) node.edges with
+              | Some e -> effective_rate e
+              | None -> 0.0)
+          | None -> 0.0
+        in
+        if rate <= 0.0 then 0.0
+        else loop (acc *. rate) (b :: tl)
+    | _ -> acc
+  in
+  let total_rate = loop 1.0 path in
+  total_rate -. 1.0
+
 (** Fast detection of triangular arbitrage opportunities.
 
     Optimized O(n³) algorithm for finding 3-asset arbitrage cycles.
@@ -364,6 +382,14 @@ let extract_cycle predecessors start_asset =
 let detect_triangle_arbitrage graph : arbitrage_cycle list Lwt.t =
   let cycles = ref [] in
   let assets = Hashtbl.fold (fun asset _ acc -> asset :: acc) graph [] in
+  let seen = Hashtbl.create 1024 in
+  let norm3 a b c =
+    let r1 = [a;b;c] and r2 = [b;c;a] and r3 = [c;a;b] in
+    let rotations = [r1; r2; r3] in
+    match rotations with
+    | [] -> failwith "rotations cannot be empty"
+    | hd :: tl -> List.fold_left (fun acc e -> if compare acc e <= 0 then acc else e) hd tl
+  in
 
   debug_f ~section "Running specialized triangle detection on %d assets" (List.length assets) >>= fun () ->
 
@@ -394,15 +420,19 @@ let detect_triangle_arbitrage graph : arbitrage_cycle list Lwt.t =
                           let profit_pct = total_rate -. 1.0 in
                           
                           if profit_pct > profit_threshold_pct then (
-                            let cycle = {
-                              path = [asset_a; asset_b; asset_c; asset_a];
-                              profit_pct;
-                              trade_sizes = [];
-                              bottleneck_volume = 0.0;
-                            } in
-                            cycles := cycle :: !cycles;
-                            debug_f ~section "Found triangle: %s->%s->%s->%s (profit: %.4f%%)"
-                              asset_a asset_b asset_c asset_a (profit_pct *. 100.0) |> Lwt.ignore_result
+                            let key = norm3 asset_a asset_b asset_c in
+                            if not (Hashtbl.mem seen key) then (
+                              Hashtbl.add seen key true;
+                              let cycle = {
+                                path = [asset_a; asset_b; asset_c; asset_a];
+                                profit_pct;
+                                trade_sizes = [];
+                                bottleneck_volume = 0.0;
+                              } in
+                              cycles := cycle :: !cycles;
+                              debug_f ~section "Found triangle: %s->%s->%s->%s (profit: %.4f%%)"
+                                asset_a asset_b asset_c asset_a (profit_pct *. 100.0) |> Lwt.ignore_result
+                            )
                           )
                         )
                       ) node_c.edges
@@ -438,18 +468,15 @@ let detect_general_arbitrage_cycles graph : arbitrage_cycle list Lwt.t =
       (* Found negative cycle *)
       let cycle_path = extract_cycle bf_state.predecessors edge.to_asset in
       if cycle_path <> [] && List.length cycle_path >= 4 then (  (* Only 4+ leg cycles *)
-        let profit_pct = Float.exp (-. (List.fold_left (fun acc asset ->
-          match Hashtbl.find_opt bf_state.distances asset with
-          | Some dist -> acc +. dist
-          | None -> acc
-        ) 0.0 cycle_path)) -. 1.0 in
+        let cycle_nodes = cycle_path @ [List.hd cycle_path] in
+        let profit_pct = profit_pct_of_path graph cycle_nodes in
 
         if profit_pct > profit_threshold_pct then (
           let cycle = {
-            path = cycle_path @ [List.hd cycle_path];  (* Close the cycle *)
+            path = cycle_nodes;
             profit_pct;
-            trade_sizes = [];  
-            bottleneck_volume = 0.0; 
+            trade_sizes = [];
+            bottleneck_volume = 0.0;
           } in
           cycles := cycle :: !cycles
         )
