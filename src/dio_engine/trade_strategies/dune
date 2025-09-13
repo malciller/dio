@@ -8,7 +8,8 @@
   yojson
   cohttp-lwt-unix
   cmdliner
-  dio.exchange.kraken)
+  dio.exchange.kraken
+  dio.notification.discord_webhook)
  (preprocess
   (pps lwt_ppx))
  (wrapped false))

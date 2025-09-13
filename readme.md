@@ -249,8 +249,6 @@ We welcome contributions! Please:
 
 - Built with [OCaml](https://ocaml.org/) and modern functional programming
 - Powered by [LWT](https://github.com/ocsigen/lwt) for concurrency
-- Inspired by high-frequency trading systems and algorithmic strategies
-- Thanks to the OCaml ecosystem for excellent libraries
 
 ## Support & Contact
 

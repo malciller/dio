@@ -37,7 +37,7 @@
 
   OPERATION:
   - Maintains one buy order at top bid and one sell order at top ask
-  - Buy order fills trigger immediate recreation of both orders
+  - Buy order fills trigger immediate recreation of both orders if min_usd_balance < current_usd_balance
   - Sell order fills are logged but don't trigger recreation
   - Buy orders are continuously adjusted to stay at top bid
   - All operations are synchronized with exchange state
@@ -45,9 +45,10 @@
 open Lwt.Infix
 open Dio_types
 open Lwt_log_core
+open Discord_webhook
 module K = Kraken
 
-let section = Lwt_log_core.Section.make "engine.strategy.orderbook"
+let section = Lwt_log_core.Section.make "engine.strategy.kraken.orderbook"
 
 (*
   STATE MANAGEMENT MODULE
@@ -299,6 +300,16 @@ module State = struct
     match event with
     | Core.Fill { order_id; symbol; price; qty; side; _ } ->
         if List.mem symbol symbols then (
+          let price_float = float_of_string (Primitives.Price.to_string price) in
+          let qty_float = float_of_string (Primitives.Qty.to_string qty) in
+          let usd_value = price_float *. qty_float in
+          let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
+          let message = Printf.sprintf "Kraken Top Level MM: %s: %s %s, USD %.2f"
+              symbol
+              side_str
+              (Primitives.Qty.to_string qty)
+              usd_value in
+          Lwt.async (fun () -> send_message message);
           info_f ~section "Fill event received for %s: order_id=%s side=%s qty=%s price=%s"
             symbol order_id
             (match side with Buy -> "BUY" | Sell -> "SELL")
@@ -375,24 +386,39 @@ module State = struct
                 Lwt.return_unit)
         | Filled ->
             (* This is a final Fill confirmation - sync orders and check if we need to create new orders *)
-            let symbol_and_side_opt = Hashtbl.fold (fun _ (order: K.Kraken_common_types.order) acc ->
+            let order_opt = Hashtbl.fold (fun _ (order: K.Kraken_common_types.order) acc ->
               if String.equal order.order_id order_id then
-                Some (order.order_symbol, order.side)
+                Some order
               else acc
             ) open_orders None in
-            
-            (match symbol_and_side_opt with
-            | Some (symbol, side) when List.mem symbol symbols ->
+
+            (match order_opt with
+            | Some order when List.mem order.order_symbol symbols ->
+                let price_float = order.limit_price in
+                let qty_float = order.qty in
+                let usd_value = price_float *. qty_float in
+                let side_str = match order.side with Some Buy -> "BUY" | Some Sell -> "SELL" | None -> "NONE" in
+                let qty_str =
+                  match K.Kraken_incoming_data.get_precisions order.order_symbol with
+                  | Some (_, qty_prec) -> Printf.sprintf "%.*f" qty_prec qty_float
+                  | None -> Float.to_string qty_float
+                in
+                let message = Printf.sprintf "Kraken Top Level MM: %s: %s %s, USD %.2f"
+                    order.order_symbol
+                    side_str
+                    qty_str
+                    usd_value in
+                Lwt.async (fun () -> send_message message);
                 info_f ~section "Order %s fully filled (Ack confirmation) for %s, side=%s"
-                  order_id symbol
-                  (match side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown") >>= fun () ->
-                
+                  order_id order.order_symbol
+                  (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown") >>= fun () ->
+
                 sync_open_orders () >>= fun () ->
-                
+
                 (* Only create new orders if it was a buy order that was filled *)
-                if side = Some Core.Buy then (
-                  info_f ~section "Buy order %s fully filled, creating new orders for %s" order_id symbol >>= fun () ->
-                  create_initial_order runtime_cfg symbol cmd_buffer
+                if order.side = Some Core.Buy then (
+                  info_f ~section "Buy order %s fully filled, creating new orders for %s" order_id order.order_symbol >>= fun () ->
+                  create_initial_order runtime_cfg order.order_symbol cmd_buffer
                 ) else (
                   info_f ~section "Sell order %s fully filled, no new orders needed" order_id >>= fun () ->
                   Lwt.return_unit

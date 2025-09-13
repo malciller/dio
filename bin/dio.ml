@@ -16,7 +16,7 @@ let setup_logging () =
      They will direct to whichever logger becomes the default. *)
   Lwt_log.add_rule "*" Error;  
   Lwt_log.add_rule "*" Warning; 
-  Lwt_log.add_rule "*" Info;  
+  (*Lwt_log.add_rule "*" Info;  *)
 
   
 
@@ -76,8 +76,9 @@ let setup_logging () =
   default := default_logger;
 
   (* Specific rules for log levels and sections. Amended to the rules above.*) 
-  (* Lwt_log.add_rule "kraken_arbitrage" Debug; *)
-
+   Lwt_log.add_rule "engine.strategy.kraken.arbitrage" Info; 
+   Lwt_log.add_rule "notification.discord" Info; 
+   Lwt_log.add_rule "engine.strategy.kraken.orderbook" Info; 
   ()
 
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)
@@ -194,7 +195,8 @@ let main () =
   (try Dotenv.export ~path:".env" () with _ -> Lwt_main.run (warning_f ~section "Failed to load .env file.")); 
   let key_check = match Sys.getenv_opt "KRAKEN_API_KEY" with Some _ -> "FOUND" | None -> "MISSING" in
   let secret_check = match Sys.getenv_opt "KRAKEN_API_SECRET" with Some _ -> "FOUND" | None -> "MISSING" in
-  Lwt_main.run (debug_f ~section "Post Dotenv.export: KRAKEN_API_KEY status: %s, KRAKEN_API_SECRET status: %s" key_check secret_check);
+  let discord_check = match Sys.getenv_opt "DISCORD_WEBHOOK_URL" with Some _ -> "FOUND" | None -> "MISSING" in
+  Lwt_main.run (info_f ~section "Post Dotenv.export: KRAKEN_API_KEY: %s, KRAKEN_API_SECRET: %s, DISCORD_WEBHOOK_URL: %s" key_check secret_check discord_check);
 
   Arg.parse specs (fun anon_arg -> Lwt_main.run (warning_f ~section "Ignoring anonymous argument: %s" anon_arg)) "dio options";
 

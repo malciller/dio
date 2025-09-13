@@ -23,9 +23,10 @@
 open Lwt.Infix
 open Dio_types
 open Lwt_log_core
+open Discord_webhook
 
 
-let section = Section.make "kraken_arbitrage"
+let section = Section.make "engine.strategy.kraken.arbitrage"
 
 
 (*
@@ -662,6 +663,16 @@ let validate_cycle cycle graph =
 
   result
 
+let get_usd_rate_from_graph graph asset =
+  if asset = "ZUSD" || asset = "USD" then Some 1.0
+  else
+    match Hashtbl.find_opt graph asset with
+    | Some node ->
+      (match List.find_opt (fun e -> e.to_asset = "ZUSD") node.edges with
+       | Some edge -> Some edge.rate
+       | None -> None)
+    | None -> None
+
 let monitor_order_fill exec_buffer target_client_id timeout =
   let start_time = Unix.time () in
   let rec wait_for_fill () =
@@ -763,7 +774,26 @@ let execute_cycle_leg cycle_exec leg_index current_qty fill_ratio graph cmd_buff
                       cycle_exec.leg_orders := updated_orders
                   | None -> ());
 
-                  (if status = "filled" || (status = "partial" && filled_qty > 0.0) then
+                  (if status = "filled" || (status = "partial" && filled_qty > 0.0) then begin
+                    let base_asset, quote_asset = extract_assets edge.pair in
+                    let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
+                    let value_in_quote = filled_qty *. fill_price in
+
+                    let usd_rate = get_usd_rate_from_graph graph quote_asset in
+                    let value_str = match usd_rate with
+                      | Some rate -> Printf.sprintf "USD %.2f" (value_in_quote *. rate)
+                      | None -> Printf.sprintf "%s %.4f" quote_asset value_in_quote
+                    in
+
+                    let qty_str = Printf.sprintf "%.8f" filled_qty in
+                    let message = Printf.sprintf "Kraken Arbitrage: %s: %s %s %s, value %s"
+                        edge.pair
+                        side_str
+                        qty_str
+                        base_asset
+                        value_str in
+                    Lwt.async (fun () -> send_message message);
+
                     let fee = edge.fee_rate in
                     let next_qty =
                       if side = Core.Buy then (
@@ -786,7 +816,7 @@ let execute_cycle_leg cycle_exec leg_index current_qty fill_ratio graph cmd_buff
                     info_f ~section "Leg %d filled: %.8f/%.8f -> %.8f %s"
                       leg_index filled_qty order_qty_adj next_qty next_asset >>= fun () ->
                     Lwt.return (Some (next_qty, new_fill_ratio))
-                  else if status = "cancelled" then (
+                  end else if status = "cancelled" then (
                     warning_f ~section "Leg %d was cancelled" leg_index >>= fun () ->
                     Lwt.return None
                   ) else if status = "rejected" then (
