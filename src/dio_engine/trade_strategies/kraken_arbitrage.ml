@@ -24,6 +24,7 @@ open Lwt.Infix
 open Dio_types
 open Lwt_log_core
 
+
 let section = Section.make "kraken_arbitrage"
 
 
@@ -35,7 +36,6 @@ let section = Section.make "kraken_arbitrage"
 *)
 
 let profit_threshold_pct = 0.0010  (* 0.10% min profit after fees *)
-let max_cycle_length = 4         (* Maximum arbitrage cycle length *)
 let taker_fee_pct       = 0.0035  (* 0.35% *)
 let maker_fee_pct       = 0.0020  (* 0.20% *)
 let stable_fee_pct      = 0.0010  (* 0.10%, adjust if you truly have discount *)
@@ -64,7 +64,7 @@ type exchange_edge = {
   to_asset: string;
   rate: float;              (* Exchange rate (to_asset per from_asset) *)
   fee_rate: float;          (* Trading fee rate *)
-  capacity: float;          (* Maximum tradeable volume in from_asset *)
+  capacity: float;          (* Maximum tradeable volume, denominated in from_asset *)
   pair: string;             (* Trading pair symbol *)
 }
 
@@ -79,7 +79,6 @@ let cached_graph : (string, graph_node) Hashtbl.t = Hashtbl.create 32
 let edge_cache : (string, exchange_edge * exchange_edge) Hashtbl.t = Hashtbl.create 64
 let dirty_symbols : (string, bool) Hashtbl.t = Hashtbl.create 32
 let graph_initialized = ref false
-let last_update_time = ref 0.0
 
 let init_default_balances () =
   List.iter (fun (asset, min_size) ->
@@ -94,6 +93,7 @@ let init_default_balances () =
 
 type order_state = {
   client_id: string;
+  exchange_order_id: string option;
   symbol: string;
   side: Core.side;
   qty: Primitives.Qty.t;
@@ -105,7 +105,7 @@ type order_state = {
 type cycle_execution = {
   cycle: arbitrage_cycle;
   current_leg: int;
-  leg_orders: order_state list;
+  leg_orders: order_state list ref;
   total_filled: float; (* Running total of filled quantity *)
   start_time: float;
 }
@@ -137,24 +137,26 @@ type bf_state = {
 }
 
 let extract_assets pair_symbol =
-  let pair = String.uppercase_ascii pair_symbol in
-  (* Handle common Kraken asset codes *)
-  let asset_map = [
-    ("XXBT", "ZUSD"); ("XETH", "ZUSD"); ("SOL", "ZUSD");
-    ("ADA", "ZUSD"); ("TRX", "ZUSD"); ("USDG", "ZUSD");
-    ("USDR", "ZUSD"); ("USDT", "ZUSD"); ("USDC", "ZUSD")
-  ] in
-
-  let rec find_asset_code = function
-    | [] -> (pair, "ZUSD") (* fallback *)
-    | (base, quote)::rest ->
-        if String.starts_with ~prefix:base pair &&
-           String.ends_with ~suffix:quote pair then
-          (base, quote)
-        else
-          find_asset_code rest
-  in
-  find_asset_code asset_map
+  let uppercase_symbol = String.uppercase_ascii pair_symbol in
+  match Kraken.Kraken_incoming_data.get_instrument uppercase_symbol with
+  | Some inst -> (inst.base, inst.quote)
+  | None ->
+      Lwt.async (fun () -> Lwt_log_core.warning_f ~section "Failed to find instrument data for %s" uppercase_symbol);
+      (* Fallback heuristic - less reliable *)
+      let asset_map = [
+        ("XXBT", "ZUSD"); ("XETH", "ZUSD"); ("SOL", "ZUSD");
+        ("ADA", "ZUSD"); ("TRX", "ZUSD"); ("USDG", "ZUSD");
+        ("USDR", "ZUSD"); ("USDT", "ZUSD"); ("USDC", "ZUSD")
+      ] in
+      let rec find_asset_code = function
+        | [] -> (uppercase_symbol, "ZUSD")
+        | (base, quote)::rest ->
+            if String.starts_with ~prefix:base uppercase_symbol && String.ends_with ~suffix:quote uppercase_symbol then
+              (base, quote)
+            else
+              find_asset_code rest
+      in
+      find_asset_code asset_map
 
 let get_min_order_size pair_symbol =
   let pair = String.uppercase_ascii pair_symbol in
@@ -268,14 +270,11 @@ let initialize_cached_graph symbols =
   ) symbols >>= fun () ->
 
   graph_initialized := true;
-  last_update_time := Unix.time ();
   info_f ~section "Initialized cached exchange graph with %d nodes, %d edges" 
     (Hashtbl.length cached_graph) (Hashtbl.length edge_cache) >>= fun () ->
   Lwt.return_unit
 
 let update_changed_edges symbols =
-  let current_time = Unix.time () in
-
   List.iter (fun symbol ->
     match Kraken.Kraken_orderbook.get_orderbook symbol with
     | Some _ -> Hashtbl.replace dirty_symbols symbol true
@@ -287,7 +286,6 @@ let update_changed_edges symbols =
     debug_f ~section "Updating %d dirty symbols: [%s]" 
       (List.length dirty_list) (String.concat ", " dirty_list) >>= fun () ->
     Lwt_list.iter_s update_symbol_edges dirty_list >>= fun () ->
-    last_update_time := current_time;
     Lwt.return_unit
   else
     Lwt.return_unit
@@ -514,9 +512,9 @@ let detect_arbitrage_cycles graph : arbitrage_cycle list Lwt.t =
 let apply_precision_constraints pair_symbol qty =
   match Kraken.Kraken_incoming_data.get_precisions pair_symbol with
   | Some (_, qty_precision) ->
-      let scale_factor = Float.pow 10.0 (float_of_int qty_precision) in
-      let rounded = Float.round (qty *. scale_factor) /. scale_factor in
-      max rounded (get_min_order_size pair_symbol)
+      let scale = Float.pow 10.0 (float_of_int qty_precision) in
+      let truncated = (Float.trunc (qty *. scale)) /. scale in
+      max truncated (get_min_order_size pair_symbol)
   | None ->
       max qty (get_min_order_size pair_symbol)
 
@@ -537,35 +535,26 @@ let calculate_trade_sizes cycle graph =
   let start_asset = List.hd path in
   let available_balance = get_asset_balance start_asset in
 
-  let rec find_bottleneck remaining_path min_capacity current_rate =
+  let rec find_bottleneck_rec remaining_path (max_qty_in_current_asset : float) : float =
     match remaining_path with
-    | [_] -> min_capacity
+    | [_] -> max_qty_in_current_asset
     | current :: next :: rest ->
         (match Hashtbl.find_opt graph current with
          | Some node ->
              (match List.find_opt (fun edge -> edge.to_asset = next) node.edges with
               | Some edge ->
-                  let min_order_size = get_min_order_size edge.pair in
-                  let min_capacity_this_leg = 
-                    if edge.from_asset = current then
-                      min_order_size  (* Direct quantity constraint *)
-                    else
-                      min_order_size *. edge.rate  (* Convert to source asset *)
-                  in
-
-                  let normalized_capacity = min edge.capacity (min_capacity_this_leg /. current_rate) in
-                  let constrained_capacity = normalized_capacity *. current_rate in
-                  let next_rate = current_rate *. effective_rate edge in
-                  find_bottleneck (next :: rest) (min min_capacity constrained_capacity) next_rate
-              | None -> min_capacity)
-         | None -> min_capacity)
-    | [] -> min_capacity
+                  let max_qty_for_leg = min max_qty_in_current_asset edge.capacity in
+                  let qty_for_next_leg = max_qty_for_leg *. (effective_rate edge) in
+                  find_bottleneck_rec (next :: rest) qty_for_next_leg
+              | None -> 0.0)
+         | None -> 0.0)
+    | [] -> 0.0
   in
 
-  let orderbook_bottleneck = find_bottleneck path max_float 1.0 in
+  let orderbook_bottleneck = find_bottleneck_rec path available_balance in
   let balance_limit = available_balance *. 0.9 in
 
-  let trade_size = min (min orderbook_bottleneck balance_limit) 1.0 in
+  let trade_size = min orderbook_bottleneck balance_limit in
 
   let rec validate_and_adjust_sizes remaining_path current_size acc_sizes =
     match remaining_path with
@@ -576,18 +565,20 @@ let calculate_trade_sizes cycle graph =
              (match List.find_opt (fun edge -> edge.to_asset = next) node.edges with
               | Some edge ->
                   let _base_asset, quote_asset = extract_assets edge.pair in
-                  let order_qty = 
+                  let order_qty =
                     if edge.from_asset = quote_asset then
-                      current_size /. edge.rate  (* Buy: quote -> base *)
+                      current_size /. edge.rate (* BUY (quote -> base): compute base_qty *)
                     else
-                      current_size  (* Sell: base -> quote *)
+                      current_size (* SELL: base units already *)
                   in
                   let adjusted_qty = apply_precision_constraints edge.pair order_qty in
-                  let next_size = 
+                  let next_size =
                     if edge.from_asset = quote_asset then
-                      adjusted_qty  (* For buy orders *)
+                      (* we now hold base; fees reduce received base *)
+                      adjusted_qty *. (1.0 -. edge.fee_rate)
                     else
-                      adjusted_qty *. effective_rate edge  (* For sell orders *)
+                      (* we now hold quote; SELL base -> quote *)
+                      (adjusted_qty *. edge.rate) *. (1.0 -. edge.fee_rate)
                   in
                   validate_and_adjust_sizes (next :: rest) next_size (adjusted_qty :: acc_sizes)
               | None -> acc_sizes, current_size)
@@ -635,8 +626,18 @@ let validate_cycle cycle graph =
               | Some edge ->
                   let min_order_size = get_min_order_size edge.pair in
                   (* Check capacity, minimum order size, and precision constraints *)
-                  let capacity_ok = edge.capacity >= trade_size in
-                  let min_size_ok = trade_size >= min_order_size in
+                  let _base_asset, quote_asset = extract_assets edge.pair in
+                  let capacity_ok =
+                    if edge.from_asset = quote_asset then (* BUY leg quote -> base *)
+                      let quote_needed = trade_size /. edge.rate in
+                      edge.capacity >= quote_needed
+                    else (* SELL leg base -> quote *)
+                      edge.capacity >= trade_size
+                  in
+                  let min_size_ok =
+                    (* trade_sizes are now always in base asset, so this check is simpler *)
+                    trade_size >= min_order_size
+                  in
                   let precision_adjusted = apply_precision_constraints edge.pair trade_size in
                   let precision_ok = abs_float (precision_adjusted -. trade_size) < 0.000001 in
                   
@@ -670,17 +671,18 @@ let monitor_order_fill exec_buffer target_client_id timeout =
       Lwt.catch (fun () ->
         Lwt_unix.with_timeout 0.5 (fun () -> Ringbuffer.pop exec_buffer) >>= fun exec_event ->
         (match exec_event with
-         | Core.Fill { client_id; qty; _ } when client_id = target_client_id ->
+         | Core.Fill { client_id; qty; price; _ } when client_id = target_client_id ->
              let filled_qty = Primitives.Qty.to_string qty |> float_of_string in
-             Lwt.return (Some (filled_qty, "filled"))
-         | Core.Ack { client_id; state; _ } when client_id = target_client_id ->
+             let fill_price = Primitives.Price.to_string price |> float_of_string in
+             Lwt.return (Some (filled_qty, fill_price, "filled", None))
+         | Core.Ack { client_id; order_id; state; _ } when client_id = target_client_id ->
              let status = match state with
                | Core.Filled -> "filled"
                | Core.Canceled -> "cancelled"
                | Core.Rejected -> "rejected"
                | Core.Open -> "partial"
              in
-             Lwt.return (Some (0.0, status))
+             Lwt.return (Some (0.0, 0.0, status, Some order_id))
          | _ ->
              wait_for_fill ())
       ) (function
@@ -692,10 +694,10 @@ let monitor_order_fill exec_buffer target_client_id timeout =
   in
   wait_for_fill ()
 
-let execute_cycle_leg cycle_exec leg_index current_qty graph cmd_buffer exec_buffer =
+let execute_cycle_leg cycle_exec leg_index current_qty fill_ratio graph cmd_buffer exec_buffer remaining_ttl =
   let path = cycle_exec.cycle.path in
   if leg_index >= List.length path - 1 then
-    Lwt.return (Some current_qty)  (* Cycle complete *)
+    Lwt.return (Some (current_qty, fill_ratio))  (* Cycle complete *)
   else (
     let current_asset = List.nth path leg_index in
     let next_asset = List.nth path (leg_index + 1) in
@@ -704,22 +706,29 @@ let execute_cycle_leg cycle_exec leg_index current_qty graph cmd_buffer exec_buf
     | Some node ->
         (match List.find_opt (fun edge -> edge.to_asset = next_asset) node.edges with
          | Some edge ->
-             let base_asset, quote_asset = extract_assets edge.pair in
-             let side, order_qty =
-               if edge.from_asset = quote_asset && edge.to_asset = base_asset then
-                 (Core.Buy, current_qty /. edge.rate)
-               else if edge.from_asset = base_asset && edge.to_asset = quote_asset then
-                 (Core.Sell, current_qty)
-               else
-                 (* Should not happen with a well-formed graph *)
-                 (Core.Buy, 0.0)
-             in
+             let _, quote_asset = extract_assets edge.pair in
+             let side = if edge.from_asset = quote_asset then Core.Buy else Core.Sell in
+             let planned_order_qty = List.nth cycle_exec.cycle.trade_sizes leg_index in
+             let order_qty = planned_order_qty *. fill_ratio in
+             let order_qty_adj = apply_precision_constraints edge.pair order_qty in
 
              let price_str = Printf.sprintf "%.8f" edge.rate in
              let price = Primitives.Price.of_string_exn ~scale:8 price_str in
-             let qty_str = Printf.sprintf "%.8f" order_qty in
+             let qty_str = Printf.sprintf "%.8f" order_qty_adj in
              let qty = Primitives.Qty.of_string_exn ~scale:8 qty_str in
              let client_id = Printf.sprintf "arb_%s_leg%d_%d" edge.pair leg_index (Random.int 1000000) in
+
+             let order_state = {
+               client_id;
+               exchange_order_id = None;
+               symbol = edge.pair;
+               side;
+               qty;
+               price;
+               filled_qty = 0.0;
+               status = "pending";
+             } in
+             cycle_exec.leg_orders := order_state :: !(cycle_exec.leg_orders);
 
              let order_cmd = Core.Add {
                dst = "kraken";
@@ -735,58 +744,60 @@ let execute_cycle_leg cycle_exec leg_index current_qty graph cmd_buffer exec_buf
              info_f ~section "Executing leg %d: %s %s %.8f@%s (from %.8f %s)"
                leg_index edge.pair
                (match side with Buy -> "BUY" | Sell -> "SELL")
-               order_qty price_str current_qty current_asset >>= fun () ->
+               order_qty_adj price_str current_qty current_asset >>= fun () ->
 
              Ringbuffer.push cmd_buffer order_cmd >>= fun () ->
 
-             monitor_order_fill exec_buffer client_id 30.0 >>= fun fill_result ->
+             let num_legs = List.length cycle_exec.cycle.path - 1 in
+             let remaining_legs = max 1 (num_legs - leg_index) in
+             let leg_timeout = min 3.0 (remaining_ttl /. float_of_int remaining_legs) in
+             monitor_order_fill exec_buffer client_id leg_timeout >>= fun fill_result ->
              
              (match fill_result with
-              | Some (filled_qty, "filled") ->
-                  if side = Core.Buy then (
-                    update_asset_balance edge.from_asset (-.current_qty);  (* Spent quote *)
-                    update_asset_balance edge.to_asset filled_qty         (* Received base *)
+              | Some (filled_qty, fill_price, status, exch_id_opt) ->
+                  (match exch_id_opt with
+                  | Some exchange_order_id ->
+                      let updated_orders = List.map (fun os ->
+                        if os.client_id = client_id then { os with exchange_order_id = Some exchange_order_id; status } else os
+                      ) !(cycle_exec.leg_orders) in
+                      cycle_exec.leg_orders := updated_orders
+                  | None -> ());
+
+                  (if status = "filled" || (status = "partial" && filled_qty > 0.0) then
+                    let fee = edge.fee_rate in
+                    let next_qty =
+                      if side = Core.Buy then (
+                        let quote_spent = filled_qty *. fill_price in
+                        let base_received = filled_qty *. (1.0 -. fee) in
+                        update_asset_balance edge.from_asset (-.quote_spent);
+                        update_asset_balance edge.to_asset base_received;
+                        base_received
+                      ) else ( (* Sell *)
+                        let quote_received = filled_qty *. fill_price *. (1.0 -. fee) in
+                        update_asset_balance edge.from_asset (-.filled_qty);
+                        update_asset_balance edge.to_asset quote_received;
+                        quote_received
+                      )
+                    in
+                    let new_fill_ratio =
+                      if order_qty_adj > 0. then filled_qty /. order_qty_adj
+                      else fill_ratio
+                    in
+                    info_f ~section "Leg %d filled: %.8f/%.8f -> %.8f %s"
+                      leg_index filled_qty order_qty_adj next_qty next_asset >>= fun () ->
+                    Lwt.return (Some (next_qty, new_fill_ratio))
+                  else if status = "cancelled" then (
+                    warning_f ~section "Leg %d was cancelled" leg_index >>= fun () ->
+                    Lwt.return None
+                  ) else if status = "rejected" then (
+                    warning_f ~section "Leg %d was rejected" leg_index >>= fun () ->
+                    Lwt.return None
                   ) else (
-                    update_asset_balance edge.from_asset (-.filled_qty);  (* Sold base *)
-                    update_asset_balance edge.to_asset (current_qty *. effective_rate edge)  (* Received quote *)
-                  );
-
-                  let next_qty =
-                    if side = Core.Buy then filled_qty
-                    else filled_qty *. effective_rate edge
-                  in
-                  info_f ~section "Leg %d filled completely: %.8f -> %.8f %s"
-                    leg_index current_qty next_qty next_asset >>= fun () ->
-                  Lwt.return (Some next_qty)
-
-              | Some (filled_qty, "partial") when filled_qty > 0.0 ->
-                  if side = Core.Buy then (
-                    let quote_spent = filled_qty *. edge.rate in
-                    update_asset_balance edge.from_asset (-.quote_spent);
-                    update_asset_balance edge.to_asset filled_qty
-                  ) else (
-                    update_asset_balance edge.from_asset (-.filled_qty);
-                    update_asset_balance edge.to_asset (filled_qty *. effective_rate edge)
-                  );
-
-                  let next_qty =
-                    if side = Core.Buy then filled_qty
-                    else filled_qty *. effective_rate edge
-                  in
-                  warning_f ~section "Leg %d partially filled: %.8f/%.8f -> %.8f %s"
-                    leg_index filled_qty order_qty next_qty next_asset >>= fun () ->
-                  Lwt.return (Some next_qty)
-                  
-              | Some (_, "cancelled") ->
-                  warning_f ~section "Leg %d was cancelled" leg_index >>= fun () ->
-                  Lwt.return None
-                  
+                    warning_f ~section "Leg %d unexpected status: %s" leg_index status >>= fun () ->
+                    Lwt.return None
+                  ))
               | None ->
                   warning_f ~section "Leg %d timed out" leg_index >>= fun () ->
-                  Lwt.return None
-                  
-              | Some (_, status) ->
-                  warning_f ~section "Leg %d unexpected status: %s" leg_index status >>= fun () ->
                   Lwt.return None)
                   
          | None ->
@@ -820,11 +831,12 @@ let execute_cycle_leg cycle_exec leg_index current_qty graph cmd_buffer exec_buf
     @param exec_buffer Execution buffer for monitoring order fills
     @return true if cycle completed successfully, false on failure
 *)
-let execute_arbitrage_cycle cycle graph cmd_buffer exec_buffer =
+let execute_arbitrage_cycle cycle graph cmd_buffer exec_buffer = 
+  let cycle_ttl = 5.0 in (* 5 second timeout for the whole cycle *)
   let cycle_exec = {
     cycle;
     current_leg = 0;
-    leg_orders = [];
+    leg_orders = ref [];
     total_filled = cycle.bottleneck_volume;
     start_time = Unix.time ();
   } in
@@ -833,41 +845,61 @@ let execute_arbitrage_cycle cycle graph cmd_buffer exec_buffer =
     (String.concat " -> " cycle.path) cycle.bottleneck_volume >>= fun () ->
 
   (* Execute legs sequentially *)
-  let rec execute_legs leg_index current_qty =
-    if leg_index >= List.length cycle.path - 1 then (
-      info_f ~section "Arbitrage cycle completed successfully: final quantity %.8f"
-        current_qty >>= fun () ->
-      Lwt.return true
+  let rec execute_legs leg_index current_qty fill_ratio =
+    let elapsed = Unix.time () -. cycle_exec.start_time in
+    if elapsed >= cycle_ttl then (
+      warning_f ~section "Cycle execution timed out for path %s"
+        (String.concat " -> " cycle.path) >>= fun () ->
+      Lwt.return false
+    ) else if leg_index >= List.length cycle.path - 1 then (
+      Lwt.return true 
     ) else (
-      execute_cycle_leg cycle_exec leg_index current_qty graph cmd_buffer exec_buffer >>= function
-      | Some next_qty when next_qty > 0.0 ->
-          execute_legs (leg_index + 1) next_qty
+      let remaining_ttl = cycle_ttl -. elapsed in
+      execute_cycle_leg cycle_exec leg_index current_qty fill_ratio graph cmd_buffer exec_buffer remaining_ttl >>= function
+      | Some (next_qty, new_fill_ratio) when next_qty > 0.0 ->
+          execute_legs (leg_index + 1) next_qty new_fill_ratio
       | Some _ ->
-          warning_f ~section "Cycle execution failed at leg %d: zero quantity" leg_index >>= fun () ->
+          warning_f ~section "Cycle %s failed at leg %d: zero quantity"
+            (String.concat " -> " cycle.path) leg_index >>= fun () ->
           Lwt.return false
       | None ->
-          warning_f ~section "Cycle execution failed at leg %d" leg_index >>= fun () ->
+          warning_f ~section "Cycle %s failed at leg %d"
+            (String.concat " -> " cycle.path) leg_index >>= fun () ->
           Lwt.return false
     )
   in
 
-  execute_legs 0 cycle.bottleneck_volume
+  execute_legs 0 cycle.bottleneck_volume 1.0 >>= fun success ->
+  (if success then
+    info_f ~section "Cycle %s completed successfully" (String.concat " -> " cycle.path)
+  else
+    warning_f ~section "Cycle %s failed or was cancelled" (String.concat " -> " cycle.path)
+  ) >>= fun () ->
+  Lwt.return success
 
 let cancel_pending_orders cycle_exec cmd_buffer =
   Lwt_list.iter_s (fun order_state ->
     if order_state.status = "pending" then (
-      let cancel_cmd = Core.Cancel {
-        dst = "kraken";
-        order_id = order_state.client_id; 
-      } in
-      warning_f ~section "Cancelling pending order: %s" order_state.client_id >>= fun () ->
-      Ringbuffer.push cmd_buffer cancel_cmd
+      match order_state.exchange_order_id with
+      | Some exchange_id ->
+          let cancel_cmd = Core.Cancel {
+            dst = "kraken";
+            order_id = exchange_id;
+          } in
+          warning_f ~section "Cancelling pending order: %s (exchange id: %s)"
+            order_state.client_id exchange_id >>= fun () ->
+          Ringbuffer.push cmd_buffer cancel_cmd
+      | None ->
+          warning_f ~section "Cannot cancel order %s: missing exchange order id"
+            order_state.client_id >>= fun () ->
+          Lwt.return_unit
     ) else
       Lwt.return_unit
-  ) cycle_exec.leg_orders
+  ) !(cycle_exec.leg_orders)
 
 let max_concurrent_cycles = ref 2
 let active_cycles = ref 0
+let cycles_mutex = Lwt_mutex.create ()
 
 (** Main entry point for the triangular arbitrage trading strategy.
 
@@ -910,34 +942,45 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
     detect_arbitrage_cycles graph >>= fun cycles ->
 
     (if !active_cycles < !max_concurrent_cycles then (
+      let sorted_cycles = List.sort (fun a b -> compare b.profit_pct a.profit_pct) cycles in
       Lwt_list.iter_s (fun cycle ->
         let validated_cycle = calculate_trade_sizes cycle graph in
 
-        if validate_cycle validated_cycle graph && !active_cycles < !max_concurrent_cycles then (
-          incr active_cycles;
-          info_f ~section "Executing arbitrage cycle (%d/%d active): %s (profit: %.4f%%, volume: %.8f)"
-            !active_cycles !max_concurrent_cycles
-            (String.concat " -> " validated_cycle.path)
-            (validated_cycle.profit_pct *. 100.0)
-            validated_cycle.bottleneck_volume >>= fun () ->
+        if validate_cycle validated_cycle graph then (
+          Lwt_mutex.with_lock cycles_mutex (fun () ->
+            if !active_cycles < !max_concurrent_cycles then (
+              incr active_cycles;
+              Lwt.return_true
+            ) else (
+              Lwt.return_false
+            )
+          ) >>= fun can_execute ->
 
-          (* Execute cycle asynchronously to avoid blocking arbitrage detection *)
-          Lwt.async (fun () ->
-            execute_arbitrage_cycle validated_cycle graph cmd_buffer exec_buffer >>= fun success ->
-            decr active_cycles;
-            if success then
-              info_f ~section "Arbitrage cycle completed successfully"
-            else
-              warning_f ~section "Arbitrage cycle failed or was cancelled" >>= fun () ->
+          if can_execute then (
+            info_f ~section "Executing arbitrage cycle (%d/%d active): %s (profit: %.4f%%, volume: %.8f)"
+              !active_cycles !max_concurrent_cycles
+              (String.concat " -> " validated_cycle.path)
+              (validated_cycle.profit_pct *. 100.0)
+              validated_cycle.bottleneck_volume >>= fun () ->
+ 
+             (* Execute cycle asynchronously to avoid blocking arbitrage detection *)
+             Lwt.async (fun () ->
+              execute_arbitrage_cycle validated_cycle graph cmd_buffer exec_buffer >>= fun _success ->
+              Lwt_mutex.with_lock cycles_mutex (fun () ->
+                decr active_cycles;
+                Lwt.return_unit
+              )
+            );
             Lwt.return_unit
-          );
-          Lwt.return_unit
+          ) else (
+            Lwt.return_unit
+          )
         ) else (
           debug_f ~section "Cycle validation failed or max concurrent reached: %s"
             (String.concat " -> " validated_cycle.path) >>= fun () ->
           Lwt.return_unit
         )
-      ) cycles
+      ) sorted_cycles
     ) else (
       debug_f ~section "Max concurrent cycles reached (%d), skipping detection" !active_cycles >>= fun () ->
       Lwt.return_unit

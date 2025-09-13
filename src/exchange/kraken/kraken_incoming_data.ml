@@ -23,8 +23,11 @@ let wait_for_instruments () = instruments_loaded
 
 (* Storage for instrument precisions: symbol -> (price_precision, qty_precision) *)
 let instrument_precisions : (string, (int * int)) Hashtbl.t = Hashtbl.create 16
+let instrument_data : (string, Kraken_common_types.pair_data) Hashtbl.t = Hashtbl.create 256
 
 let get_precisions symbol : (int * int) option = Hashtbl.find_opt instrument_precisions symbol
+
+let get_instrument symbol : Kraken_common_types.pair_data option = Hashtbl.find_opt instrument_data symbol
 
 let get_price_precision symbol : int option =
   match Hashtbl.find_opt instrument_precisions symbol with
@@ -331,10 +334,13 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                       Lwt_list.iter_s
                         (fun (pair : Kraken_common_types.pair_data) ->
                           if List.mem pair.symbol cfg.symbols then
-                            let () = Hashtbl.replace instrument_precisions pair.symbol (pair.price_precision, pair.qty_precision) in
+                            let () = 
+                              Hashtbl.replace instrument_precisions pair.symbol (pair.price_precision, pair.qty_precision);
+                              Hashtbl.replace instrument_data pair.symbol pair
+                            in
                             Lwt_log_core.debug ~section
-                              (Printf.sprintf "Stored precisions for %s: price=%d, qty=%d"
-                                 pair.symbol pair.price_precision pair.qty_precision)
+                              (Printf.sprintf "Stored instrument data for %s: base=%s, quote=%s, price_prec=%d, qty_prec=%d"
+                                 pair.symbol pair.base pair.quote pair.price_precision pair.qty_precision)
                           else
                             Lwt.return_unit)
                         pairs
