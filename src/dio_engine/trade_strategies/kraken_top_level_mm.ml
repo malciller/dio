@@ -55,11 +55,21 @@ let section = Lwt_log_core.Section.make "engine.strategy.orderbook"
   Manages the internal state of the top-level market making strategy including:
   - Current price information for all tracked symbols
   - Open orders synchronized with the exchange
+  - Current USD account balance
 *)
 
 module State = struct
   let price_info : (string, Event.tick) Hashtbl.t = Hashtbl.create 16
   let open_orders : (string, K.Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
+  let usd_balance : float ref = ref 0.0
+
+  (** Fetch and update the USD balance from Kraken. *)
+  let refresh_usd_balance (core_cfg : Config.engine_config) =
+    K.Kraken_balances.get_account_balance core_cfg >>= fun balances ->
+    let z_usd_balance = Hashtbl.find_opt balances "ZUSD" |> Option.value ~default:0.0 in
+    let usd_balance_val = Hashtbl.find_opt balances "USD" |> Option.value ~default:0.0 in
+    usd_balance := z_usd_balance +. usd_balance_val;
+    info_f ~section "Refreshed USD balance: %.2f" !usd_balance
 
   (** Check if a symbol has any open buy orders.
 
@@ -135,48 +145,57 @@ module State = struct
     info_f ~section "has_open_buy_order for %s: %b" symbol has_buy >>= fun () ->
 
     if not has_buy then (
-      match get_price symbol with
-      | Some tick ->
-          info_f ~section "Found price data for %s: bid=%s ask=%s"
-            symbol
-            (Primitives.Price.to_string tick.bid)
-            (Primitives.Price.to_string tick.ask) >>= fun () ->
-          let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) ->
-            String.equal asset.symbol symbol
-          ) runtime_cfg.assets in
-          (match asset_cfg_opt with
-          | Some asset_cfg ->
-              info_f ~section "Found asset config for %s: qty=%s strategy=%s"
-                symbol (Primitives.Qty.to_string asset_cfg.qty)
-                (match asset_cfg.strategy with Config.Orderbook -> "Orderbook" | Config.Grid -> "Grid") >>= fun () ->
-              let buy_price = tick.bid in
-              let sell_price = tick.ask in
-              info_f ~section "Creating orders for %s: buy_price=%s sell_price=%s"
-                symbol
-                (Primitives.Price.to_string buy_price)
-                (Primitives.Price.to_string sell_price) >>= fun () ->
-              let buy_order = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
-              let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:asset_cfg.qty in
-              (match buy_order, sell_order with
-              | Some buy_cmd, Some sell_cmd ->
-                  info_f ~section "Successfully created both orders for %s, pushing to buffer" symbol >>= fun () ->
-                  Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
-                  info_f ~section "Buy order pushed to buffer for %s" symbol >>= fun () ->
-                  Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                  info_f ~section "Sell order pushed to buffer for %s" symbol
-              | Some _, None ->
-                  error_f ~section "Failed to create sell order for %s" symbol >>= fun () ->
-                  Lwt.return_unit
-              | None, Some _ ->
-                  error_f ~section "Failed to create buy order for %s" symbol >>= fun () ->
-                  Lwt.return_unit
-              | None, None ->
-                  error_f ~section "Failed to create both orders for %s" symbol >>= fun () ->
-                  Lwt.return_unit)
-          | None ->
-              warning_f ~section "No configuration found for %s" symbol)
+      let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) ->
+        String.equal asset.symbol symbol
+      ) runtime_cfg.assets in
+      
+      match asset_cfg_opt with
+      | Some asset_cfg ->
+          (match asset_cfg.min_usd_balance with
+          | Some min_balance ->
+              let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
+              if !usd_balance < min_balance_float then (
+                warning_f ~section "USD balance %.2f is below minimum %.2f for %s. Skipping order creation."
+                  !usd_balance min_balance_float symbol
+              ) else (
+                match get_price symbol with
+                | Some tick ->
+                    info_f ~section "Found price data for %s: bid=%s ask=%s"
+                      symbol
+                      (Primitives.Price.to_string tick.bid)
+                      (Primitives.Price.to_string tick.ask) >>= fun () ->
+                    let buy_price = tick.bid in
+                    let sell_price = tick.ask in
+                    info_f ~section "Creating orders for %s: buy_price=%s sell_price=%s"
+                      symbol
+                      (Primitives.Price.to_string buy_price)
+                      (Primitives.Price.to_string sell_price) >>= fun () ->
+                    let buy_order = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
+                    let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:asset_cfg.qty in
+                    (match buy_order, sell_order with
+                    | Some buy_cmd, Some sell_cmd ->
+                        info_f ~section "Successfully created both orders for %s, pushing to buffer" symbol >>= fun () ->
+                        Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
+                        info_f ~section "Buy order pushed to buffer for %s" symbol >>= fun () ->
+                        Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                        info_f ~section "Sell order pushed to buffer for %s" symbol
+                    | Some _, None ->
+                        error_f ~section "Failed to create sell order for %s" symbol >>= fun () ->
+                        Lwt.return_unit
+                    | None, Some _ ->
+                        error_f ~section "Failed to create buy order for %s" symbol >>= fun () ->
+                        Lwt.return_unit
+                    | None, None ->
+                        error_f ~section "Failed to create both orders for %s" symbol >>= fun () ->
+                        Lwt.return_unit)
+                | None ->
+                    warning_f ~section "No price info for %s" symbol
+              )
+          | None -> 
+              warning_f ~section "min_usd_balance not configured for %s" symbol
+          )
       | None ->
-          warning_f ~section "No price info for %s" symbol
+          warning_f ~section "No configuration found for %s" symbol
     ) else (
       Lwt.return_unit
     )
@@ -441,12 +460,13 @@ end
     @param exec_buffer Buffer for receiving order execution confirmations
     @return Never returns (infinite processing loops)
 *)
-let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
+let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
   info_f ~section "Starting orderbook market making strategy" >>= fun () ->
 
   K.Kraken_incoming_data.wait_for_snapshot () >>= fun () ->
   K.Kraken_incoming_data.wait_for_instruments () >>= fun () ->
 
+  State.refresh_usd_balance core_cfg >>= fun () ->
   State.initialize_orders runtime_cfg >>= fun () ->
 
   let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
@@ -464,6 +484,13 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
     execution_loop ()
   in
 
+  let balance_refresh_interval = 300.0 in (* 5 minutes *)
+  let rec balance_loop () =
+    Lwt_unix.sleep balance_refresh_interval >>= fun () ->
+    State.refresh_usd_balance core_cfg >>= fun () ->
+    balance_loop ()
+  in
+
   let rec tick_loop () =
     Ringbuffer.pop tick_buffer >>= fun (tick : Event.tick) ->
     (if List.mem tick.symbol orderbook_symbols then (
@@ -477,4 +504,4 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
     tick_loop ()
   in
 
-  Lwt.join [execution_loop (); tick_loop ()] 
+  Lwt.join [execution_loop (); tick_loop (); balance_loop ()] 

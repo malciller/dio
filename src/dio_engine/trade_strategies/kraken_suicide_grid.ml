@@ -179,68 +179,73 @@ module State = struct
 
             (match asset_cfg_opt with
             | Some asset_cfg ->
-                let current_price = tick.current_price in
-                let current_price_float =
-                  Float.of_string (Primitives.Price.to_string current_price) in
+                (match asset_cfg.grid_interval, asset_cfg.sell_mult with
+                | Some grid_interval, Some sell_mult ->
+                    let current_price = tick.current_price in
+                    let current_price_float =
+                      Float.of_string (Primitives.Price.to_string current_price) in
 
-                let grid_pct =
-                  Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval) in
+                    let grid_pct =
+                      Float.of_string (Primitives.Fixed.to_string grid_interval) in
 
-                let sell_price_raw = current_price_float *. (1.0 +. (grid_pct /. 100.0)) in
-                let buy_price_raw = current_price_float *. (1.0 -. (grid_pct /. 100.0)) in
+                    let sell_price_raw = current_price_float *. (1.0 +. (grid_pct /. 100.0)) in
+                    let buy_price_raw = current_price_float *. (1.0 -. (grid_pct /. 100.0)) in
 
-                let sell_price = Primitives.Price.of_string_exn ~scale:current_price.scale
-                  (Printf.sprintf "%.*f" current_price.scale sell_price_raw) in
-                let buy_price = Primitives.Price.of_string_exn ~scale:current_price.scale
-                  (Printf.sprintf "%.*f" current_price.scale buy_price_raw) in
+                    let sell_price = Primitives.Price.of_string_exn ~scale:current_price.scale
+                      (Printf.sprintf "%.*f" current_price.scale sell_price_raw) in
+                    let buy_price = Primitives.Price.of_string_exn ~scale:current_price.scale
+                      (Printf.sprintf "%.*f" current_price.scale buy_price_raw) in
 
-                let base_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
-                let sell_mult_float = Float.of_string (Primitives.Fixed.to_string asset_cfg.sell_mult) in
-                let sell_qty_float = base_qty_float *. sell_mult_float in
-                let sell_qty = match K.Kraken_incoming_data.get_precisions symbol with
-                  | Some (_, qty_prec) ->
-                      Primitives.Qty.of_string_exn ~scale:qty_prec
-                        (Printf.sprintf "%.*f" qty_prec sell_qty_float)
-                  | None ->
-                      Primitives.Qty.of_string_exn ~scale:asset_cfg.qty.scale
-                        (Printf.sprintf "%.*f" asset_cfg.qty.scale sell_qty_float)
-                in
+                    let base_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
+                    let sell_mult_float = Float.of_string (Primitives.Fixed.to_string sell_mult) in
+                    let sell_qty_float = base_qty_float *. sell_mult_float in
+                    let sell_qty = match K.Kraken_incoming_data.get_precisions symbol with
+                      | Some (_, qty_prec) ->
+                          Primitives.Qty.of_string_exn ~scale:qty_prec
+                            (Printf.sprintf "%.*f" qty_prec sell_qty_float)
+                      | None ->
+                          Primitives.Qty.of_string_exn ~scale:asset_cfg.qty.scale
+                            (Printf.sprintf "%.*f" asset_cfg.qty.scale sell_qty_float)
+                    in
 
-                info_f ~section
-                  "Order quantities for %s: buy=%.8f sell=%.8f (mult=%.3f -> %.8f * %.3f = %.8f)"
-                    symbol
-                    base_qty_float
-                    sell_qty_float
-                    sell_mult_float
-                    base_qty_float
-                    sell_mult_float
-                    (base_qty_float *. sell_mult_float) >>= fun () ->
+                    info_f ~section
+                      "Order quantities for %s: buy=%.8f sell=%.8f (mult=%.3f -> %.8f * %.3f = %.8f)"
+                        symbol
+                        base_qty_float
+                        sell_qty_float
+                        sell_mult_float
+                        base_qty_float
+                        sell_mult_float
+                        (base_qty_float *. sell_mult_float) >>= fun () ->
 
-                let sell_cmd = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
-                Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                (match sell_cmd with
-                | Add order ->
-                    debug_f ~section
-                      "Successfully pushed sell order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s"
-                        order.client_id
-                        order.symbol
-                        (Primitives.Price.to_string order.price)
-                        (Primitives.Qty.to_string order.qty)
-                | _ -> Lwt.return_unit) >>= fun () ->
+                    let sell_cmd = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
+                    Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                    (match sell_cmd with
+                    | Add order ->
+                        debug_f ~section
+                          "Successfully pushed sell order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s"
+                            order.client_id
+                            order.symbol
+                            (Primitives.Price.to_string order.price)
+                            (Primitives.Qty.to_string order.qty)
+                    | _ -> Lwt.return_unit) >>= fun () ->
 
-                let buy_cmd = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
-                Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
-                (match buy_cmd with
-                | Add order ->
-                    debug_f ~section
-                      "Successfully pushed buy order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
-                        order.client_id
-                        order.symbol
-                        (Primitives.Price.to_string order.price)
-                        (Primitives.Qty.to_string order.qty)
-                | _ -> Lwt.return_unit) >>= fun () ->
-                
-                Lwt.return_unit
+                    let buy_cmd = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
+                    Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
+                    (match buy_cmd with
+                    | Add order ->
+                        debug_f ~section
+                          "Successfully pushed buy order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
+                            order.client_id
+                            order.symbol
+                            (Primitives.Price.to_string order.price)
+                            (Primitives.Qty.to_string order.qty)
+                    | _ -> Lwt.return_unit) >>= fun () ->
+                    
+                    Lwt.return_unit
+                | _, _ ->
+                    warning_f ~section
+                      "Grid strategy requires grid_interval and sell_mult for %s" symbol >>= fun () -> Lwt.return_unit)
             | None ->
                 warning_f ~section
                   "No configuration found for symbol %s in runtime_cfg" symbol >>= fun () -> Lwt.return_unit)
@@ -277,99 +282,104 @@ module State = struct
 
     match asset_cfg_opt with
     | Some asset_cfg ->
-        let current_price_float = Float.of_string (Primitives.Price.to_string tick.current_price) in
-        let grid_pct = Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval) in
-        let max_distance_pct = grid_pct *. 2.0 in
+        (match asset_cfg.grid_interval with
+        | Some grid_interval ->
+            let current_price_float = Float.of_string (Primitives.Price.to_string tick.current_price) in
+            let grid_pct = Float.of_string (Primitives.Fixed.to_string grid_interval) in
+            let max_distance_pct = grid_pct *. 2.0 in
 
-        debug_f ~section
-          "Checking orders for %s - Current Price: %.8f, Grid Interval: %.2f%%, Max Distance: %.2f%%"
-            tick.symbol current_price_float grid_pct max_distance_pct >>= fun () ->
-
-        let orders = Hashtbl.to_seq_values (K.Kraken_incoming_data.get_all_open_orders ()) |> List.of_seq in
-
-        debug_f ~section
-          "Found %d open orders to check" (List.length orders) >>= fun () ->
-
-        Lwt_list.iter_s (fun (order : K.Kraken_common_types.order) ->
-          debug_f ~section
-            "Examining order %s: symbol=%s side=%s price=%.8f" 
-              order.order_id 
-              order.order_symbol
-              (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown")
-              order.limit_price >>= fun () ->
-              
-          if String.equal order.order_symbol tick.symbol && 
-             (match order.side with Some Buy -> true | _ -> false) then
-             let price_diff_pct = 
-               ((order.limit_price -. current_price_float) /. current_price_float) *. -100.0 in
-               
-             debug_f ~section
-               "Order %s price difference: %.2f%% (max allowed: %.2f%%)"
-                 order.order_id price_diff_pct max_distance_pct >>= fun () ->
-
-             if price_diff_pct > max_distance_pct then
-               let new_price_float = current_price_float *. (1.0 -. grid_pct /. 100.0) in
-               
-               (if String.equal tick.symbol "USDG/USD" then
-                 debug_f ~section:(Lwt_log_core.Section.make "engine.strategy.grid_verify")
-                   "USDG/USD adjust: raw_new_float=%.8f"
-                     new_price_float
-               else Lwt.return_unit) >>= fun () ->
-
-               let new_price = match K.Kraken_incoming_data.get_precisions tick.symbol with
-                 | Some (price_prec, _) ->
-                     Primitives.Price.of_string_exn ~scale:price_prec
-                       (Printf.sprintf "%.*f" price_prec new_price_float)
-                 | None -> 
-                     Primitives.Price.of_string_exn ~scale:tick.current_price.scale
-                       (Printf.sprintf "%.*f" tick.current_price.scale new_price_float)
-               in
-               
-               (if String.equal tick.symbol "USDG/USD" then
-                 debug_f ~section:(Lwt_log_core.Section.make "engine.strategy.grid_verify")
-                   "USDG/USD adjust: formatted_new=%s (scale=%d)"
-                     (Primitives.Price.to_string new_price)
-                     new_price.scale
-               else Lwt.return_unit) >>= fun () ->
-               
-               let current_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty) in
-
-               let amend_cmd = Core.Amend {
-                 dst = "kraken";
-                 order_id = order.order_id; 
-                 symbol = order.order_symbol; 
-                 new_price = new_price; 
-                 new_qty = current_qty; 
-                 ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-               } in
-
-               info_f ~section
-                 "Adjusting order %s price from %.2f to %.2f (current: %.2f, diff: %.1f%%)"
-                   order.order_id
-                   order.limit_price
-                   new_price_float
-                   current_price_float
-                   price_diff_pct >>= fun () ->
-
-               Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
-               debug_f ~section
-                 "Amend command %s pushed to buffer: %b"
-                   order.order_id true >>= fun () ->
-
-               if not true then
-                 warning_f ~section
-                   "Command buffer full! Dropping amend command."
-               else
-                 Lwt.return_unit
-             else
-               debug_f ~section
-                 "Order %s within acceptable range" order.order_id >>= fun () ->
-               Lwt.return_unit
-          else
             debug_f ~section
-              "Skipping order %s (wrong symbol or side)" order.order_id >>= fun () ->
-            Lwt.return_unit
-        ) orders
+              "Checking orders for %s - Current Price: %.8f, Grid Interval: %.2f%%, Max Distance: %.2f%%"
+                tick.symbol current_price_float grid_pct max_distance_pct >>= fun () ->
+
+            let orders = Hashtbl.to_seq_values (K.Kraken_incoming_data.get_all_open_orders ()) |> List.of_seq in
+
+            debug_f ~section
+              "Found %d open orders to check" (List.length orders) >>= fun () ->
+
+            Lwt_list.iter_s (fun (order : K.Kraken_common_types.order) ->
+              debug_f ~section
+                "Examining order %s: symbol=%s side=%s price=%.8f" 
+                  order.order_id 
+                  order.order_symbol
+                  (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown")
+                  order.limit_price >>= fun () ->
+                  
+              if String.equal order.order_symbol tick.symbol && 
+                 (match order.side with Some Buy -> true | _ -> false) then
+                 let price_diff_pct = 
+                   ((order.limit_price -. current_price_float) /. current_price_float) *. -100.0 in
+                   
+                 debug_f ~section
+                   "Order %s price difference: %.2f%% (max allowed: %.2f%%)"
+                     order.order_id price_diff_pct max_distance_pct >>= fun () ->
+
+                 if price_diff_pct > max_distance_pct then
+                   let new_price_float = current_price_float *. (1.0 -. grid_pct /. 100.0) in
+                   
+                   (if String.equal tick.symbol "USDG/USD" then
+                     debug_f ~section:(Lwt_log_core.Section.make "engine.strategy.grid_verify")
+                       "USDG/USD adjust: raw_new_float=%.8f"
+                         new_price_float
+                   else Lwt.return_unit) >>= fun () ->
+
+                   let new_price = match K.Kraken_incoming_data.get_precisions tick.symbol with
+                     | Some (price_prec, _) ->
+                         Primitives.Price.of_string_exn ~scale:price_prec
+                           (Printf.sprintf "%.*f" price_prec new_price_float)
+                     | None -> 
+                         Primitives.Price.of_string_exn ~scale:tick.current_price.scale
+                           (Printf.sprintf "%.*f" tick.current_price.scale new_price_float)
+                   in
+                   
+                   (if String.equal tick.symbol "USDG/USD" then
+                     debug_f ~section:(Lwt_log_core.Section.make "engine.strategy.grid_verify")
+                       "USDG/USD adjust: formatted_new=%s (scale=%d)"
+                         (Primitives.Price.to_string new_price)
+                         new_price.scale
+                   else Lwt.return_unit) >>= fun () ->
+                   
+                   let current_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty) in
+
+                   let amend_cmd = Core.Amend {
+                     dst = "kraken";
+                     order_id = order.order_id; 
+                     symbol = order.order_symbol; 
+                     new_price = new_price; 
+                     new_qty = current_qty; 
+                     ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+                   } in
+
+                   info_f ~section
+                     "Adjusting order %s price from %.2f to %.2f (current: %.2f, diff: %.1f%%)"
+                       order.order_id
+                       order.limit_price
+                       new_price_float
+                       current_price_float
+                       price_diff_pct >>= fun () ->
+
+                   Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+                   debug_f ~section
+                     "Amend command %s pushed to buffer: %b"
+                       order.order_id true >>= fun () ->
+
+                   if not true then
+                     warning_f ~section
+                       "Command buffer full! Dropping amend command."
+                   else
+                     Lwt.return_unit
+                 else
+                   debug_f ~section
+                     "Order %s within acceptable range" order.order_id >>= fun () ->
+                   Lwt.return_unit
+              else
+                debug_f ~section
+                  "Skipping order %s (wrong symbol or side)" order.order_id >>= fun () ->
+                Lwt.return_unit
+            ) orders
+        | None ->
+            warning_f ~section
+              "Grid strategy requires grid_interval for %s" tick.symbol >>= fun () -> Lwt.return_unit)
     | None ->
         warning_f ~section
           "No configuration found for symbol %s in runtime_cfg" tick.symbol >>= fun () -> Lwt.return_unit
@@ -597,140 +607,146 @@ module State = struct
         warning_f ~section:verify_section
           "Grid Verify [%s]: No asset config found." symbol
     | Some asset_cfg ->
-        let open_orders_for_symbol =
-          Hashtbl.to_seq_values open_orders
-          |> List.of_seq
-          |> List.filter (fun (o : K.Kraken_common_types.order) -> String.equal o.order_symbol symbol)
-        in
+        (match asset_cfg.grid_interval with
+        | Some grid_interval ->
+            let open_orders_for_symbol =
+              Hashtbl.to_seq_values open_orders
+              |> List.of_seq
+              |> List.filter (fun (o : K.Kraken_common_types.order) -> String.equal o.order_symbol symbol)
+            in
 
-        let buy_orders = List.filter (fun (o : K.Kraken_common_types.order) -> o.side = Some Core.Buy) open_orders_for_symbol in
-        let sell_orders = List.filter (fun (o : K.Kraken_common_types.order) -> o.side = Some Core.Sell) open_orders_for_symbol in
+            let buy_orders = List.filter (fun (o : K.Kraken_common_types.order) -> o.side = Some Core.Buy) open_orders_for_symbol in
+            let sell_orders = List.filter (fun (o : K.Kraken_common_types.order) -> o.side = Some Core.Sell) open_orders_for_symbol in
 
-        if List.length buy_orders > 0 && List.length sell_orders > 0 then
-          let highest_buy_order =
-            List.fold_left (fun (acc : K.Kraken_common_types.order) (curr : K.Kraken_common_types.order) ->
-              if curr.limit_price > acc.limit_price then curr else acc
-            ) (List.hd buy_orders) (List.tl buy_orders)
-          in
-          let lowest_sell_order =
-            List.fold_left (fun (acc : K.Kraken_common_types.order) (curr : K.Kraken_common_types.order) ->
-              if curr.limit_price < acc.limit_price then curr else acc
-            ) (List.hd sell_orders) (List.tl sell_orders)
-          in
-
-          let max_buy_price_float = highest_buy_order.limit_price in
-          let min_sell_price_float = lowest_sell_order.limit_price in
-
-          (* Skip verification if sell price is below buy price - this would be an invalid grid state *)
-          if min_sell_price_float <= max_buy_price_float then
-            Lwt.return_unit
-          else
-            let actual_spread_value = min_sell_price_float -. max_buy_price_float in
-            let p_mid_reference = (min_sell_price_float +. max_buy_price_float) /. 2.0 in
-
-            (* Skip spread calculation if midpoint reference price is invalid (zero or negative) *)
-            if p_mid_reference <= 0.0 then
-              Lwt.return_unit
-            else
-              let actual_spread_pct_of_mid = (actual_spread_value /. p_mid_reference) *. 100.0 in
-              let configured_grid_interval_pct =
-                Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval)
+            if List.length buy_orders > 0 && List.length sell_orders > 0 then
+              let highest_buy_order =
+                List.fold_left (fun (acc : K.Kraken_common_types.order) (curr : K.Kraken_common_types.order) ->
+                  if curr.limit_price > acc.limit_price then curr else acc
+                ) (List.hd buy_orders) (List.tl buy_orders)
               in
-              let expected_total_spread_pct = 2.0 *. configured_grid_interval_pct in
-              let tolerance_pct = 0.01 (* Tolerance for comparison *) in
-              let diff_pct = abs_float (actual_spread_pct_of_mid -. expected_total_spread_pct) in
+              let lowest_sell_order =
+                List.fold_left (fun (acc : K.Kraken_common_types.order) (curr : K.Kraken_common_types.order) ->
+                  if curr.limit_price < acc.limit_price then curr else acc
+                ) (List.hd sell_orders) (List.tl sell_orders)
+              in
 
-              if diff_pct <= tolerance_pct then
-                info_f ~section:verify_section
-                  "Grid Verify [%s]: < Tolerance Threshold."
-                  symbol
+              let max_buy_price_float = highest_buy_order.limit_price in
+              let min_sell_price_float = lowest_sell_order.limit_price in
+
+              (* Skip verification if sell price is below buy price - this would be an invalid grid state *)
+              if min_sell_price_float <= max_buy_price_float then
+                Lwt.return_unit
               else
-                (* Grid check FAILED, attempt to amend the highest buy order *)
-                let new_target_buy_price_float = min_sell_price_float *. (1.0 -. (expected_total_spread_pct /. 100.0)) in
+                let actual_spread_value = min_sell_price_float -. max_buy_price_float in
+                let p_mid_reference = (min_sell_price_float +. max_buy_price_float) /. 2.0 in
 
-                if new_target_buy_price_float >= current_market_price_float then
-                  info_f ~section:verify_section
-                  "Grid Verify [%s]: PASSED."
-                    symbol
+                (* Skip spread calculation if midpoint reference price is invalid (zero or negative) *)
+                if p_mid_reference <= 0.0 then
+                  Lwt.return_unit
                 else
-                  (* Safe to amend, check precision and if new price is actually different *)
-                  match K.Kraken_incoming_data.get_precisions symbol with
-                  | None ->
-                      error_f ~section:verify_section
-                        "Grid Verify [%s]: No Precision."
-                        symbol
-                  | Some (price_prec, qty_prec) ->
-                      let new_buy_price_primitive =
-                        Primitives.Price.of_string_exn ~scale:price_prec
-                          (Printf.sprintf "%.*f" price_prec new_target_buy_price_float)
-                      in
-                      
-                      (* Compare formatted strings directly to avoid precision loss *)
-                      let existing_price_formatted = Printf.sprintf "%.*f" price_prec highest_buy_order.limit_price in
-                      let new_price_formatted = Printf.sprintf "%.*f" price_prec new_target_buy_price_float in
-                      
-                      (* see the actual values being compared *)
-                      debug_f ~section:verify_section
-                        "Grid Verify [%s] DEBUG: existing_price=%.8f (formatted: %s), new_price=%.8f (formatted: %s), equal=%b"
-                        symbol
-                        highest_buy_order.limit_price
-                        existing_price_formatted
-                        new_target_buy_price_float
-                        new_price_formatted
-                        (String.equal existing_price_formatted new_price_formatted) >>= fun () ->
-                      Lwt.return_unit >>= fun () ->
-                      
-                      if String.equal existing_price_formatted new_price_formatted then
-                        info_f ~section:verify_section
-                          "Grid Verify [%s]: PASSED."
-                          symbol
-                      else
-                        (* Check if price difference is meaningful enough for amendment *)
-                        let existing_formatted_float = float_of_string existing_price_formatted in
-                        let new_formatted_float = float_of_string new_price_formatted in
-                        let price_diff = abs_float (existing_formatted_float -. new_formatted_float) in
-                        let min_price_diff = 10.0 ** (-.float_of_int price_prec) *. 2.0 in (* 2x the precision minimum *)
+                  let actual_spread_pct_of_mid = (actual_spread_value /. p_mid_reference) *. 100.0 in
+                  let configured_grid_interval_pct =
+                    Float.of_string (Primitives.Fixed.to_string grid_interval)
+                  in
+                  let expected_total_spread_pct = 2.0 *. configured_grid_interval_pct in
+                  let tolerance_pct = 0.01 (* Tolerance for comparison *) in
+                  let diff_pct = abs_float (actual_spread_pct_of_mid -. expected_total_spread_pct) in
 
-                        debug_f ~section:verify_section
-                          "Grid Verify [%s] DEBUG: price_diff=%.8f, min_diff=%.8f, amendable=%b"
-                          symbol
-                          price_diff
-                          min_price_diff
-                          (price_diff >= min_price_diff) >>= fun () ->
+                  if diff_pct <= tolerance_pct then
+                    info_f ~section:verify_section
+                      "Grid Verify [%s]: < Tolerance Threshold."
+                      symbol
+                  else
+                    (* Grid check FAILED, attempt to amend the highest buy order *)
+                    let new_target_buy_price_float = min_sell_price_float *. (1.0 -. (expected_total_spread_pct /. 100.0)) in
 
-                        if price_diff < min_price_diff then
-                          info_f ~section:verify_section
-                            "Grid Verify [%s]: SKIPPED (price diff too small)."
+                    if new_target_buy_price_float >= current_market_price_float then
+                      info_f ~section:verify_section
+                      "Grid Verify [%s]: PASSED."
+                        symbol
+                    else
+                      (* Safe to amend, check precision and if new price is actually different *)
+                      match K.Kraken_incoming_data.get_precisions symbol with
+                      | None ->
+                          error_f ~section:verify_section
+                            "Grid Verify [%s]: No Precision."
                             symbol
-                        else
-                          (* Prices are different and difference is meaningful, proceed with amend *)
-                          let existing_qty_primitive =
-                             Primitives.Qty.of_string_exn ~scale:qty_prec (Printf.sprintf "%.*f" qty_prec highest_buy_order.qty)
+                      | Some (price_prec, qty_prec) ->
+                          let new_buy_price_primitive =
+                            Primitives.Price.of_string_exn ~scale:price_prec
+                              (Printf.sprintf "%.*f" price_prec new_target_buy_price_float)
                           in
-                          let amend_cmd = Core.Amend {
-                            dst = "kraken";
-                            order_id = highest_buy_order.order_id;
-                            symbol = symbol;
-                            new_price = new_buy_price_primitive;
-                            new_qty = existing_qty_primitive;
-                            ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-                          } in
-
-                          if Hashtbl.mem pending_amends highest_buy_order.order_id then
-                            debug_f ~section:verify_section
-                              "Grid Verify [%s]: Skipping amend for %s, already pending."
-                              symbol highest_buy_order.order_id
-                          else (
-                            Hashtbl.add pending_amends highest_buy_order.order_id (new_buy_price_primitive, existing_qty_primitive);
-                            Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+                          
+                          (* Compare formatted strings directly to avoid precision loss *)
+                          let existing_price_formatted = Printf.sprintf "%.*f" price_prec highest_buy_order.limit_price in
+                          let new_price_formatted = Printf.sprintf "%.*f" price_prec new_target_buy_price_float in
+                          
+                          (* see the actual values being compared *)
+                          debug_f ~section:verify_section
+                            "Grid Verify [%s] DEBUG: existing_price=%.8f (formatted: %s), new_price=%.8f (formatted: %s), equal=%b"
+                            symbol
+                            highest_buy_order.limit_price
+                            existing_price_formatted
+                            new_target_buy_price_float
+                            new_price_formatted
+                            (String.equal existing_price_formatted new_price_formatted) >>= fun () ->
+                          Lwt.return_unit >>= fun () ->
+                          
+                          if String.equal existing_price_formatted new_price_formatted then
                             info_f ~section:verify_section
-                              "Grid Verify [%s]: FAILED & AMENDING."
+                              "Grid Verify [%s]: PASSED."
                               symbol
-                          )
-        else
-          info_f ~section:verify_section
-            "Grid Verify [%s]: Skipping, not enough buy/sell orders to form a grid (Buys: %d, Sells: %d)."
-            symbol (List.length buy_orders) (List.length sell_orders)
+                          else
+                            (* Check if price difference is meaningful enough for amendment *)
+                            let existing_formatted_float = float_of_string existing_price_formatted in
+                            let new_formatted_float = float_of_string new_price_formatted in
+                            let price_diff = abs_float (existing_formatted_float -. new_formatted_float) in
+                            let min_price_diff = 10.0 ** (-.float_of_int price_prec) *. 2.0 in (* 2x the precision minimum *)
+
+                            debug_f ~section:verify_section
+                              "Grid Verify [%s] DEBUG: price_diff=%.8f, min_diff=%.8f, amendable=%b"
+                              symbol
+                              price_diff
+                              min_price_diff
+                              (price_diff >= min_price_diff) >>= fun () ->
+
+                            if price_diff < min_price_diff then
+                              info_f ~section:verify_section
+                                "Grid Verify [%s]: SKIPPED (price diff too small)."
+                                symbol
+                            else
+                              (* Prices are different and difference is meaningful, proceed with amend *)
+                              let existing_qty_primitive =
+                                 Primitives.Qty.of_string_exn ~scale:qty_prec (Printf.sprintf "%.*f" qty_prec highest_buy_order.qty)
+                              in
+                              let amend_cmd = Core.Amend {
+                                dst = "kraken";
+                                order_id = highest_buy_order.order_id;
+                                symbol = symbol;
+                                new_price = new_buy_price_primitive;
+                                new_qty = existing_qty_primitive;
+                                ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+                              } in
+
+                              if Hashtbl.mem pending_amends highest_buy_order.order_id then
+                                debug_f ~section:verify_section
+                                  "Grid Verify [%s]: Skipping amend for %s, already pending."
+                                  symbol highest_buy_order.order_id
+                              else (
+                                Hashtbl.add pending_amends highest_buy_order.order_id (new_buy_price_primitive, existing_qty_primitive);
+                                Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+                                info_f ~section:verify_section
+                                  "Grid Verify [%s]: FAILED & AMENDING."
+                                  symbol
+                              )
+            else
+              info_f ~section:verify_section
+                "Grid Verify [%s]: Skipping, not enough buy/sell orders to form a grid (Buys: %d, Sells: %d)."
+                symbol (List.length buy_orders) (List.length sell_orders)
+        | None ->
+            warning_f ~section:verify_section
+              "Grid Verify [%s]: grid_interval not configured for asset."
+              symbol)
 
   (** Get list of all open orders in simplified format.
 

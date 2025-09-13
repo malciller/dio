@@ -63,8 +63,9 @@ let test_type_system_consistency _switch () =
     let asset_cfg : Config.asset_cfg = {
       Config.symbol;
       qty;
-      grid_interval;
-      sell_mult;
+      grid_interval = Some grid_interval;
+      sell_mult = Some sell_mult;
+      min_usd_balance = None;
       strategy = Config.Grid;
     } in
     

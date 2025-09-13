@@ -1,4 +1,4 @@
-(* src/types/config.ml *)
+(* src/dio_types/config.ml *)
 open Primitives
 
 
@@ -30,8 +30,9 @@ let strategy_type_of_yojson_exn json =
 type asset_cfg = {
   symbol        : symbol;
   qty           : Qty.t;
-  grid_interval : Fixed.t;
-  sell_mult     : Fixed.t;
+  grid_interval : Fixed.t option; [@yojson.optional] [@yojson.default None]
+  sell_mult     : Fixed.t option; [@yojson.optional] [@yojson.default None]
+  min_usd_balance : Fixed.t option; [@yojson.optional] [@yojson.default None]
   strategy      : strategy_type;
 } [@@deriving yojson { exn = true }]   
 
@@ -62,14 +63,37 @@ let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
   
   (match asset.strategy with
   | Grid ->
-      if not (Fixed.is_positive asset.grid_interval) then
-        errors := (format_error_message "Asset '%s' (Grid): grid_interval must be positive." asset.symbol) :: !errors;
+      (match asset.grid_interval with
+      | Some grid_interval ->
+          if not (Fixed.is_positive grid_interval) then
+            errors := (format_error_message "Asset '%s' (Grid): grid_interval must be positive." asset.symbol) :: !errors
+      | None ->
+          errors := (format_error_message "Asset '%s' (Grid): grid_interval is required." asset.symbol) :: !errors);
       
-      if not (Fixed.is_positive asset.sell_mult) then
-        errors := (format_error_message "Asset '%s' (Grid): sell_mult must be positive." asset.symbol) :: !errors
-      else if Fixed.(<=) (Fixed.one asset.sell_mult.scale) asset.sell_mult then
-        errors := (format_error_message "Asset '%s' (Grid): sell_mult should typically be less than 1.0 for profit-taking." asset.symbol) :: !errors
-  | Orderbook -> ()
+      (match asset.sell_mult with
+      | Some sell_mult ->
+          if not (Fixed.is_positive sell_mult) then
+            errors := (format_error_message "Asset '%s' (Grid): sell_mult must be positive." asset.symbol) :: !errors
+          else if Fixed.(<=) (Fixed.one sell_mult.scale) sell_mult then
+            errors := (format_error_message "Asset '%s' (Grid): sell_mult should typically be less than 1.0 for profit-taking." asset.symbol) :: !errors
+      | None ->
+          errors := (format_error_message "Asset '%s' (Grid): sell_mult is required." asset.symbol) :: !errors);
+
+      if asset.min_usd_balance <> None then
+        errors := (format_error_message "Asset '%s' (Grid): min_usd_balance is not applicable." asset.symbol) :: !errors
+  | Orderbook ->
+      (match asset.min_usd_balance with
+      | Some min_usd_balance ->
+          if not (Fixed.is_non_negative min_usd_balance) then
+            errors := (format_error_message "Asset '%s' (Orderbook): min_usd_balance must be non-negative." asset.symbol) :: !errors
+      | None ->
+          errors := (format_error_message "Asset '%s' (Orderbook): min_usd_balance is required." asset.symbol) :: !errors);
+
+      if asset.grid_interval <> None then
+        errors := (format_error_message "Asset '%s' (Orderbook): grid_interval is not applicable." asset.symbol) :: !errors;
+      
+      if asset.sell_mult <> None then
+        errors := (format_error_message "Asset '%s' (Orderbook): sell_mult is not applicable." asset.symbol) :: !errors
   );
 
   if !errors = [] then

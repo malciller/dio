@@ -3,6 +3,7 @@
  (public_name dio.exchange.kraken)
  (modules
   kraken_common_types
+  kraken_balances
   kraken_generate_auth_token
   kraken_incoming_data
   kraken_outgoing_data

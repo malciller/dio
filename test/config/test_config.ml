@@ -15,8 +15,9 @@ let asset_cfg_sample =
   let open Primitives in
   { Config.symbol        = "BTC/USD"
   ; qty                  = Qty.of_string_exn   ~scale:8 "0.01000000"
-  ; grid_interval        = Fixed.of_string_exn ~scale:8 "1.0" (* Represents 1% *)
-  ; sell_mult            = Fixed.of_string_exn ~scale:8 "0.999"
+  ; grid_interval        = Some (Fixed.of_string_exn ~scale:8 "1.0") (* Represents 1% *)
+  ; sell_mult            = Some (Fixed.of_string_exn ~scale:8 "0.999")
+  ; min_usd_balance      = None
   ; strategy             = Config.Grid
   }
 

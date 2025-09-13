@@ -33,6 +33,7 @@ module Fixed : sig
   (* Comparison *)
   val (<=) : t -> t -> bool
   val is_positive : t -> bool
+  val is_non_negative : t -> bool
 
   (* Zero and One *)
   val zero : int -> t
@@ -106,6 +107,8 @@ end = struct
     p1.raw <= p2.raw
 
   let is_positive { raw; _ } = raw > 0L
+
+  let is_non_negative { raw; _ } = raw >= 0L
 
   let zero scale = { raw = 0L; scale }
   

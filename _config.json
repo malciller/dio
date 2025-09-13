@@ -38,15 +38,13 @@
     {
       "symbol": "USDG/USD",
       "qty": "100.0",
-      "grid_interval": "0.01",
-      "sell_mult": "1.0",
+      "min_usd_balance": "500.0",
       "strategy": "Orderbook"
     },
     {
       "symbol": "USDR/USD",
       "qty": "100.0",
-      "grid_interval": "0.01",
-      "sell_mult": "1.0",
+      "min_usd_balance": "800.0",
       "strategy": "Orderbook"
     }
   ],
