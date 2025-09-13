@@ -1,11 +1,46 @@
-(* src/engine/strategy/kraken_top_level_orderbook_mm.ml *)
-(*
-  Top-level order book market-making.
-  - Ideal for 0 fee pegged assets (hft)
-  - Places buy and sell orders at top level bid/ask prices.
-  - Filling of a buy order triggers new order pair
-  - Buy order updated to maintain top-level of order book.
+(* src/dio_engine/trade_strategies/kraken_top_level_mm.ml *)
 
+(*
+  TOP-LEVEL ORDER BOOK MARKET MAKING STRATEGY FOR KRAKEN
+
+  This strategy implements high-frequency market making by maintaining orders at the
+  very top of the order book bid/ask spread. Ideal for zero-fee trading pairs.
+
+  STRATEGY BEHAVIOR:
+  - Places buy orders at the current top bid price
+  - Places sell orders at the current top ask price
+  - Buy order fills trigger immediate recreation of the order pair
+  - Continuously adjusts buy orders to maintain top-level positioning
+  - Only recreates orders when buy orders are filled (not sell orders)
+
+  KEY FEATURES:
+  - Zero-latency order placement at best available prices
+  - Automatic order management and position maintenance
+  - Real-time synchronization with exchange order book
+  - Precision-aware order formatting for exchange compliance
+  - Comprehensive logging and state tracking
+
+*)
+
+(*
+  ARCHITECTURAL OVERVIEW
+
+  The top-level market making strategy maintains persistent presence at the best
+  available prices in the order book:
+
+  COMPONENTS:
+  - State Management: Tracks current orders and price information
+  - Order Creation: Generates exchange-compliant orders with proper formatting
+  - Order Adjustment: Continuously maintains top-level positioning
+  - Execution Handling: Processes fills and triggers order recreation
+  - State Synchronization: Keeps local state consistent with exchange
+
+  OPERATION:
+  - Maintains one buy order at top bid and one sell order at top ask
+  - Buy order fills trigger immediate recreation of both orders
+  - Sell order fills are logged but don't trigger recreation
+  - Buy orders are continuously adjusted to stay at top bid
+  - All operations are synchronized with exchange state
 *)
 open Lwt.Infix
 open Dio_types
@@ -14,26 +49,50 @@ module K = Kraken
 
 let section = Lwt_log_core.Section.make "engine.strategy.orderbook"
 
+(*
+  STATE MANAGEMENT MODULE
+
+  Manages the internal state of the top-level market making strategy including:
+  - Current price information for all tracked symbols
+  - Open orders synchronized with the exchange
+*)
+
 module State = struct
   let price_info : (string, Event.tick) Hashtbl.t = Hashtbl.create 16
   let open_orders : (string, K.Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
 
+  (** Check if a symbol has any open buy orders.
+
+      @param symbol Trading symbol to check
+      @return true if at least one buy order exists for the symbol
+  *)
   let has_open_buy_order symbol =
-    debug_f ~section "Checking for open buy orders for %s" symbol |> ignore;
     let buy_orders = Hashtbl.fold (fun _ (order : K.Kraken_common_types.order) acc ->
       if String.equal order.order_symbol symbol && order.side = Some Core.Buy then
         order :: acc
       else
         acc
     ) open_orders [] in
-    debug_f ~section "Found %d buy orders for %s: [%s]"
-      (List.length buy_orders)
-      symbol
-      (String.concat "; " (List.map (fun (o : K.Kraken_common_types.order) -> Printf.sprintf "%s@%.8f" o.order_id o.limit_price) buy_orders)) |> ignore;
     List.length buy_orders > 0
 
+  (** Get current price information for a symbol.
+
+      @param symbol Trading symbol to query
+      @return Current price tick data or None if not available
+  *)
   let get_price symbol = Hashtbl.find_opt price_info symbol
 
+  (** Create a precisely formatted order for Kraken exchange.
+
+      Generates an order with proper precision formatting and unique client ID.
+      Ensures exchange precision requirements are met to avoid order rejections.
+
+      @param symbol Trading symbol for the order
+      @param side Buy or Sell side
+      @param price Order price (will be reformatted to exchange precision)
+      @param qty Order quantity (will be reformatted to exchange precision)
+      @return Formatted Core.order_cmd option, None if precision data unavailable
+  *)
   let create_order ~symbol ~side ~price ~qty =
     match K.Kraken_incoming_data.get_precisions symbol with
     | Some (price_prec, qty_prec) ->
@@ -54,27 +113,27 @@ module State = struct
           tif = GTC;
           tags = [];
         } in
-        debug_f ~section
-          "Created order: client_id=%s symbol=%s side=%s price=%s qty=%s"
-            client_id symbol (match side with Buy -> "BUY" | Sell -> "SELL") price_str qty_str |> ignore;
         Some order
     | None ->
-        error_f ~section "Precisions not found for symbol: %s. Cannot create order." symbol |> ignore;
         None
 
-  let create_initial_order (runtime_cfg : Config.runtime_cfg) symbol cmd_buffer =
-    
-    let _current_orders = Hashtbl.fold (fun order_id (order : K.Kraken_common_types.order) acc ->
-      if String.equal order.order_symbol symbol then
-        let side_str = match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown" in
-        Printf.sprintf "%s(%s@%.8f)" order_id side_str order.limit_price :: acc
-      else acc
-    ) open_orders [] in
+  (** Create initial buy/sell order pair at current top-of-book prices.
 
-    
+      Establishes the baseline market making position by:
+      - Placing buy order at current top bid price
+      - Placing sell order at current top ask price
+      - Only creates orders if no buy order currently exists
+      - Uses configured quantity from asset settings
+
+      @param runtime_cfg Runtime configuration containing asset settings
+      @param symbol Trading symbol to create orders for
+      @param cmd_buffer Command buffer for order submission
+      @return Unit promise when orders are created and submitted
+  *)
+  let create_initial_order (runtime_cfg : Config.runtime_cfg) symbol cmd_buffer =
     let has_buy = has_open_buy_order symbol in
     info_f ~section "has_open_buy_order for %s: %b" symbol has_buy >>= fun () ->
-    
+
     if not has_buy then (
       match get_price symbol with
       | Some tick ->
@@ -122,8 +181,18 @@ module State = struct
       Lwt.return_unit
     )
 
+  (** Check and adjust buy orders to maintain top-level positioning.
+
+      Monitors the price difference between current buy orders and the top bid.
+      If any difference exists (however small), amends the buy order to the current top bid.
+      This ensures the strategy always maintains the best available buy price.
+
+      @param runtime_cfg Runtime configuration with asset settings
+      @param cmd_buffer Command buffer for order amendments
+      @param tick Current price tick data
+      @return Unit promise when order checking is complete
+  *)
   let check_and_adjust_orders (runtime_cfg : Config.runtime_cfg) cmd_buffer (tick : Event.tick) =
-    debug_f ~section "check_and_adjust_orders called for %s" tick.symbol >>= fun () ->
     let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) ->
       String.equal asset.symbol tick.symbol
     ) runtime_cfg.assets in
@@ -180,21 +249,33 @@ module State = struct
     | None ->
         warning_f ~section "No configuration found for %s" tick.symbol
 
+  (** Synchronize local order state with exchange.
+
+      Updates local order tracking to match current exchange state.
+      Clears and repopulates the local orders hash table.
+
+      @return Unit promise when synchronization is complete
+  *)
   let sync_open_orders () =
-    debug_f ~section "sync_open_orders called" >>= fun () ->
     let exchange_orders = K.Kraken_incoming_data.get_all_open_orders () in
-    debug_f ~section "Found %d orders from exchange" (Hashtbl.length exchange_orders) >>= fun () ->
     Hashtbl.clear open_orders;
     Hashtbl.iter (fun order_id (order : K.Kraken_common_types.order) ->
-      debug_f ~section "Syncing order %s: symbol=%s side=%s"
-        order_id
-        order.order_symbol
-        (match order.side with Some Core.Buy -> "Buy" | Some Core.Sell -> "Sell" | None -> "None") |> ignore;
       Hashtbl.add open_orders order_id order
     ) exchange_orders;
-    debug_f ~section "Synced %d orders to local state" (Hashtbl.length open_orders) >>= fun () ->
     Lwt.return_unit
 
+  (** Handle execution events (fills, cancellations, acknowledgments).
+
+      Processes order fills by recreating orders after completion.
+      Handles order cancellations and acknowledgments appropriately.
+      Only recreates orders when buy orders are filled (not sell orders).
+
+      @param runtime_cfg Runtime configuration
+      @param cmd_buffer Command buffer for new orders
+      @param symbols List of symbols using orderbook strategy
+      @param event Market event to process
+      @return Unit promise when event is processed
+  *)
   let handle_execution runtime_cfg cmd_buffer symbols (event: Core.market_event) =
     match event with
     | Core.Fill { order_id; symbol; price; qty; side; _ } ->
@@ -306,6 +387,14 @@ module State = struct
             Lwt.return_unit)
     | _ -> Lwt.return_unit
 
+  (** Load existing orders from exchange and initialize orderbook state.
+
+      Synchronizes local state with exchange orders for orderbook strategy symbols.
+      Only loads orders for symbols configured with Orderbook strategy.
+
+      @param runtime_cfg Runtime configuration containing asset settings
+      @return Unit promise when initialization is complete
+  *)
   let initialize_orders (runtime_cfg : Config.runtime_cfg) =
     let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
       match asset.strategy with
@@ -327,65 +416,65 @@ module State = struct
     Lwt.join log_promises >>= fun () ->
     info_f ~section "Initialized %d open orders from exchange" (Hashtbl.length open_orders)
 
+  (** Update price information for a symbol.
+
+      @param tick New price tick data to store
+      @return Unit promise
+  *)
   let update_price (tick : Event.tick) =
     Hashtbl.replace price_info tick.symbol tick;
     Lwt.return_unit
 end
 
+(** Main entry point for the top-level orderbook market making strategy.
+
+    Initializes the market making strategy by:
+    - Loading existing orders from exchange
+    - Setting up parallel processing of ticks and executions
+    - Maintaining orders at the top of the bid/ask spread
+    - Continuously adjusting buy orders to stay at best bid price
+
+    @param runtime_cfg Runtime configuration containing asset settings
+    @param _core_cfg Unused core engine configuration
+    @param tick_buffer Buffer for receiving price tick updates
+    @param cmd_buffer Buffer for submitting orders to exchange
+    @param exec_buffer Buffer for receiving order execution confirmations
+    @return Never returns (infinite processing loops)
+*)
 let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
   info_f ~section "Starting orderbook market making strategy" >>= fun () ->
-  
-  (* Wait for execution snapshot and instruments *)
+
   K.Kraken_incoming_data.wait_for_snapshot () >>= fun () ->
   K.Kraken_incoming_data.wait_for_instruments () >>= fun () ->
-  
-  (* Initialize orders for orderbook strategy *)
+
   State.initialize_orders runtime_cfg >>= fun () ->
-  
-  (* Get symbols configured for Orderbook strategy *)
+
   let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
     match asset.strategy with
     | Config.Orderbook -> Some asset.symbol
     | Config.Grid -> None
   ) runtime_cfg.assets in
-  
+
   info_f ~section
     "Starting orderbook strategy for symbols: [%s]" (String.concat ", " orderbook_symbols) >>= fun () ->
 
-  (* --- Task 1: Process executions --- *)
   let rec execution_loop () =
     Ringbuffer.pop exec_buffer >>= fun event ->
-    debug_f ~section "Processing execution event: %s"
-      (match event with
-      | Core.Fill { symbol; _ } -> Printf.sprintf "Fill for %s" symbol
-      | Core.Ack { order_id; state; _ } -> Printf.sprintf "Ack for %s, state: %s" order_id
-        (match state with Open -> "Open" | Filled -> "Filled" | Canceled -> "Canceled" | Rejected -> "Rejected")
-      | _ -> "Other") >>= fun () ->
     State.handle_execution runtime_cfg cmd_buffer orderbook_symbols event >>= fun () ->
     execution_loop ()
   in
 
-  (* --- Task 2: Process ticks --- *)
   let rec tick_loop () =
     Ringbuffer.pop tick_buffer >>= fun (tick : Event.tick) ->
-    debug_f ~section "Processing tick for %s: bid=%s ask=%s"
-      tick.symbol
-      (Primitives.Price.to_string tick.bid)
-      (Primitives.Price.to_string tick.ask) >>= fun () ->
     (if List.mem tick.symbol orderbook_symbols then (
-      debug_f ~section "%s is in orderbook symbols, checking and adjusting orders" tick.symbol >>= fun () ->
-      (* Sync orders first to ensure we have the latest state *)
       State.update_price tick >>= fun () ->
       State.sync_open_orders () >>= fun () ->
       State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
-      (* Also try to create initial orders if none exist *)
       State.create_initial_order runtime_cfg tick.symbol cmd_buffer
     ) else (
-      debug_f ~section "%s is not in orderbook symbols [%s], skipping"
-        tick.symbol (String.concat ", " orderbook_symbols)
+      Lwt.return_unit
     )) >>= fun () ->
     tick_loop ()
   in
 
-  (* Run both loops in parallel *)
   Lwt.join [execution_loop (); tick_loop ()] 

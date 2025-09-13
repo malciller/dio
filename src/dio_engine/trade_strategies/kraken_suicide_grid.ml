@@ -1,11 +1,41 @@
-(* src/engine/strategy/kraken_suicide_grid.ml *)
+(* src/dio_engine/trade_strategies/kraken_suicide_grid.ml *)
+
 (*
-  Position sizing for BTC: 0.00025 BTC x (unrealized value of portfolio / 100)
-  Position sizing for alts: $10 order size min, adjust to maintain new $5 thresholds on 
-  increased price movement.
-    i.e. if price of alt increases to where buy order = $15, new min threshold for that asset becomes
-      $15. If price of alt decreases below min threshold, volume of asset traded increased to meet 
-      threshold in USD value.
+  GRID TRADING STRATEGY FOR KRAKEN
+
+  This strategy maintains a grid of buy and sell orders around the current market price.
+  Orders are spaced according to configured grid intervals and automatically adjusted
+  when market conditions change.
+
+  GRID STRUCTURE:
+  - Buy orders placed below current price at configured grid intervals
+  - Sell orders placed above current price with multiplier-adjusted quantities
+  - Grid spacing determined by asset-specific grid_interval configuration
+
+  ORDER MANAGEMENT:
+  - Creates initial buy/sell order pairs when strategy starts
+  - Adjusts buy orders if price moves too far (beyond 2x grid interval)
+  - Recreates buy orders after they are filled
+  - Verifies grid spacing and amends orders when necessary
+*)
+
+(*
+  ARCHITECTURAL OVERVIEW
+
+  The grid strategy maintains persistent buy and sell orders in a structured pattern:
+
+  COMPONENTS:
+  - State Management: Tracks open orders, prices, and pending amendments
+  - Order Creation: Generates exchange-compliant orders with proper precision
+  - Grid Adjustment: Monitors price movements and adjusts orders when needed
+  - Execution Handling: Processes fills and recreates orders as required
+  - Grid Verification: Ensures optimal spacing between buy and sell orders
+
+  BEHAVIOR:
+  - Maintains one buy order below current price 
+  - Adjusts buy order if it gets too far from current price (>2x grid interval)
+  - Recreates buy order after fill to maintain grid structure
+  - Verifies grid spacing and corrects when spread becomes suboptimal
 *)
 
 open Lwt.Infix  
@@ -15,11 +45,21 @@ module K = Kraken
 
 let section = Lwt_log_core.Section.make "engine.strategy.kraken_suicide_grid" 
 
+(*
+  STATE MANAGEMENT MODULE
+
+  Manages the internal state of the grid trading strategy including:
+  - Current price information for all tracked symbols
+  - Open orders synchronized with the exchange
+  - Pending order amendments awaiting confirmation
+  - Initialization status for each trading symbol
+*)
+
 module State = struct
   let price_info : (string, Event.tick) Hashtbl.t = Hashtbl.create 16
 
   let open_orders : (string, K.Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
-  
+
   let pending_amends : (string, (Primitives.Price.t * Primitives.Qty.t)) Hashtbl.t = Hashtbl.create 16
 
   let initialized_symbols : (string, bool) Hashtbl.t = Hashtbl.create 16
@@ -32,6 +72,11 @@ module State = struct
     limit_price: float;
   }
 
+  (** Check if a symbol has both buy and sell orders open.
+
+      @param symbol Trading symbol to check
+      @return true if both buy and sell orders exist for the symbol
+  *)
   let has_open_orders symbol =
     let has_buy = ref false in
     let has_sell = ref false in
@@ -42,42 +87,61 @@ module State = struct
         | Some Core.Sell -> has_sell := true
         | None -> ()
     ) open_orders;
-    !has_buy && !has_sell (* Returns true only if both a buy and a sell exist *)
+    !has_buy && !has_sell
 
+  (** Check if a symbol has an active buy order.
+
+      @param symbol Trading symbol to check
+      @return true if a buy order exists for the symbol
+  *)
   let has_buy_order symbol =
     let found_buy_order = ref false in
     Hashtbl.iter (fun _ (order : K.Kraken_common_types.order) ->
-      if not !found_buy_order then (* Short-circuit if already found *)
+      if not !found_buy_order then
         if String.equal order.order_symbol symbol && order.side = Some Core.Buy then
           found_buy_order := true
     ) open_orders;
     !found_buy_order
 
+  (** Get current price information for a symbol.
+
+      @param symbol Trading symbol to query
+      @return Current price tick data or None if not available
+  *)
   let get_price symbol = Hashtbl.find_opt price_info symbol
 
+  (** Create a precisely formatted order for Kraken exchange.
+
+      Generates an order with proper precision formatting and unique client ID.
+      Ensures exchange precision requirements are met to avoid order rejections.
+
+      @param symbol Trading symbol for the order
+      @param side Buy or Sell side
+      @param price Order price (will be reformatted to exchange precision)
+      @param qty Order quantity (will be reformatted to exchange precision)
+      @return Formatted Core.order_cmd ready for submission
+  *)
   let create_order ~symbol ~side ~price ~qty =
     match K.Kraken_incoming_data.get_precisions symbol with
     | Some (price_prec, qty_prec) ->
         let price_str = Primitives.Price.to_string price in
         let qty_str = Primitives.Qty.to_string qty in
-        (* Reformat price and qty based on fetched precision *) 
         let formatted_price = Primitives.Price.of_string_exn ~scale:price_prec price_str in
         let formatted_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
-        
-        (* Generate client_id based on side and timestamp for uniqueness *)
+
         let side_prefix = match side with Core.Buy -> "b-" | Core.Sell -> "s-" in
         let timestamp_str = Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float) in
         let client_id = side_prefix ^ timestamp_str in
-        
+
         let order = Core.Add {
           dst = "kraken";
-          client_id; 
+          client_id;
           symbol;
           side;
           price = formatted_price;
           qty = formatted_qty;
           tif = GTC;
-          tags = [`Grid]; 
+          tags = [`Grid];
         } in
         Lwt_log_core.debug_f ~section
           "Created order: client_id=%s symbol=%s side=%s price=%s qty=%s tags=[Grid]"
@@ -87,43 +151,49 @@ module State = struct
             price_str
             qty_str |> ignore;
         order
-    | None -> 
+    | None ->
         Lwt_main.run (error_f ~section "Precisions not found for symbol: %s. Cannot create order." symbol);
         failwith ("Precision data missing for symbol: " ^ symbol)
 
-  let create_initial_orders : Config.runtime_cfg -> string -> Core.order_cmd Ringbuffer.t -> unit Lwt.t = 
+  (** Create initial buy/sell order pair for a grid symbol.
+
+      Establishes the baseline grid orders for a symbol by:
+      - Calculating grid spacing based on configured interval
+      - Creating sell order above current price with adjusted quantity
+      - Creating buy order below current price with base quantity
+      - Ensuring orders meet exchange precision requirements
+
+      @param runtime_cfg Runtime configuration containing asset settings
+      @param symbol Trading symbol to create orders for
+      @param cmd_buffer Command buffer for order submission
+      @return Unit promise when orders are created and submitted
+  *)
+  let create_initial_orders : Config.runtime_cfg -> string -> Core.order_cmd Ringbuffer.t -> unit Lwt.t =
     fun runtime_cfg symbol cmd_buffer ->
-      (* Only proceed if we've initialized orders for this symbol *)
       if Hashtbl.mem initialized_symbols symbol && not (has_buy_order symbol) then
         match get_price symbol with
         | Some tick ->
-            (* Find the asset configuration for this symbol *)
-            let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) -> 
+            let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) ->
               String.equal asset.symbol symbol
             ) runtime_cfg.assets in
 
             (match asset_cfg_opt with
             | Some asset_cfg ->
-                (* Get current price from stored price info *)
                 let current_price = tick.current_price in
-                let current_price_float = 
+                let current_price_float =
                   Float.of_string (Primitives.Price.to_string current_price) in
-                
-                (* Convert grid_interval to float percentage *)
-                let grid_pct = 
+
+                let grid_pct =
                   Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval) in
-                
-                (* Calculate raw prices using percentage adjustment *)
+
                 let sell_price_raw = current_price_float *. (1.0 +. (grid_pct /. 100.0)) in
                 let buy_price_raw = current_price_float *. (1.0 -. (grid_pct /. 100.0)) in
-                
-                (* Convert back to Fixed point with proper scale *)
-                let sell_price = Primitives.Price.of_string_exn ~scale:current_price.scale 
+
+                let sell_price = Primitives.Price.of_string_exn ~scale:current_price.scale
                   (Printf.sprintf "%.*f" current_price.scale sell_price_raw) in
-                let buy_price = Primitives.Price.of_string_exn ~scale:current_price.scale 
+                let buy_price = Primitives.Price.of_string_exn ~scale:current_price.scale
                   (Printf.sprintf "%.*f" current_price.scale buy_price_raw) in
-                
-                (* Calculate sell quantity by applying sell_mult *)
+
                 let base_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
                 let sell_mult_float = Float.of_string (Primitives.Fixed.to_string asset_cfg.sell_mult) in
                 let sell_qty_float = base_qty_float *. sell_mult_float in
@@ -137,7 +207,7 @@ module State = struct
                 in
 
                 info_f ~section
-                  "Order quantities for %s: buy=%.8f sell=%.8f (mult=%.3f -> %.8f * %.3f = %.8f)" 
+                  "Order quantities for %s: buy=%.8f sell=%.8f (mult=%.3f -> %.8f * %.3f = %.8f)"
                     symbol
                     base_qty_float
                     sell_qty_float
@@ -145,21 +215,19 @@ module State = struct
                     base_qty_float
                     sell_mult_float
                     (base_qty_float *. sell_mult_float) >>= fun () ->
-                
-                (* Create and push sell order first with adjusted quantity *)
+
                 let sell_cmd = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
                 Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
                 (match sell_cmd with
                 | Add order ->
                     debug_f ~section
-                      "Successfully pushed sell order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s" 
+                      "Successfully pushed sell order to cmd_buffer: client_id=%s symbol=%s price=%s qty=%s"
                         order.client_id
                         order.symbol
                         (Primitives.Price.to_string order.price)
                         (Primitives.Qty.to_string order.qty)
                 | _ -> Lwt.return_unit) >>= fun () ->
 
-                (* Create and push buy order second with base quantity *)
                 let buy_cmd = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
                 Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
                 (match buy_cmd with
@@ -182,13 +250,28 @@ module State = struct
       else
         Lwt.return_unit
 
+  (** Update price information for a symbol.
+
+      @param tick New price tick data to store
+      @return Unit promise
+  *)
   let update_price (tick : Event.tick) =
     Hashtbl.replace price_info tick.symbol tick;
     Lwt.return_unit 
 
+  (** Check and adjust grid orders based on current market conditions.
+
+      Monitors the distance between buy orders and current market price.
+      If the price has moved too far from the buy order (beyond 2x grid interval),
+      adjusts the buy order price to maintain optimal grid spacing.
+
+      @param runtime_cfg Runtime configuration with asset settings
+      @param cmd_buffer Command buffer for order amendments
+      @param tick Current price tick data
+      @return Unit promise when order checking is complete
+  *)
   let check_and_adjust_orders (runtime_cfg : Config.runtime_cfg) cmd_buffer (tick : Event.tick) =
-    (* Find the asset configuration for this symbol *)
-    let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) -> 
+    let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) ->
       String.equal asset.symbol tick.symbol
     ) runtime_cfg.assets in
 
@@ -196,19 +279,17 @@ module State = struct
     | Some asset_cfg ->
         let current_price_float = Float.of_string (Primitives.Price.to_string tick.current_price) in
         let grid_pct = Float.of_string (Primitives.Fixed.to_string asset_cfg.grid_interval) in
-        let max_distance_pct = grid_pct *. 2.0 in (* 2x grid interval *)
-        
+        let max_distance_pct = grid_pct *. 2.0 in
+
         debug_f ~section
-          "Checking orders for %s - Current Price: %.8f, Grid Interval: %.2f%%, Max Distance: %.2f%%" 
+          "Checking orders for %s - Current Price: %.8f, Grid Interval: %.2f%%, Max Distance: %.2f%%"
             tick.symbol current_price_float grid_pct max_distance_pct >>= fun () ->
-        
-        (* Get all open orders for this symbol *)
+
         let orders = Hashtbl.to_seq_values (K.Kraken_incoming_data.get_all_open_orders ()) |> List.of_seq in
-        
+
         debug_f ~section
           "Found %d open orders to check" (List.length orders) >>= fun () ->
-        
-        (* Process each order *)
+
         Lwt_list.iter_s (fun (order : K.Kraken_common_types.order) ->
           debug_f ~section
             "Examining order %s: symbol=%s side=%s price=%.8f" 
@@ -223,10 +304,9 @@ module State = struct
                ((order.limit_price -. current_price_float) /. current_price_float) *. -100.0 in
                
              debug_f ~section
-               "Order %s price difference: %.2f%% (max allowed: %.2f%%)" 
+               "Order %s price difference: %.2f%% (max allowed: %.2f%%)"
                  order.order_id price_diff_pct max_distance_pct >>= fun () ->
-              
-             (* If price difference exceeds 2x grid interval, adjust the order *)
+
              if price_diff_pct > max_distance_pct then
                let new_price_float = current_price_float *. (1.0 -. grid_pct /. 100.0) in
                
@@ -252,9 +332,8 @@ module State = struct
                      new_price.scale
                else Lwt.return_unit) >>= fun () ->
                
-               let current_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty) in (* Use order.qty from K.order *)
-               
-               (* Create amend command *) 
+               let current_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty) in
+
                let amend_cmd = Core.Amend {
                  dst = "kraken";
                  order_id = order.order_id; 
@@ -271,13 +350,12 @@ module State = struct
                    new_price_float
                    current_price_float
                    price_diff_pct >>= fun () ->
-               
-               (* Push the amend command *)
+
                Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
                debug_f ~section
-                 "Amend command %s pushed to buffer: %b" 
+                 "Amend command %s pushed to buffer: %b"
                    order.order_id true >>= fun () ->
-               
+
                if not true then
                  warning_f ~section
                    "Command buffer full! Dropping amend command."
@@ -296,12 +374,20 @@ module State = struct
         warning_f ~section
           "No configuration found for symbol %s in runtime_cfg" tick.symbol >>= fun () -> Lwt.return_unit
 
+  (** Synchronize local order state with exchange.
+
+      Updates local order tracking to match current exchange state.
+      Handles order additions, removals, and modifications.
+
+      @param runtime_cfg Runtime configuration
+      @param cmd_buffer Command buffer for any required actions
+      @param unit Unit parameter (for Lwt compatibility)
+      @return Unit promise when synchronization is complete
+  *)
   let sync_open_orders runtime_cfg cmd_buffer () =
     let exchange_orders = K.Kraken_incoming_data.get_all_open_orders () in
-    (* Track which orders were updated *)
     let updated_symbols = Hashtbl.create 16 in
-    
-    (* Remove orders that no longer exist on exchange *)
+
     Hashtbl.iter (fun order_id (order : K.Kraken_common_types.order) ->
       if not (Hashtbl.mem exchange_orders order_id) then (
         Hashtbl.add updated_symbols order.order_symbol true;
@@ -309,15 +395,13 @@ module State = struct
         info_f ~section "Removed order %s from local state (no longer on exchange)" order_id |> Lwt.ignore_result
       )
     ) open_orders;
-    
-    (* Add/update orders from exchange *)
+
     Hashtbl.iter (fun order_id (order : K.Kraken_common_types.order) ->
       match Hashtbl.find_opt open_orders order_id with
       | Some existing_order ->
-          (* Check if order was modified *)
           if existing_order.limit_price <> order.limit_price then (
             debug_f ~section
-              "Order %s price changed from %.8f to %.8f" 
+              "Order %s price changed from %.8f to %.8f"
                 order_id existing_order.limit_price order.limit_price |> Lwt.ignore_result;
             Hashtbl.add updated_symbols order.order_symbol true
           );
@@ -327,8 +411,7 @@ module State = struct
       ;
       Hashtbl.replace open_orders order_id order
     ) exchange_orders;
-    
-    (* Check orders for any symbols that had updates *)
+
     Hashtbl.iter (fun symbol _ ->
       match get_price symbol with
       | Some tick ->
@@ -337,79 +420,80 @@ module State = struct
           check_and_adjust_orders runtime_cfg cmd_buffer tick |> Lwt.ignore_result
       | None -> ()
     ) updated_symbols;
-    
+
     Lwt.return_unit
 
+  (** Handle execution events (fills, cancellations, acknowledgments).
+
+      Processes order fills by recreating orders after completion.
+      Handles cancellations and acknowledgments appropriately.
+
+      @param runtime_cfg Runtime configuration
+      @param cmd_buffer Command buffer for new orders
+      @param grid_symbols List of symbols using grid strategy
+      @param event Market event to process
+      @return Unit promise when event is processed
+  *)
   let handle_execution runtime_cfg cmd_buffer grid_symbols (event : Core.market_event) =
     match event with
     | Core.Fill { order_id; symbol; price; qty; side; _ } ->
-        (* Only process fills for grid strategy symbols *)
         if List.mem symbol grid_symbols then (
           match Hashtbl.find_opt open_orders order_id with
           | Some (order : K.Kraken_common_types.order) ->
             let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
-            let order_side_str = 
+            let order_side_str =
               match order.side with
               | Some Buy -> "Buy"
               | Some Sell -> "Sell"
               | None -> "unknown"
             in
             info_f ~section
-              "Order %s filled: %s %s %s @ %s (original side: %s)" 
+              "Order %s filled: %s %s %s @ %s (original side: %s)"
                 order_id
                 side_str
                 (Primitives.Qty.to_string qty)
                 symbol
                 (Primitives.Price.to_string price)
                 order_side_str >>= fun () ->
-            (* Sync state after fill to get latest from exchange *)
             sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
-            (* Check if the order still exists after sync - if not, it was completely filled *)
             if not (Hashtbl.mem open_orders order_id) then (
-              (* Order was completely filled *)
               info_f ~section
                 "Order %s completely filled" order_id >>= fun () ->
-              (* If it was a buy order, immediately create new orders *)
               if order.side = Some Core.Buy then (
                 info_f ~section
                   "Buy order %s filled, creating new orders for %s" order_id symbol >>= fun () ->
                 create_initial_orders runtime_cfg symbol cmd_buffer
               ) else (
-                (* Sell order filled - don't create new orders, just log *)
                 info_f ~section
                   "Sell order %s filled, no action needed" order_id >>= fun () ->
                 Lwt.return_unit
               )
             ) else (
-              (* Order still exists, so it was a partial fill - don't create new orders yet *)
               debug_f ~section
                 "Order %s partially filled, order still exists" order_id >>= fun () ->
               Lwt.return_unit
             )
-          | None -> Lwt.return_unit (* No local order found, likely an old fill, ignore *)
+          | None -> Lwt.return_unit
         ) else (
-          Lwt.return_unit (* Not a grid symbol, ignore *)
+          Lwt.return_unit
         )
     | Ack { order_id; state; _ } ->
         begin match Hashtbl.find_opt open_orders order_id with
         | Some order ->
             let symbol = order.order_symbol in
-            (* Only process acks for grid strategy symbols *)
             if List.mem symbol grid_symbols then (
             match state with
             | Canceled | Rejected ->
                 Hashtbl.remove open_orders order_id;
                 info_f ~section
-                  "Order %s %s" order_id 
+                  "Order %s %s" order_id
                     (match state with Canceled -> "canceled" | Rejected -> "rejected" | _ -> "") >>= fun () ->
-                (* If it was a buy order, immediately create new orders *)
                 if order.side = Some Core.Buy then (
                   info_f ~section
                     "Buy order %s cancelled/rejected, creating new orders for %s" order_id symbol >>= fun () ->
                   sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
                   create_initial_orders runtime_cfg symbol cmd_buffer
                 ) else (
-                  (* Sell order cancelled/rejected - don't create new orders *)
                   info_f ~section
                     "Sell order %s cancelled/rejected, no action needed" order_id >>= fun () ->
                   Lwt.return_unit
@@ -417,7 +501,6 @@ module State = struct
             | Open ->
                 begin match Hashtbl.find_opt pending_amends order_id with
                 | Some (new_price, new_qty) ->
-                    (* This is a confirmation of our amend. Update local state immediately. *)
                     debug_f ~section "Processing confirmed amend for order %s" order_id >>= fun () ->
                     begin match Hashtbl.find_opt open_orders order_id with
                     | Some order ->
@@ -429,28 +512,23 @@ module State = struct
                         Hashtbl.remove pending_amends order_id;
                         Lwt.return_unit
                     | None ->
-                        (* Order not found, might have been filled/cancelled. Syncing is safe here. *)
                         Hashtbl.remove pending_amends order_id;
                         sync_open_orders runtime_cfg cmd_buffer ()
                     end
                 | None ->
-                    (* Not a pending amend, just a regular Open ack. Sync state. *)
                     debug_f ~section
                       "Order %s state updated to Open - syncing orders" order_id >>= fun () ->
                     sync_open_orders runtime_cfg cmd_buffer ()
                 end
             | Filled ->
-                (* For Ack Filled (confirmation after final partial) *)
                 sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
                 info_f ~section
                   "Order %s fully filled (Ack confirmation)" order_id >>= fun () ->
-                (* If it was a buy order, create new orders *)
                 if order.side = Some Core.Buy then (
                   info_f ~section
                     "Buy order %s fully filled, creating new orders for %s" order_id symbol >>= fun () ->
                   create_initial_orders runtime_cfg symbol cmd_buffer
                 ) else (
-                  (* Sell order filled - don't create new orders *)
                   info_f ~section
                     "Sell order %s fully filled, no action needed" order_id >>= fun () ->
                   Lwt.return_unit
@@ -462,21 +540,25 @@ module State = struct
         end
     | _ -> Lwt.return_unit
 
+  (** Load existing orders from exchange and initialize grid state.
+
+      Synchronizes local state with exchange orders for grid strategy symbols.
+      Marks symbols as initialized when orders are loaded.
+
+      @param runtime_cfg Runtime configuration containing asset settings
+      @return Unit promise when initialization is complete
+  *)
   let initialize_orders (runtime_cfg : Config.runtime_cfg) =
-    (* Get only symbols configured for Grid strategy *)
-    let grid_symbols = List.filter_map (fun (asset: Config.asset_cfg) -> 
-      match asset.strategy with 
+    let grid_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
+      match asset.strategy with
       | Config.Grid -> Some asset.symbol
       | Config.Orderbook -> None
     ) runtime_cfg.assets in
-    
-    (* Initialize only grid strategy symbols *) 
+
     List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) grid_symbols;
-    
-    (* Fetch existing orders *) 
+
     let exchange_orders = K.Kraken_incoming_data.get_all_open_orders () in
     Hashtbl.clear open_orders;
-    (* Process each order and collect logging promises *)
     let log_promises = Hashtbl.fold (fun order_id (order : K.Kraken_common_types.order) promises -> 
       let log_promise = 
         let symbol_str = order.order_symbol in 
@@ -497,8 +579,19 @@ module State = struct
     info_f ~section
       "Initialized %d open orders from exchange" (Hashtbl.length open_orders)
 
+  (** Verify and correct grid spacing between buy and sell orders.
+
+      Checks if the spread between highest buy and lowest sell orders matches
+      the configured grid interval. If not, amends the buy order to correct spacing.
+
+      @param runtime_cfg Runtime configuration with asset settings
+      @param symbol Trading symbol to verify
+      @param cmd_buffer Command buffer for order amendments
+      @param current_market_price_float Current market price as float
+      @return Unit promise when verification is complete
+  *)
   let verify_grid_spacing (runtime_cfg : Config.runtime_cfg) (symbol : string) (cmd_buffer : Core.order_cmd Ringbuffer.t) (current_market_price_float : float) : unit Lwt.t =
-    let verify_section = Lwt_log_core.Section.make "engine.strategy.grid_verify" in 
+    let verify_section = Lwt_log_core.Section.make "engine.strategy.grid_verify" in
     match List.find_opt (fun (asset : Config.asset_cfg) -> String.equal asset.symbol symbol) runtime_cfg.assets with
     | None ->
         warning_f ~section:verify_section
@@ -639,11 +732,18 @@ module State = struct
             "Grid Verify [%s]: Skipping, not enough buy/sell orders to form a grid (Buys: %d, Sells: %d)."
             symbol (List.length buy_orders) (List.length sell_orders)
 
+  (** Get list of all open orders in simplified format.
+
+      Converts exchange order format to local open_order type.
+      Filters out orders with invalid sides.
+
+      @return List of open orders with simplified structure
+  *)
   let get_open_orders () : open_order list =
     let all_feed_orders = K.Kraken_incoming_data.get_all_open_orders () in
     let orders = Hashtbl.to_seq_values all_feed_orders |> List.of_seq in
-    List.filter_map (fun (order : K.Kraken_common_types.order) -> 
-      match order.side with 
+    List.filter_map (fun (order : K.Kraken_common_types.order) ->
+      match order.side with
       | Some s -> Some {
           order_id = order.order_id;
           symbol = order.order_symbol;
@@ -651,56 +751,63 @@ module State = struct
           status = order.status;
           limit_price = order.limit_price;
         }
-      | None -> 
-          Lwt_main.run (error_f ~section "Invalid side in order: %s (Order ID: %s)" order.order_id order.order_id); 
-          None (* Return None to filter out invalid orders *)
+      | None ->
+          Lwt_main.run (error_f ~section "Invalid side in order: %s (Order ID: %s)" order.order_id order.order_id);
+          None
     ) orders
 end
 
+(** Main entry point for the grid trading strategy.
+
+    Initializes the grid strategy by:
+    - Loading existing orders from exchange
+    - Setting up parallel processing of ticks and executions
+    - Maintaining grid orders and adjusting them as needed
+
+    @param runtime_cfg Runtime configuration containing asset settings
+    @param _core_cfg Unused core engine configuration
+    @param tick_buffer Buffer for receiving price tick updates
+    @param cmd_buffer Buffer for submitting orders to exchange
+    @param exec_buffer Buffer for receiving order execution confirmations
+    @return Never returns (infinite processing loops)
+*)
 let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
   info_f ~section
-    "Strategy received runtime_cfg: %s" 
+    "Strategy received runtime_cfg: %s"
        (Yojson.Safe.to_string (Config.runtime_cfg_to_yojson runtime_cfg)) >>= fun () ->
 
-  (* Wait for the execution snapshot to be processed *)
   info_f ~section
     "Waiting for execution snapshot from Kraken..." >>= fun () ->
   K.Kraken_incoming_data.wait_for_snapshot () >>= fun () ->
   info_f ~section
     "Execution snapshot received, initializing strategy state..." >>= fun () ->
 
-  (* Wait for instrument data to be loaded *) 
-  info_f ~section 
+  info_f ~section
     "Waiting for instrument data from Kraken..." >>= fun () ->
   K.Kraken_incoming_data.wait_for_instruments () >>= fun () ->
-  info_f ~section 
+  info_f ~section
     "Instrument data received." >>= fun () ->
 
-  State.initialize_orders runtime_cfg >>= fun () -> 
+  State.initialize_orders runtime_cfg >>= fun () ->
 
-  (* Get only symbols configured for Grid strategy *)
-  let grid_symbols = List.filter_map (fun (asset: Config.asset_cfg) -> 
-    match asset.strategy with 
+  let grid_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
+    match asset.strategy with
     | Config.Grid -> Some asset.symbol
     | Config.Orderbook -> None
   ) runtime_cfg.assets in
-  
+
   info_f ~section
     "Starting grid strategy for symbols: [%s]" (String.concat ", " grid_symbols) >>= fun () ->
 
-  (* --- Task 1: Process executions --- *)
   let rec execution_loop () =
     Ringbuffer.pop exec_buffer >>= fun event ->
     State.handle_execution runtime_cfg cmd_buffer grid_symbols event >>= fun () ->
     execution_loop ()
   in
 
-  (* --- Task 2: Process ticks --- *)
   let rec tick_loop () =
     Ringbuffer.pop tick_buffer >>= fun (tick : Event.tick) ->
-    (* Only process ticks for grid strategy symbols *)
     (if List.mem tick.symbol grid_symbols then (
-      (* Determine if we should update based on price changes *)
       let (should_update, bid_changed, ask_changed) =
         match State.get_price tick.symbol with
         | Some prev_tick ->
@@ -708,8 +815,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
             let ask_changed = not (Primitives.Price.equal prev_tick.ask tick.ask) in
             let should_update = bid_changed || ask_changed in
             (should_update, bid_changed, ask_changed)
-        (* No previous price, always update *)
-        | None -> (true, false, false)  
+        | None -> (true, false, false)
       in
       
       (if bid_changed || ask_changed then
@@ -726,16 +832,11 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
         Lwt.return_unit) >>= fun () ->
       
       if should_update then (
-        (* Only update state if price changed *)
         info_f ~section
           "Processing price update for %s" tick.symbol >>= fun () ->
         State.update_price tick >>= fun () ->
         State.sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
-        (* First check and adjust existing orders *)
-        debug_f ~section
-          "Checking existing orders for %s" tick.symbol >>= fun () ->
         State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
-        (* create new orders only if we don't have any for this symbol *)
         (let has_orders = State.has_buy_order tick.symbol in
         debug_f ~section
           "%s has buy order: %b" tick.symbol has_orders >>= fun () ->
@@ -745,22 +846,17 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
           debug_f ~section
             "Skipping order creation for %s - already has buy order" tick.symbol >>= fun () ->
           Lwt.return_unit) >>= fun () ->
-        (* Verify grid spacing after potential order adjustments or creations *)
         let current_price_for_verify = Float.of_string (Primitives.Price.to_string tick.current_price) in
         State.verify_grid_spacing runtime_cfg tick.symbol cmd_buffer current_price_for_verify
       ) else (
-        (* Price unchanged, state not updated, just loop *)
         debug_f ~section
           "Skipping update for %s - price unchanged" tick.symbol
       )
     ) else (
-      (* Skip processing non-grid strategy symbols *)
       debug_f ~section
         "Skipping tick for %s - not a grid strategy symbol" tick.symbol
     )) >>= fun () ->
-    (* Continue to next tick *)
     tick_loop ()
   in
 
-  (* Run both loops in parallel *)
   Lwt.join [execution_loop (); tick_loop ()]
