@@ -882,7 +882,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
 
     detect_arbitrage_cycles graph >>= fun cycles ->
 
-    if !active_cycles < !max_concurrent_cycles then (
+    (if !active_cycles < !max_concurrent_cycles then (
       Lwt_list.iter_s (fun cycle ->
         let validated_cycle = calculate_trade_sizes cycle graph in
 
@@ -912,8 +912,9 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
         )
       ) cycles
     ) else (
-      debug_f ~section "Max concurrent cycles reached (%d), skipping detection" !active_cycles
-    ) >>= fun () ->
+      debug_f ~section "Max concurrent cycles reached (%d), skipping detection" !active_cycles >>= fun () ->
+      Lwt.return_unit
+    )) >>= fun () ->
 
     let sleep_time = if Hashtbl.length dirty_symbols = 0 then 5.0 else 1.0 in
     Lwt_unix.sleep sleep_time >>= fun () ->
