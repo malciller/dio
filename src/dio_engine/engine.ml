@@ -20,7 +20,7 @@ let start_feed (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config
   Lwt.join [feed_promise; executions_promise]
 
 (* Main run function that orchestrates all components *)
-let run ~grid_strategy ~orderbook_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config) =
+let run ~grid_strategy ~orderbook_strategy ~arbitrage_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config) =
   (* Create the ring buffers with configurable capacity *)
   let buffer_cap = runtime_cfg.queues_cap in
   let tick_buffer = Ringbuffer.create buffer_cap in
@@ -28,10 +28,11 @@ let run ~grid_strategy ~orderbook_strategy ~router (runtime_cfg: Config.runtime_
   let cmd_buffer  = Ringbuffer.create buffer_cap in
 
   (* Start all components via the supervisor *)
-  Supervisor.start 
+  Supervisor.start
     ~feed_initializer_fn:(fun () -> start_feed runtime_cfg core_cfg tick_buffer exec_buffer)
     ~grid_strategy
     ~orderbook_strategy
+    ~arbitrage_strategy
     ~router
     ~tick_buffer
     ~exec_buffer

@@ -52,6 +52,11 @@ type orderbook_strategy = {
   start: Config.runtime_cfg -> Config.engine_config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
 
+(* arbitrage strategy component *)
+type arbitrage_strategy = {
+  start: Config.runtime_cfg -> Config.engine_config -> tick_buffer:Event.tick Ringbuffer.t -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
+}
+
 (* router component *) 
 type router = {
   start: Config.engine_config -> cmd_buffer:order_cmd Ringbuffer.t -> exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;

@@ -12,11 +12,8 @@ let section = Lwt_log_core.Section.make "kraken_ws_feed"
 
 (* get orderbook symbols from config *)
 let get_orderbook_symbols (runtime_cfg : Config.runtime_cfg) : string list =
-  List.filter_map (fun (asset : Config.asset_cfg) ->
-    match asset.strategy with
-    | Config.Orderbook -> Some asset.symbol
-    | Config.Grid -> None
-  ) runtime_cfg.assets
+  (* Return ALL symbols for arbitrage strategy - it needs orderbook data for all pairs *)
+  List.map (fun (asset : Config.asset_cfg) -> asset.symbol) runtime_cfg.assets
 
 let executions_snapshot_processed, resolve_executions_snapshot_processed = Lwt.task ()
 let instruments_loaded, resolve_instruments_loaded = Lwt.task ()

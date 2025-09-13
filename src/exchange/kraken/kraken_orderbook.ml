@@ -7,6 +7,7 @@ open Dio_types
 open Lwt_log_core 
 
 let section = Section.make "kraken_orderbook"
+let subscription_depth = 25
 
 (* sequencing results: transforms a list of results into a result of a list *)
 let sequence_results (lst : ('a, 'e) result list) : ('a list, 'e) result =
@@ -90,7 +91,7 @@ let book_data_of_yojson ?(get_precisions = fun _ -> None) json : (book_data, str
         Result.Ok {
           asks;
           bids;
-          checksum = json |> member "checksum" |> to_int |> Int32.of_int;
+          checksum = json |> member "checksum" |> Json.to_string |> Int64.of_string |> Int64.to_int32;
           symbol;
           timestamp = json |> member "timestamp" |> to_string_option;
         }
@@ -115,6 +116,17 @@ type book_response = {
 
 (* Global orderbook storage *)
 let orderbooks : (string, orderbook) Hashtbl.t = Hashtbl.create 16
+
+(* Mutexes for per-symbol locking to prevent race conditions *)
+let symbol_locks : (string, Lwt_mutex.t) Hashtbl.t = Hashtbl.create 16
+
+let get_lock symbol =
+  match Hashtbl.find_opt symbol_locks symbol with
+  | Some lock -> lock
+  | None ->
+      let lock = Lwt_mutex.create () in
+      Hashtbl.add symbol_locks symbol lock;
+      lock
 
 (* Store previous top-of-book for change detection *)
 let previous_top_of_book : (string, (float * float)) Hashtbl.t = Hashtbl.create 16
@@ -155,7 +167,7 @@ let take n lst =
   take_aux [] n lst
 
 (* CRC32 checksum calculation following Kraken specification *)
-let calculate_crc32_checksum (symbol: string) (bids: price_level list) (asks: price_level list) : int32 =
+let calculate_crc32_checksum (_symbol: string) (bids: price_level list) (asks: price_level list) : int32 =
   (* Take top 10 bids and asks *)
   let top_bids = take (min 10 (List.length bids)) bids in
   let top_asks = take (min 10 (List.length asks)) asks in
@@ -196,12 +208,8 @@ let calculate_crc32_checksum (symbol: string) (bids: price_level list) (asks: pr
   (* Concatenate asks + bids *)
   let combined_string = asks_string ^ bids_string in
 
-  debug_f ~section
-    "CRC32 checksum calculation for %s: combined_string length = %d"
-       symbol (String.length combined_string) |> ignore;
-  
   (* Calculate proper CRC32 checksum *)
-  let crc32_table = Array.make 256 0l in
+  let crc32_table : int32 array = Array.make 256 0l in
   
   (* Initialize CRC32 table *)
   for i = 0 to 255 do
@@ -239,22 +247,22 @@ let sort_asks (levels: price_level list) : price_level list =
 
 (* Update orderbook with new levels *)
 let update_orderbook_levels (current_levels: price_level list) (updates: price_level list) : price_level list =
-  (* Create a map of current levels *)
+  (* Create a map of current levels using price_str as key to avoid float precision issues *)
   let level_map = Hashtbl.create (List.length current_levels) in
   List.iter (fun level ->
-    Hashtbl.replace level_map level.price level
+    Hashtbl.replace level_map level.price_str level
   ) current_levels;
-  
+
   (* Apply updates *)
   List.iter (fun update ->
     if update.qty = 0.0 then
       (* Remove level if quantity is 0 *)
-      Hashtbl.remove level_map update.price
+      Hashtbl.remove level_map update.price_str
     else
       (* Update or add level *)
-      Hashtbl.replace level_map update.price update
+      Hashtbl.replace level_map update.price_str update
   ) updates;
-  
+
   (* Convert back to list *)
   Hashtbl.fold (fun _ level acc -> level :: acc) level_map []
 
@@ -264,88 +272,93 @@ let validate_checksum (book: book_data) : bool =
   let sorted_asks = sort_asks book.asks in
   let calculated_checksum = calculate_crc32_checksum book.symbol sorted_bids sorted_asks in
   let result = Int32.equal calculated_checksum book.checksum in
-  if not result then
-    warning_f ~section
-      "Checksum mismatch for %s: calculated=0x%lx, expected=0x%lx"
-         book.symbol calculated_checksum book.checksum |> ignore;
   result
 
 (* Process book snapshot *)
 let process_book_snapshot (book_data: book_data) : unit Lwt.t =
-  debug_f ~section
-    "Processing book snapshot for %s" book_data.symbol >>= fun () ->
-  
-  (* Validate checksum *)
-  if not (validate_checksum book_data) then (
-    error_f ~section
-      "Checksum validation failed for %s snapshot" book_data.symbol >>= fun () ->
-    Lwt.return_unit
-  ) else (
-    let sorted_bids = sort_bids book_data.bids in
-    let sorted_asks = sort_asks book_data.asks in
-    
-    let orderbook_record : orderbook = {
-      symbol = book_data.symbol;
-      bids = sorted_bids;
-      asks = sorted_asks;
-      checksum = book_data.checksum;
-      timestamp = book_data.timestamp;
-    } in
-    
-    Hashtbl.replace orderbooks book_data.symbol orderbook_record;
-    
-    info_f ~section
-      "Book snapshot processed for %s: %d bids, %d asks"
-         book_data.symbol (List.length sorted_bids) (List.length sorted_asks) >>= fun () ->
-    log_top_of_book_update book_data.symbol sorted_bids sorted_asks
-  )
-
-(* Process book update *)
-let process_book_update (book_data: book_data) : unit Lwt.t =
-  debug_f ~section
-    "Processing book update for %s" book_data.symbol >>= fun () ->
-  
-  match Hashtbl.find_opt orderbooks book_data.symbol with
-  | None ->
-    warning_f ~section
-      "Received update for unknown symbol %s" book_data.symbol >>= fun () ->
-    Lwt.return_unit
-  | Some current_book ->
-    (* Update bids and asks *)
-    let updated_bids = update_orderbook_levels current_book.bids book_data.bids in
-    let updated_asks = update_orderbook_levels current_book.asks book_data.asks in
-    
-    (* Sort updated levels *)
-    let sorted_bids = sort_bids updated_bids in
-    let sorted_asks = sort_asks updated_asks in
-    
-    (* Create updated book data for validation *)
-    let updated_book_data = {
-      book_data with
-      bids = sorted_bids;
-      asks = sorted_asks;
-    } in
+  let lock = get_lock book_data.symbol in
+  Lwt_mutex.with_lock lock (fun () ->
+    debug_f ~section
+      "Processing book snapshot for %s" book_data.symbol >>= fun () ->
     
     (* Validate checksum *)
-    if not (validate_checksum updated_book_data) then (
+    if not (validate_checksum book_data) then (
       error_f ~section
-        "Checksum validation failed for %s update" book_data.symbol >>= fun () ->
+        "Checksum validation failed for %s snapshot" book_data.symbol >>= fun () ->
       Lwt.return_unit
     ) else (
-      let updated_orderbook_record : orderbook = {
+      let sorted_bids = sort_bids book_data.bids in
+      let sorted_asks = sort_asks book_data.asks in
+      
+      let truncated_bids = take subscription_depth sorted_bids in
+      let truncated_asks = take subscription_depth sorted_asks in
+
+      let orderbook_record : orderbook = {
         symbol = book_data.symbol;
-        bids = sorted_bids;
-        asks = sorted_asks;
+        bids = truncated_bids;
+        asks = truncated_asks;
         checksum = book_data.checksum;
         timestamp = book_data.timestamp;
       } in
       
-      Hashtbl.replace orderbooks book_data.symbol updated_orderbook_record;
+      Hashtbl.replace orderbooks book_data.symbol orderbook_record;
       
-      debug_f ~section
-        "Book update processed for %s: %d bids, %d asks"
-           book_data.symbol (List.length sorted_bids) (List.length sorted_asks) >>= fun () ->
-      log_top_of_book_update book_data.symbol sorted_bids sorted_asks
+      info_f ~section
+        "Book snapshot processed for %s: %d bids, %d asks"
+           book_data.symbol (List.length truncated_bids) (List.length truncated_asks) >>= fun () ->
+      log_top_of_book_update book_data.symbol truncated_bids truncated_asks
+    )
+  )
+
+let process_aggregated_updates (symbol : string) (updates : book_data list) : unit Lwt.t =
+  let lock = get_lock symbol in
+  Lwt_mutex.with_lock lock (fun () ->
+    match updates with
+    | [] -> Lwt.return_unit
+    | _ ->
+      let final_update = List.hd (List.rev updates) in
+      let final_checksum = final_update.checksum in
+      let final_timestamp = final_update.timestamp in
+
+      let all_bids_updates = List.concat_map (fun u -> u.bids) updates in
+      let all_asks_updates = List.concat_map (fun u -> u.asks) updates in
+
+      match Hashtbl.find_opt orderbooks symbol with
+      | None ->
+          warning_f ~section "Received aggregated update for unknown symbol %s" symbol
+      | Some current_book ->
+          let updated_bids = update_orderbook_levels current_book.bids all_bids_updates in
+          let updated_asks = update_orderbook_levels current_book.asks all_asks_updates in
+
+          let sorted_bids = sort_bids updated_bids in
+          let sorted_asks = sort_asks updated_asks in
+
+          let truncated_bids = take subscription_depth sorted_bids in
+          let truncated_asks = take subscription_depth sorted_asks in
+
+          let validation_book_data = {
+            symbol;
+            bids = truncated_bids;
+            asks = truncated_asks;
+            checksum = final_checksum;
+            timestamp = final_timestamp;
+          } in
+
+          if not (validate_checksum validation_book_data) then (
+            error_f ~section "Checksum validation failed for %s aggregated update" symbol
+          ) else (
+            let updated_orderbook_record : orderbook = {
+              symbol;
+              bids = truncated_bids;
+              asks = truncated_asks;
+              checksum = final_checksum;
+              timestamp = final_timestamp;
+            } in
+            Hashtbl.replace orderbooks symbol updated_orderbook_record;
+            debug_f ~section "Aggregated book update processed for %s: %d bids, %d asks"
+              symbol (List.length truncated_bids) (List.length truncated_asks) >>= fun () ->
+            log_top_of_book_update symbol truncated_bids truncated_asks
+          )
     )
 
 (* Handle book message from WebSocket *)
@@ -358,24 +371,37 @@ let handle_book_message ?(get_precisions = fun _ -> None) (json: Json.t) : unit 
     let data_list = json |> member "data" |> to_list in
     
     if channel = "book" then
-      Lwt_list.iter_s (fun data_json ->
-        match book_data_of_yojson ~get_precisions data_json with
-        | Result.Ok book_data -> 
-          (match msg_type with
-           | "snapshot" -> process_book_snapshot book_data
-           | "update" -> process_book_update book_data
-           | _ ->
-             warning_f ~section 
-               "Unknown book message type: %s" msg_type >>= fun () ->
-             Lwt.return_unit)
-        | Result.Error err -> 
-          error_f ~section 
-            "Failed to parse book data: %s" err >>= fun () ->
-          Lwt.return_unit
-      ) data_list
+      match msg_type with
+      | "snapshot" ->
+        Lwt_list.iter_s (fun data_json ->
+          match book_data_of_yojson ~get_precisions data_json with
+          | Result.Ok book_data -> process_book_snapshot book_data
+          | Result.Error err -> error_f ~section "Failed to parse book snapshot: %s" err
+        ) data_list
+      | "update" ->
+        let parse_results = List.map (book_data_of_yojson ~get_precisions) data_list in
+        (match sequence_results parse_results with
+         | Result.Error err ->
+             error_f ~section "Failed to parse one or more book data updates: %s" err
+         | Result.Ok all_updates ->
+             let updates_by_symbol =
+               List.fold_left
+                 (fun acc (update : book_data) ->
+                   let updates = try Hashtbl.find acc update.symbol with Not_found -> [] in
+                   Hashtbl.replace acc update.symbol (update :: updates);
+                   acc)
+                 (Hashtbl.create 4) all_updates
+             in
+             Hashtbl.fold
+               (fun symbol updates_for_symbol acc_lwt ->
+                 acc_lwt >>= fun () ->
+                 process_aggregated_updates symbol (List.rev updates_for_symbol))
+               updates_by_symbol (Lwt.return_unit)
+        )
+      | _ ->
+        warning_f ~section "Unknown book message type: %s" msg_type
     else
-      warning_f ~section "Received non-book message in book handler" >>= fun () ->
-      Lwt.return_unit
+      warning_f ~section "Received non-book message in book handler"
   ) (fun exn ->
     error_f ~section 
       "Failed to parse book message: %s" (Printexc.to_string exn) >>= fun () ->

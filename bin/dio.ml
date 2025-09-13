@@ -76,7 +76,7 @@ let setup_logging () =
   default := default_logger;
 
   (* Specific rules for log levels and sections. Amended to the rules above.*) 
-  (*Lwt_log.add_rule "engine.strategy.grid_verify" Debug; *)
+  (* Lwt_log.add_rule "kraken_triangular_arb" Debug; *)
 
   ()
 
@@ -169,16 +169,19 @@ let start_engine_logic () : unit Lwt.t =
           let core_cfg = { core_cfg with auth_token = auth_token_opt } in
           Lwt.return_unit >>= fun () ->
 
-          let grid_strategy : Core.grid_strategy = { 
-            start = Kraken_suicide_grid.start 
+          let grid_strategy : Core.grid_strategy = {
+            start = Kraken_suicide_grid.start
           } in
           let orderbook_strategy : Core.orderbook_strategy = {
             start = Kraken_top_level_mm.start
           } in
-          let router : Core.router = {
-            start = Router.start 
+          let arbitrage_strategy : Core.arbitrage_strategy = {
+            start = Kraken_triangular_arb.start
           } in
-          Engine.run ~grid_strategy ~orderbook_strategy ~router runtime_cfg core_cfg
+          let router : Core.router = {
+            start = Router.start
+          } in
+          Engine.run ~grid_strategy ~orderbook_strategy ~arbitrage_strategy ~router runtime_cfg core_cfg
     )
     (fun exn ->
       error_f ~section "Error in engine: %s" (Printexc.to_string exn) >>= fun () ->
