@@ -1,5 +1,16 @@
 (* src/dio_engine/trade_strategies/kraken_triangular_arb.ml *)
 
+(*
+  Triangular arbitrage detection and execution on Kraken.
+  - Continuously builds a directed graph of assets from live order book data.
+  - Uses Bellman–Ford (negative-log weights) to detect profitable multi-asset cycles.
+  - Filters cycles by minimum expected profit and available liquidity.
+  - Calculates trade sizes based on the bottleneck capacity of the cycle.
+  - Generates and submits a sequence of buy/sell orders for each leg of a validated cycle.
+  - Designed for fast, automated exploitation of short-lived cross-pair mispricings.
+*)
+
+
 open Lwt.Infix
 open Dio_types
 open Lwt_log_core
@@ -7,11 +18,11 @@ open Lwt_log_core
 let section = Section.make "kraken_triangular_arb"
 
 (* Configuration constants *)
-let profit_threshold_pct = 0.001  (* 0.1% minimum profit *)
+let profit_threshold_pct = 0.0005  (* 0.1% minimum profit *)
 let max_cycle_length = 4         (* Maximum arbitrage cycle length *)
 let taker_fee_pct = 0.0035       (* 0.35% taker fee for most pairs *)
 let maker_fee_pct = 0.0020       (* 0.20% maker fee for most pairs *)
-let stable_fee_pct = 0.0020      (* 0.20% fee for USD stablecoins *)
+let stable_fee_pct = 0.0001     (* 0.20% fee for USD stablecoins *)
 
 (* Graph edge representing exchange rate with fees *)
 type exchange_edge = {
@@ -125,7 +136,7 @@ let build_exchange_graph symbols : (string, graph_node) Hashtbl.t Lwt.t =
             add_edge_to_node base_asset base_to_quote_edge;
             add_edge_to_node quote_asset quote_to_base_edge;
 
-            info_f ~section "Added edges for %s: %s->%s@%.8f, %s->%s@%.8f"
+            debug_f ~section "Added edges for %s: %s->%s@%.8f, %s->%s@%.8f"
               symbol base_asset quote_asset ask_price quote_asset base_asset (1.0 /. bid_price)
         | _ ->
             warning_f ~section "No bid/ask data for %s" symbol
