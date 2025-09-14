@@ -55,8 +55,7 @@ Edit `_config.json`:
     {
       "symbol": "USDT/USD",
       "qty": "100.0",
-      "min_usd_balance": "0.01",
-      "sell_mult": "1.0",
+      "min_usd_balance": "500.0",
       "strategy": "Orderbook"
     }
   ],
@@ -143,7 +142,6 @@ Detects and executes multi-leg arbitrage opportunities across different trading 
   "symbol": "USDT/USD",      // Trading pair
   "qty": "100.0",             // Base order quantity
   "min_usd_balance": "500.0",  // Minimum USD balance threshold for strategy to run
-  "sell_mult": "0.999",        // Sell multiplier (< 1.0 = profit)
   "strategy": "Orderbook"     // Strategy name
 }
 ```
