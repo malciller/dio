@@ -44,7 +44,7 @@
     {
       "symbol": "USDR/USD",
       "qty": "100.0",
-      "min_usd_balance": "1000.0",
+      "min_usd_balance": "1500.0",
       "strategy": "Orderbook"
     }
   ],

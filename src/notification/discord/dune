@@ -1,4 +1,4 @@
 (library
  (name discord_webhook)
  (public_name dio.notification.discord_webhook)
- (libraries lwt cohttp cohttp-lwt-unix yojson lwt_log dio.dio_types))
+ (libraries lwt cohttp cohttp-lwt-unix yojson lwt_log dio.dio_types ptime ptime.clock.os))
