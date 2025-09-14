@@ -2,6 +2,7 @@
 open Lwt.Infix 
 open Dio_types 
 
+
 (* restart a fiber on failure, with logging and delay *)
 let supervise name fiber_fun =
   let section = Lwt_log_core.Section.make ("engine.supervisor." ^ name) in
@@ -37,6 +38,7 @@ let start ~(feed_initializer_fn : unit -> unit Lwt.t)
   let orderbook_strat_fut = supervise "orderbook_strategy" (fun () -> orderbook_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
   let arbitrage_strat_fut = supervise "arbitrage_strategy" (fun () -> arbitrage_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
   let router_fut = supervise "router" (fun () -> router.start core_cfg ~cmd_buffer ~exec_buffer) in
+  let discord_webhook_fut = supervise "discord_webhook" Discord_webhook.start in
 
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.supervisor") "Starting all components under supervision..." >>= fun () ->
-  Lwt.join [feed_fut; grid_strat_fut; orderbook_strat_fut; arbitrage_strat_fut; router_fut]
+  Lwt.join [feed_fut; grid_strat_fut; orderbook_strat_fut; arbitrage_strat_fut; router_fut; discord_webhook_fut]

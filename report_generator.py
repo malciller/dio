@@ -89,6 +89,7 @@ def analyze_rewards_by_asset(ledger_entries):
     """Analyze reward/earning transactions by asset"""
     rewards_by_asset = defaultdict(lambda: {
         'total_amount': Decimal(0),
+        'total_value_at_reward_time': Decimal(0),
         'transaction_count': 0,
         'first_reward': None,
         'last_reward': None,
@@ -97,12 +98,15 @@ def analyze_rewards_by_asset(ledger_entries):
     })
 
     for entry in ledger_entries:
-        if entry['type'] == 'earn':
+        if entry['type'] == 'earn' and entry['subtype'] == 'reward':
             asset = entry['asset']
             amount = entry['amount']
             dt = entry['dt']
+            amountusd = entry.get('amountusd')
 
             rewards_by_asset[asset]['total_amount'] += amount
+            if amountusd:
+                rewards_by_asset[asset]['total_value_at_reward_time'] += amountusd
             rewards_by_asset[asset]['transaction_count'] += 1
 
             if rewards_by_asset[asset]['first_reward'] is None or dt < rewards_by_asset[asset]['first_reward']:
@@ -669,8 +673,8 @@ def calculate_gains(csv_file):
     # Rewards Analysis Section (simplified)
     if rewards_analysis:
         lines.append("### Staking Rewards")
-        lines.append("| Asset | Total Rewards | Current Value | Transaction Count | Average Reward |")
-        lines.append("|-------|---------------|---------------|-------------------|----------------|")
+        lines.append("| Asset | Total Rewards | Value | Transactions | Average Value |")
+        lines.append("|-------|------------- |-------|-------|-------|")
 
         total_rewards_value = Decimal(0)
         total_rewards_amount = Decimal(0)
@@ -700,36 +704,55 @@ def calculate_gains(csv_file):
         # Process active assets first
         for asset in active_assets:
             data = rewards_analysis[asset]
-            # Calculate current value of rewards
-            if asset in current_prices:
+            value_at_time = data.get('total_value_at_reward_time', Decimal(0))
+            display_value = value_at_time
+            value_str = f"${value_at_time:.2f}"
+
+            # Fallback for assets where historical price is missing from ledger
+            if value_at_time == Decimal(0) and asset in current_prices:
                 current_value = data['total_amount'] * current_prices[asset]
-                current_value_str = f"${current_value:.2f}"
-                total_rewards_value += current_value
-            else:
-                current_value_str = "N/A"
+                display_value = current_value
+                value_str = f"${current_value:.2f}"
+            elif value_at_time == Decimal(0):
+                display_value = Decimal(0)
+                value_str = "N/A"
+
+            total_rewards_value += display_value
             total_rewards_amount += data['total_amount']
             total_transaction_count += data['transaction_count']
-            lines.append(f"| {asset} | {data['total_amount']:.8f} | {current_value_str} | {data['transaction_count']} | ${data['avg_reward']:.4f} |")
+            
+            avg_reward = display_value / data['transaction_count'] if data['transaction_count'] > 0 else Decimal(0)
+            
+            lines.append(f"| {asset} | {data['total_amount']:.8f} | {value_str} | {data['transaction_count']} | ${avg_reward:.4f} |")
 
         # Then process inactive assets
         for asset in inactive_assets:
             data = rewards_analysis[asset]
-            # Calculate current value of rewards
-            if asset in current_prices:
+            value_at_time = data.get('total_value_at_reward_time', Decimal(0))
+            display_value = value_at_time
+            value_str = f"${value_at_time:.2f}"
+
+            # Fallback for assets where historical price is missing from ledger
+            if value_at_time == Decimal(0) and asset in current_prices:
                 current_value = data['total_amount'] * current_prices[asset]
-                current_value_str = f"${current_value:.2f}"
-                total_rewards_value += current_value
-            else:
-                current_value_str = "N/A"
+                display_value = current_value
+                value_str = f"${current_value:.2f}"
+            elif value_at_time == Decimal(0):
+                display_value = Decimal(0)
+                value_str = "N/A"
+
+            total_rewards_value += display_value
             total_rewards_amount += data['total_amount']
             total_transaction_count += data['transaction_count']
+            
+            avg_reward = display_value / data['transaction_count'] if data['transaction_count'] > 0 else Decimal(0)
 
             # Add inactive indicator to asset name
             asset_display = f"{asset} (Inactive)"
-            lines.append(f"| {asset_display} | {data['total_amount']:.8f} | {current_value_str} | {data['transaction_count']} | ${data['avg_reward']:.4f} |")
+            lines.append(f"| {asset_display} | {data['total_amount']:.8f} | {value_str} | {data['transaction_count']} | ${avg_reward:.4f} |")
 
         # Add total row
-        avg_reward_total = total_rewards_amount / total_transaction_count if total_transaction_count > 0 else Decimal(0)
+        avg_reward_total = total_rewards_value / total_transaction_count if total_transaction_count > 0 else Decimal(0)
         total_value_str = f"${total_rewards_value:.2f}" if total_rewards_value > 0 else "N/A"
         lines.append(f"| **TOTAL** | **{total_rewards_amount:.8f}** | **{total_value_str}** | **{total_transaction_count}** | **${avg_reward_total:.4f}** |")
         lines.append("")

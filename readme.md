@@ -1,4 +1,4 @@
-# Dio - Cryptocurrency Trading Engine
+# Dio
 
 [![OCaml](https://img.shields.io/badge/Language-OCaml-blue.svg)](https://ocaml.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -8,7 +8,7 @@ A high-performance, real-time cryptocurrency trading engine built in OCaml. Dio 
 ## Features
 
 - **Real-time Trading**: WebSocket connections for live price feeds and instant order execution
-- **Multiple Example Strategies**: Grid trading and top-level orderbook market making
+- **Multiple Strategies**: Grid trading, top-level orderbook market making, and price arbitrage
 - **Terminal Dashboard**: Real-time CLI interface with price visualization and order tracking
 - **Discord Notification**: Real-time order fulfillment notifications via discord webhook
 - **Modular Architecture**: Clean separation between strategies, routing, and data feeds

@@ -2,13 +2,18 @@ open Lwt.Infix
 open Cohttp
 open Cohttp_lwt_unix
 open Lwt_log_core
+open Dio_types
 
 let section = Section.make "notification.discord"
-
+let message_queue = Ringbuffer.create 100
 let logged_no_url = ref false
 
 let send_message message =
-  match Sys.getenv_opt "DISCORD_WEBHOOK_URL" with
+  Ringbuffer.push message_queue message
+
+let rec worker () =
+  Ringbuffer.pop message_queue >>= fun message ->
+  (match Sys.getenv_opt "DISCORD_WEBHOOK_URL" with
   | None -> 
       if not !logged_no_url then (
         logged_no_url := true;
@@ -32,4 +37,8 @@ let send_message message =
       )
       (fun exn ->
         error_f ~section "Exception sending Discord notification: %s" (Printexc.to_string exn)
-      )
+      )) >>= fun () ->
+  worker ()
+
+let start () =
+  worker ()

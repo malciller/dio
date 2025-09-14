@@ -320,20 +320,15 @@ module State = struct
               if not (Hashtbl.mem open_orders order_id) then (
                 info_f ~section "Order %s completely filled" order_id >>= fun () ->
 
-                (* Send full fill notification *)
-                let price_float = order.limit_price in
-                let qty_float = order.qty in
+                (* Send fill notification *)
+                let price_float = float_of_string (Primitives.Price.to_string price) in
+                let qty_float = float_of_string (Primitives.Qty.to_string qty) in
                 let usd_value = price_float *. qty_float in
-                let side_str = match order.side with Some Core.Buy -> "BUY" | Some Core.Sell -> "SELL" | None -> "NONE" in
-                let qty_str =
-                  match K.Kraken_incoming_data.get_precisions order.order_symbol with
-                  | Some (_, qty_prec) -> Printf.sprintf "%.*f" qty_prec qty_float
-                  | None -> Float.to_string qty_float
-                in
+                let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
                 let message = Printf.sprintf "Kraken Top Level MM: %s: %s %s, USD %.2f"
-                    order.order_symbol
+                    symbol
                     side_str
-                    qty_str
+                    (Primitives.Qty.to_string qty)
                     usd_value in
                 Lwt.async (fun () -> send_message message);
                 
@@ -412,21 +407,6 @@ module State = struct
 
             (match order_opt with
             | Some order when List.mem order.order_symbol symbols ->
-                let price_float = order.limit_price in
-                let qty_float = order.qty in
-                let usd_value = price_float *. qty_float in
-                let side_str = match order.side with Some Buy -> "BUY" | Some Sell -> "SELL" | None -> "NONE" in
-                let qty_str =
-                  match K.Kraken_incoming_data.get_precisions order.order_symbol with
-                  | Some (_, qty_prec) -> Printf.sprintf "%.*f" qty_prec qty_float
-                  | None -> Float.to_string qty_float
-                in
-                let message = Printf.sprintf "Kraken Top Level MM: %s: %s %s, USD %.2f"
-                    order.order_symbol
-                    side_str
-                    qty_str
-                    usd_value in
-                Lwt.async (fun () -> send_message message);
                 info_f ~section "Order %s fully filled (Ack confirmation) for %s, side=%s"
                   order_id order.order_symbol
                   (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown") >>= fun () ->
