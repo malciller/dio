@@ -10,6 +10,7 @@ A high-performance, real-time cryptocurrency trading engine built in OCaml. Dio 
 - **Real-time Trading**: WebSocket connections for live price feeds and instant order execution
 - **Multiple Example Strategies**: Grid trading and top-level orderbook market making
 - **Terminal Dashboard**: Real-time CLI interface with price visualization and order tracking
+- **Discord Notification**: Real-time order fulfillment notifications via discord webhook
 - **Modular Architecture**: Clean separation between strategies, routing, and data feeds
 - **Configuration-Driven**: JSON-based configuration for easy strategy deployment
 - **Robust Infrastructure**: Comprehensive logging, error handling, and retry mechanisms
@@ -36,6 +37,7 @@ Create a `.env` file:
 ```bash
 KRAKEN_API_KEY=your_kraken_api_key
 KRAKEN_API_SECRET=your_kraken_api_secret
+DISCORD_WEBHOOK_URL=your_discord_webhook_url 
 ```
 
 ### 3. Trading Configuration
@@ -53,7 +55,7 @@ Edit `_config.json`:
     {
       "symbol": "USDT/USD",
       "qty": "100.0",
-      "grid_interval": "0.01",
+      "min_usd_balance": "0.01",
       "sell_mult": "1.0",
       "strategy": "Orderbook"
     }
