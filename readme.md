@@ -131,11 +131,18 @@ Detects and executes multi-leg arbitrage opportunities across different trading 
 ### Asset Configuration
 ```json
 {
-  "symbol": "BTC/USD",        // Trading pair
+  "symbol": "BTC/USD",       // Trading pair
   "qty": "0.001",            // Base order quantity
   "grid_interval": "1.0",    // Grid spacing (%)
   "sell_mult": "0.999",      // Sell multiplier (< 1.0 = profit)
-  "strategy": "Grid"         // "Grid" or "Orderbook"
+  "strategy": "Grid"         // Strategy name
+},
+{
+  "symbol": "USDT/USD",      // Trading pair
+  "qty": "100.0",             // Base order quantity
+  "min_usd_balance": "500.0",  // Minimum USD balance threshold for strategy to run
+  "sell_mult": "0.999",        // Sell multiplier (< 1.0 = profit)
+  "strategy": "Orderbook"     // Strategy name
 }
 ```
 
@@ -254,7 +261,6 @@ We welcome contributions! Please:
 
 - **Issues**: [GitHub Issues](https://github.com/malciller/dio/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/malciller/dio/discussions)
-- **Documentation**: Check `_docs/workflow.md` for detailed architecture
 
 ## License
 - This project is licensed under the MIT license. Please see LICENSE file for details.

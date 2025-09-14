@@ -16,7 +16,7 @@ let setup_logging () =
      They will direct to whichever logger becomes the default. *)
   Lwt_log.add_rule "*" Error;  
   Lwt_log.add_rule "*" Warning; 
-  (*Lwt_log.add_rule "*" Info;  *)
+  Lwt_log.add_rule "*" Info;  
 
   
 
@@ -76,9 +76,7 @@ let setup_logging () =
   default := default_logger;
 
   (* Specific rules for log levels and sections. Amended to the rules above.*) 
-   Lwt_log.add_rule "engine.strategy.kraken.arbitrage" Info; 
-   Lwt_log.add_rule "notification.discord" Info; 
-   Lwt_log.add_rule "engine.strategy.kraken.orderbook" Info; 
+   (* Lwt_log.add_rule "engine.strategy.kraken.arbitrage" Info; *)
   ()
 
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)

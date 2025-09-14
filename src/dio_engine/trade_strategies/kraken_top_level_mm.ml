@@ -300,16 +300,6 @@ module State = struct
     match event with
     | Core.Fill { order_id; symbol; price; qty; side; _ } ->
         if List.mem symbol symbols then (
-          let price_float = float_of_string (Primitives.Price.to_string price) in
-          let qty_float = float_of_string (Primitives.Qty.to_string qty) in
-          let usd_value = price_float *. qty_float in
-          let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
-          let message = Printf.sprintf "Kraken Top Level MM: %s: %s %s, USD %.2f"
-              symbol
-              side_str
-              (Primitives.Qty.to_string qty)
-              usd_value in
-          Lwt.async (fun () -> send_message message);
           info_f ~section "Fill event received for %s: order_id=%s side=%s qty=%s price=%s"
             symbol order_id
             (match side with Buy -> "BUY" | Sell -> "SELL")
@@ -329,6 +319,23 @@ module State = struct
               (* Check if the order still exists after sync - if not, it was completely filled *)
               if not (Hashtbl.mem open_orders order_id) then (
                 info_f ~section "Order %s completely filled" order_id >>= fun () ->
+
+                (* Send full fill notification *)
+                let price_float = order.limit_price in
+                let qty_float = order.qty in
+                let usd_value = price_float *. qty_float in
+                let side_str = match order.side with Some Core.Buy -> "BUY" | Some Core.Sell -> "SELL" | None -> "NONE" in
+                let qty_str =
+                  match K.Kraken_incoming_data.get_precisions order.order_symbol with
+                  | Some (_, qty_prec) -> Printf.sprintf "%.*f" qty_prec qty_float
+                  | None -> Float.to_string qty_float
+                in
+                let message = Printf.sprintf "Kraken Top Level MM: %s: %s %s, USD %.2f"
+                    order.order_symbol
+                    side_str
+                    qty_str
+                    usd_value in
+                Lwt.async (fun () -> send_message message);
                 
                 (* Only create new orders if it was a buy order that was filled *)
                 if order.side = Some Core.Buy then (
@@ -339,6 +346,17 @@ module State = struct
                   Lwt.return_unit
                 )
               ) else (
+                (* Send partial fill notification *)
+                let price_float = float_of_string (Primitives.Price.to_string price) in
+                let qty_float = float_of_string (Primitives.Qty.to_string qty) in
+                let usd_value = price_float *. qty_float in
+                let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
+                let message = Printf.sprintf "Kraken Top Level MM: %s: %s %s, USD %.2f"
+                    symbol
+                    side_str
+                    (Primitives.Qty.to_string qty)
+                    usd_value in
+                Lwt.async (fun () -> send_message message);
                 debug_f ~section "Order %s partially filled, order still exists" order_id >>= fun () ->
                 Lwt.return_unit
               )
