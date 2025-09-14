@@ -23,7 +23,6 @@
 open Lwt.Infix
 open Dio_types
 open Lwt_log_core
-open Discord_webhook
 
 
 let section = Section.make "engine.strategy.kraken.arbitrage"
@@ -775,25 +774,6 @@ let execute_cycle_leg cycle_exec leg_index current_qty fill_ratio graph cmd_buff
                   | None -> ());
 
                   (if status = "filled" || (status = "partial" && filled_qty > 0.0) then begin
-                    let base_asset, quote_asset = extract_assets edge.pair in
-                    let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
-                    let value_in_quote = filled_qty *. fill_price in
-
-                    let usd_rate = get_usd_rate_from_graph graph quote_asset in
-                    let value_str = match usd_rate with
-                      | Some rate -> Printf.sprintf "USD %.2f" (value_in_quote *. rate)
-                      | None -> Printf.sprintf "%s %.4f" quote_asset value_in_quote
-                    in
-
-                    let qty_str = Printf.sprintf "%.8f" filled_qty in
-                    let message = Printf.sprintf "Kraken Arbitrage: %s: %s %s %s, value %s"
-                        edge.pair
-                        side_str
-                        qty_str
-                        base_asset
-                        value_str in
-                    Lwt.async (fun () -> send_message message);
-
                     let fee = edge.fee_rate in
                     let next_qty =
                       if side = Core.Buy then (

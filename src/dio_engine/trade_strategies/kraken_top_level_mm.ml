@@ -45,7 +45,6 @@
 open Lwt.Infix
 open Dio_types
 open Lwt_log_core
-open Discord_webhook
 module K = Kraken
 
 let section = Lwt_log_core.Section.make "engine.strategy.kraken.orderbook"
@@ -320,18 +319,6 @@ module State = struct
               if not (Hashtbl.mem open_orders order_id) then (
                 info_f ~section "Order %s completely filled" order_id >>= fun () ->
 
-                (* Send fill notification *)
-                let price_float = float_of_string (Primitives.Price.to_string price) in
-                let qty_float = float_of_string (Primitives.Qty.to_string qty) in
-                let usd_value = price_float *. qty_float in
-                let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
-                let message = Printf.sprintf "Kraken Top Level MM: %s: %s %s, USD %.2f"
-                    symbol
-                    side_str
-                    (Primitives.Qty.to_string qty)
-                    usd_value in
-                Lwt.async (fun () -> send_message message);
-                
                 (* Only create new orders if it was a buy order that was filled *)
                 if order.side = Some Core.Buy then (
                   info_f ~section "Buy order %s filled, creating new orders for %s" order_id symbol >>= fun () ->
@@ -341,17 +328,6 @@ module State = struct
                   Lwt.return_unit
                 )
               ) else (
-                (* Send partial fill notification *)
-                let price_float = float_of_string (Primitives.Price.to_string price) in
-                let qty_float = float_of_string (Primitives.Qty.to_string qty) in
-                let usd_value = price_float *. qty_float in
-                let side_str = match side with Buy -> "BUY" | Sell -> "SELL" in
-                let message = Printf.sprintf "Kraken Top Level MM: %s: %s %s, USD %.2f"
-                    symbol
-                    side_str
-                    (Primitives.Qty.to_string qty)
-                    usd_value in
-                Lwt.async (fun () -> send_message message);
                 debug_f ~section "Order %s partially filled, order still exists" order_id >>= fun () ->
                 Lwt.return_unit
               )

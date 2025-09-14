@@ -7,6 +7,7 @@ module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
 open Dio_types
 open State
+open Discord_webhook
 
 let section = Lwt_log_core.Section.make "kraken_ws_feed"
 
@@ -665,14 +666,42 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                               match item_exec_type, last_qty_opt, last_price_opt, kraken_side_to_core_side side_str_opt with
                               | ("trade" | "filled"), Some qty_f, Some price_f, Some side when qty_f > 0.0 ->
                                   (try
-                                     let fill_event = Core.Fill { symbol; order_id; client_id; price=(float_to_price ~scale:price_prec price_f); qty=(float_to_qty ~scale:qty_prec qty_f); side; ts } in
-                                     if core_state = Filled then
-                                       [fill_event; Core.Ack { order_id; client_id; state = core_state; ts }]
-                                     else
-                                       [fill_event]
-                                   with ex -> 
-                                     Lwt_log_core.error ~section (Printf.sprintf "Failed converting Fill data for update %s: %s" order_id (Printexc.to_string ex)) |> Lwt.ignore_result; 
-                                     [Core.Ack { order_id; client_id; state = core_state; ts }])
+                                    let fill_event = Core.Fill { symbol; order_id; client_id; price=(float_to_price ~scale:price_prec price_f); qty=(float_to_qty ~scale:qty_prec qty_f); side; ts } in
+                                    
+                                    let () =
+                                      let side_str = match side with Core.Buy -> "BUY" | Core.Sell -> "SELL" in
+                                      let asset_name, quote_name = 
+                                        match get_instrument symbol with
+                                        | Some inst -> inst.base, inst.quote
+                                        | None -> 
+                                            let maybe_base = String.sub symbol 0 (String.length symbol - 4) in
+                                            let maybe_quote = String.sub symbol (String.length symbol - 4) 4 in
+                                            maybe_base, maybe_quote
+                                      in
+                                      let value = price_f *. qty_f in
+                                      let value_str = 
+                                          if String.ends_with ~suffix:"USD" quote_name then
+                                              Printf.sprintf "$ %.2f" value
+                                          else
+                                              Printf.sprintf "%.4f %s" value quote_name
+                                      in
+                                      let qty_str = Printf.sprintf "%.8f" qty_f in
+                                      let message = Printf.sprintf "Kraken %s  -  %s %s  -  %s"
+                                          side_str
+                                          asset_name
+                                          qty_str
+                                          value_str
+                                      in
+                                      Lwt.async (fun () -> send_message message)
+                                    in
+
+                                    if core_state = Filled then
+                                      [fill_event; Core.Ack { order_id; client_id; state = core_state; ts }]
+                                    else
+                                      [fill_event]
+                                  with ex -> 
+                                    Lwt_log_core.error ~section (Printf.sprintf "Failed converting Fill data for update %s: %s" order_id (Printexc.to_string ex)) |> Lwt.ignore_result; 
+                                    [Core.Ack { order_id; client_id; state = core_state; ts }])
                               | _ -> 
                                   [Core.Ack { order_id; client_id; state = core_state; ts }]
                       ) data_json_list) in

@@ -41,7 +41,7 @@
 open Lwt.Infix  
 open Dio_types 
 open Lwt_log_core 
-open Discord_webhook
+
 module K = Kraken 
 
 
@@ -459,15 +459,7 @@ module State = struct
               | Some Sell -> "Sell"
               | None -> "unknown"
             in
-            let price_float = float_of_string (Primitives.Price.to_string price) in
-            let qty_float = float_of_string (Primitives.Qty.to_string qty) in
-            let usd_value = price_float *. qty_float in
-            let message = Printf.sprintf "Kraken Suicide Grid: %s: %s %s, USD %.2f"
-                symbol
-                side_str
-                (Primitives.Qty.to_string qty)
-                usd_value in
-            Lwt.async (fun () -> send_message message);
+            
             info_f ~section
               "Order %s filled: %s %s %s @ %s (original side: %s)"
                 order_id
@@ -542,21 +534,7 @@ module State = struct
                     sync_open_orders runtime_cfg cmd_buffer ()
                 end
             | Filled ->
-                let price_float = order.limit_price in
-                let qty_float = order.qty in
-                let usd_value = price_float *. qty_float in
-                let side_str = match order.side with Some Buy -> "BUY" | Some Sell -> "SELL" | None -> "NONE" in
-                let qty_str =
-                  match K.Kraken_incoming_data.get_precisions order.order_symbol with
-                  | Some (_, qty_prec) -> Printf.sprintf "%.*f" qty_prec qty_float
-                  | None -> Float.to_string qty_float
-                in
-                let message = Printf.sprintf "Kraken Suicide Grid: %s: %s %s, USD %.2f"
-                    order.order_symbol
-                    side_str
-                    qty_str
-                    usd_value in
-                Lwt.async (fun () -> send_message message);
+                
                 sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
                 info_f ~section
                   "Order %s fully filled (Ack confirmation)" order_id >>= fun () ->

@@ -13,6 +13,7 @@
  (libraries
   dio.state
   dio.dio_types
+  dio.notification.discord_webhook
   lwt
   lwt.unix
   websocket-lwt-unix

@@ -11,6 +11,8 @@ let logged_no_url = ref false
 let send_message message =
   Ringbuffer.push message_queue message
 
+let get_message_queue_for_test () = message_queue
+
 let rec worker () =
   Ringbuffer.pop message_queue >>= fun message ->
   (match Sys.getenv_opt "DISCORD_WEBHOOK_URL" with

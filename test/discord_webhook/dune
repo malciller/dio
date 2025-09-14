@@ -3,6 +3,7 @@
  (libraries
   alcotest-lwt
   dio.notification.discord_webhook
+  dio.dio_types
   cohttp-lwt-unix
   lwt.unix
   yojson
