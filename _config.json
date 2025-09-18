@@ -30,21 +30,21 @@
     },    
     {
       "symbol": "TRX/USD",
-      "qty": "95.0",
+      "qty": "120.0",
       "grid_interval": "2.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "USDG/USD",
-      "qty": "100.0",
-      "min_usd_balance": "500.0",
+      "qty": "200.0",
+      "min_usd_balance": "600.0",
       "strategy": "Orderbook"
     },
     {
       "symbol": "USDR/USD",
-      "qty": "100.0",
-      "min_usd_balance": "1500.0",
+      "qty": "10.0",
+      "min_usd_balance": "600.0",
       "strategy": "Orderbook"
     }
   ],

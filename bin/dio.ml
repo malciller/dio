@@ -17,7 +17,6 @@ let setup_logging () =
   Lwt_log.add_rule "*" Error;  
   Lwt_log.add_rule "*" Warning; 
   Lwt_log.add_rule "*" Info;  
-
   
 
   let default_logger =
@@ -76,7 +75,9 @@ let setup_logging () =
   default := default_logger;
 
   (* Specific rules for log levels and sections. Amended to the rules above.*) 
-   (* Lwt_log.add_rule "notification.discord" Info; *)
+   (* Lwt_log.add_rule "notification.discord" Info;  *)
+  
+  
   ()
 
 let read_config config_path : (Config.runtime_cfg * Config.engine_config, string) result = (* Return both configs *)

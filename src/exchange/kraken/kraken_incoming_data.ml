@@ -684,7 +684,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                                              Printf.sprintf "%.4f %s" value quote_name
                                      in
                                      let qty_str = Printf.sprintf "%.8f" qty_f in
-                                     let payload : Notification.fill_notification_payload = {
+                                     let payload : fill_notification_payload = {
                                        side;
                                        asset_name;
                                        qty_str;
@@ -692,7 +692,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                                        order_id;
                                        symbol;
                                      } in
-                                     Lwt.async (fun () -> send_message payload);
+                                     Lwt.async (fun () -> send_message (Fill payload));
 
                                      if core_state = Filled then
                                        [fill_event; Core.Ack { order_id; client_id; state = core_state; ts }]

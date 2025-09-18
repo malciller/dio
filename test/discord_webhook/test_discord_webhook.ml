@@ -11,10 +11,13 @@ let test_order_completion_message _switch () =
     order_id = "TEST-ORDER-123";
     symbol = "BTC/USD";
   } in
-  Discord_webhook.send_message test_payload >>= fun () ->
+  Discord_webhook.send_message (Discord_webhook.Fill test_payload) >>= fun () ->
   let queue = Discord_webhook.get_message_queue_for_test () in
   Ringbuffer.pop queue >>= fun payload_from_queue ->
-  Alcotest.(check string "order_id should match" test_payload.order_id payload_from_queue.order_id);
+  let unwrapped_payload = match payload_from_queue with
+    | Discord_webhook.Fill p -> p
+    | Discord_webhook.Balance _ -> Alcotest.fail "Expected Fill payload but got Balance payload" in
+  Alcotest.(check string "order_id should match" test_payload.order_id unwrapped_payload.order_id);
   Lwt.return_unit
 
 let suite =
