@@ -84,10 +84,11 @@ let make_balance_embed (payload: balance_notification_payload) =
       ("content", `String "Kraken : Balances");
       ("embeds", `List [
          `Assoc [
-           ("title", `String "Account Balance");
+           ("title", `String "Exchange Balance");
            ("description", `String "No significant balances found");
            ("color", `Int 0x3498DB);
-           ("footer", `Assoc [("text", `String "Dio Trading Engine")])
+           ("footer", `Assoc [("text", `String "Dio Trading Engine")]);
+           ("timestamp", `String (Ptime.to_rfc3339 (Ptime_clock.now ())))
          ]
        ])
     ]
@@ -105,10 +106,12 @@ let make_balance_embed (payload: balance_notification_payload) =
       ("content", `String "Kraken : Balances");
       ("embeds", `List [
          `Assoc [
-           ("title", `String "Account Balance");
+           ("title", `String "Exchange Balance");
            ("description", `String "Current portfolio balances across all assets");
            ("color", `Int 0x3498DB);  (* blue *)
            ("fields", `List fields);
+           ("footer", `Assoc [("text", `String "Dio Trading Engine")]);
+           ("timestamp", `String (Ptime.to_rfc3339 (Ptime_clock.now ())))
          ]
        ])
     ]
