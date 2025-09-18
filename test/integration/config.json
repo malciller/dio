@@ -8,6 +8,6 @@
         "strategy": "Grid"
       }
     ],
-    "debounce_ms": 100,
-    "queues_cap": 1024
+    "queues_cap": 1024,
+    "profit_threshold_pct": 0.0010
   }

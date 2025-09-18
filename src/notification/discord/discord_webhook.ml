@@ -50,7 +50,7 @@ let make_order_embed (payload: fill_notification_payload) =
             `Assoc [("name", `String "Quantity"); ("value", `String payload.qty_str); ("inline", `Bool true)];
             `Assoc [("name", `String "Value"); ("value", `String payload.value_str); ("inline", `Bool true)]
           ]);
-         ("footer", `Assoc [("text", `String "Diophant Solutions Trading Engine")]);
+         ("footer", `Assoc [("text", `String "Dio Trading Engine")]);
          ("timestamp", `String (Ptime.to_rfc3339 (Ptime_clock.now ())))
        ]
      ]);
@@ -81,13 +81,13 @@ let make_balance_embed (payload: balance_notification_payload) =
     (* If no significant balances, send a simple message *)
     `Assoc [
       ("username", `String "Dio");
-      ("content", `String "Kraken Portfolio");
+      ("content", `String "Kraken : Balances");
       ("embeds", `List [
          `Assoc [
            ("title", `String "Account Balance");
            ("description", `String "No significant balances found");
            ("color", `Int 0x3498DB);
-           ("footer", `Assoc [("text", `String "Diophant Solutions Trading Engine")])
+           ("footer", `Assoc [("text", `String "Dio Trading Engine")])
          ]
        ])
     ]
@@ -102,14 +102,13 @@ let make_balance_embed (payload: balance_notification_payload) =
 
     `Assoc [
       ("username", `String "Dio");
-      ("content", `String "Portfolio Balance Update");
+      ("content", `String "Kraken : Balances");
       ("embeds", `List [
          `Assoc [
            ("title", `String "Account Balance");
            ("description", `String "Current portfolio balances across all assets");
            ("color", `Int 0x3498DB);  (* blue *)
            ("fields", `List fields);
-           ("footer", `Assoc [("text", `String "Diophant Solutions Trading Engine")])
          ]
        ])
     ]

@@ -59,8 +59,8 @@ Edit `_config.json`:
       "strategy": "Orderbook"
     }
   ],
-  "debounce_ms": 1000,
-  "queues_cap": 1000
+  "queues_cap": 1000,
+  "profit_threshold_pct": 0.0010
 }
 ```
 
@@ -149,8 +149,8 @@ Detects and executes multi-leg arbitrage opportunities across different trading 
 ### System Configuration
 ```json
 {
-  "debounce_ms": 1000,       // Min time between operations
-  "queues_cap": 1000         // Buffer capacity
+  "queues_cap": 1000,         // Buffer capacity
+  "profit_threshold_pct": 0.0010   // profit threshold for arbitrage strategy to run
 }
 ```
 

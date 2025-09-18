@@ -340,8 +340,7 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                               Hashtbl.replace instrument_data pair.symbol pair
                             in
                             Lwt_log_core.debug ~section
-                              (Printf.sprintf "Stored instrument data for %s: base=%s, quote=%s, price_prec=%d, qty_prec=%d"
-                                 pair.symbol pair.base pair.quote pair.price_precision pair.qty_precision)
+                              (Printf.sprintf "Stored instrument data for %s" pair.symbol)
                           else
                             Lwt.return_unit)
                         pairs
@@ -352,9 +351,9 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                         Lwt.return_unit
                       ) else Lwt.return_unit
                   | Ok _ ->
-                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected instrument data format: %s" frame.content)
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected instrument data format")
                   | Error err ->
-                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse instrument data: %s. Payload: %s" err frame.content)
+                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse instrument data: %s" err)
                   end
               | Some "book" ->
                   (* Handle book message and generate ticks for top-of-book changes *)
@@ -791,7 +790,7 @@ let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
      if List.length orderbook_symbols > 0 then (
        let subscribe_book_msg = make_subscribe_message ~req_id:4 cfg (`Book orderbook_symbols) in
        Websocket_lwt_unix.write conn subscribe_book_msg >>= fun () ->
-       Lwt_log_core.info ~section (Printf.sprintf "Subscribed to book channel for %d orderbook symbols" (List.length orderbook_symbols))
+       Lwt_log_core.info ~section (Printf.sprintf "Subscribed to book channel for %d symbols" (List.length orderbook_symbols))
      ) else
        Lwt.return_unit
    | None -> Lwt.return_unit

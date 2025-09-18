@@ -108,6 +108,9 @@ type pair_data = {
   price_precision: int; [@key "price_precision"]
   qty_precision: int; [@key "qty_precision"]
   status: string; [@key "status"]
+  maker_fee: float option; [@key "maker_fee"] [@yojson.optional] [@default None]
+  taker_fee: float option; [@key "taker_fee"] [@yojson.optional] [@default None]
+  fee_volume_currency: string option; [@key "fee_volume_currency"] [@yojson.optional] [@default None]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
 (* Instrument Channel Data Container *)

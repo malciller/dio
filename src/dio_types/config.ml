@@ -38,8 +38,8 @@ type asset_cfg = {
 
 type runtime_cfg = {
   assets      : asset_cfg list;
-  debounce_ms : int;
   queues_cap  : int;
+  profit_threshold_pct : float; [@yojson.default 0.0010]
 } [@@deriving yojson { exn = true }]
 
 type engine_config = {
@@ -103,13 +103,10 @@ let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
 
 let validate_runtime_cfg (cfg : runtime_cfg) : (unit, string) result =
   let errors = ref [] in
-  
+
   if cfg.assets = [] then
     errors := "Config must contain at least one asset." :: !errors;
-  
-  if cfg.debounce_ms < 0 then
-    errors := "debounce_ms cannot be negative." :: !errors;
-    
+
   if cfg.queues_cap <= 0 then
     errors := "queues_cap must be positive." :: !errors;
 

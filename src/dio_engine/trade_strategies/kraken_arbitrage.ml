@@ -27,29 +27,6 @@ open Lwt_log_core
 
 let section = Section.make "engine.strategy.kraken.arbitrage"
 
-
-(*
-  CONFIGURATION AND CONSTANTS
-
-  Trading parameters optimized for Kraken's fee structure and minimum order sizes.
-  Profit threshold accounts for taker fees while remaining economically viable.
-*)
-
-let profit_threshold_pct = 0.0010  (* 0.10% min profit after fees *)
-let taker_fee_pct       = 0.0035  (* 0.35% *)
-let maker_fee_pct       = 0.0020  (* 0.20% *)
-let stable_fee_pct      = 0.0010  (* 0.10%, adjust if you truly have discount *)
-
-let asset_min_order_sizes = [
-  ("XXBTZUSD", 0.0001);   (* BTC/USD: 0.0001 BTC *)
-  ("XETHZUSD", 0.005);    (* ETH/USD: 0.005 ETH *)
-  ("SOLUSD", 0.1);        (* SOL/USD: 0.1 SOL *)
-  ("ADAUSD", 1.0);        (* ADA/USD: 1.0 ADA *)
-  ("TRXUSD", 10.0);       (* TRX/USD: 10 TRX *)
-  ("USDTZUSD", 5.0);      (* USDT/USD: 5 USDT *)
-  ("USDCZUSD", 5.0);      (* USDC/USD: 5 USDC *)
-]
-
 (*
   GRAPH REPRESENTATION
 
@@ -160,10 +137,12 @@ let extract_assets pair_symbol =
 
 let get_min_order_size pair_symbol =
   let pair = String.uppercase_ascii pair_symbol in
-  match List.assoc_opt pair asset_min_order_sizes with
-  | Some min_size -> min_size
+  match Kraken.Kraken_incoming_data.get_instrument pair with
+  | Some instrument ->
+      (* Calculate minimum order size from qty_precision: 10^(-qty_precision) *)
+      10.0 ** (-. (float_of_int instrument.qty_precision))
   | None ->
-      (* Default minimum order sizes based on common patterns *)
+      (* Fallback to conservative defaults if instrument data not available *)
       if String.contains pair 'B' && String.contains pair 'T' then 0.0001  (* BTC pairs *)
       else if String.contains pair 'E' && String.contains pair 'T' then 0.005  (* ETH pairs *)
       else if String.contains pair 'U' && String.contains pair 'S' && String.contains pair 'D' then 5.0  (* USD stablecoin pairs *)
@@ -182,13 +161,20 @@ let update_asset_balance asset delta =
       asset current_balance new_balance delta
   )
 
-let is_stable_pair s =
-  let p = String.uppercase_ascii s in
-  List.exists (fun pref -> String.starts_with ~prefix:pref p)
-    ["USDTZUSD"; "USDCZUSD"]
-
-let get_fee_rate pair =
-  if is_stable_pair pair then stable_fee_pct else taker_fee_pct
+let get_fee_rate pair_symbol is_maker =
+  let pair = String.uppercase_ascii pair_symbol in
+  match Kraken.Kraken_incoming_data.get_instrument pair with
+  | Some instrument ->
+      (* Use actual fee data from API if available *)
+      if is_maker then
+        Option.value instrument.maker_fee ~default:0.004  (* Default maker fee *)
+      else
+        Option.value instrument.taker_fee ~default:0.004  (* Default taker fee *)
+  | None ->
+      Lwt.async (fun () ->
+        Lwt_log_core.error_f ~section "No instrument data for %s, cannot determine fee rate" pair
+      );
+      0.004  (* Conservative default fee rate *)
 
 let update_symbol_edges symbol =
   match Kraken.Kraken_orderbook.get_orderbook symbol with
@@ -202,7 +188,7 @@ let update_symbol_edges symbol =
       | top_bid :: _, top_ask :: _ ->
           let bid_price = top_bid.price in
           let ask_price = top_ask.price in
-          let fee_rate = get_fee_rate symbol in
+          let fee_rate = get_fee_rate symbol false (* taker fee for arbitrage *) in
 
           let base_to_quote_edge = {
             from_asset = base_asset;
@@ -377,7 +363,7 @@ let profit_pct_of_path graph (path : string list) =
     @param graph Exchange rate graph with fee-adjusted edges
     @return List of profitable 3-asset arbitrage cycles
 *)
-let detect_triangle_arbitrage graph : arbitrage_cycle list Lwt.t =
+let detect_triangle_arbitrage graph profit_threshold_pct : arbitrage_cycle list Lwt.t =
   let cycles = ref [] in
   let assets = Hashtbl.fold (fun asset _ acc -> asset :: acc) graph [] in
   let seen = Hashtbl.create 1024 in
@@ -416,7 +402,7 @@ let detect_triangle_arbitrage graph : arbitrage_cycle list Lwt.t =
 
                           let total_rate = rate_ab *. rate_bc *. rate_ca in
                           let profit_pct = total_rate -. 1.0 in
-                          
+
                           if profit_pct > profit_threshold_pct then (
                             let key = norm3 asset_a asset_b asset_c in
                             if not (Hashtbl.mem seen key) then (
@@ -442,7 +428,7 @@ let detect_triangle_arbitrage graph : arbitrage_cycle list Lwt.t =
   info_f ~section "Detected %d profitable triangle cycles" (List.length !cycles) >>= fun () ->
   Lwt.return !cycles
 
-let detect_general_arbitrage_cycles graph : arbitrage_cycle list Lwt.t =
+let detect_general_arbitrage_cycles graph profit_threshold_pct : arbitrage_cycle list Lwt.t =
   let assets = Hashtbl.fold (fun asset _ acc -> asset :: acc) graph [] in
   let bf_state = init_bf_state assets in
   let all_edges = Hashtbl.fold (fun _ node acc ->
@@ -494,10 +480,10 @@ let detect_general_arbitrage_cycles graph : arbitrage_cycle list Lwt.t =
     @param graph Current exchange rate graph with fee-adjusted edges
     @return List of profitable arbitrage cycles, sorted by profitability
 *)
-let detect_arbitrage_cycles graph : arbitrage_cycle list Lwt.t =
+let detect_arbitrage_cycles graph profit_threshold_pct : arbitrage_cycle list Lwt.t =
   (* Use fast triangle detection for 3-leg cycles *)
-  detect_triangle_arbitrage graph >>= fun triangle_cycles ->
-  
+  detect_triangle_arbitrage graph profit_threshold_pct >>= fun triangle_cycles ->
+
   (* Skip general detection if we have many assets (performance) *)
   let asset_count = Hashtbl.length graph in
   if asset_count > 20 then (
@@ -505,7 +491,7 @@ let detect_arbitrage_cycles graph : arbitrage_cycle list Lwt.t =
     Lwt.return triangle_cycles
   ) else (
     (* Use Bellman-Ford for longer cycles *)
-    detect_general_arbitrage_cycles graph >>= fun general_cycles ->
+    detect_general_arbitrage_cycles graph profit_threshold_pct >>= fun general_cycles ->
     Lwt.return (triangle_cycles @ general_cycles)
   )
 
@@ -949,7 +935,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
 
     let graph = get_cached_graph () in
 
-    detect_arbitrage_cycles graph >>= fun cycles ->
+    detect_arbitrage_cycles graph runtime_cfg.profit_threshold_pct >>= fun cycles ->
 
     (if !active_cycles < !max_concurrent_cycles then (
       let sorted_cycles = List.sort (fun a b -> compare b.profit_pct a.profit_pct) cycles in

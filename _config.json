@@ -48,6 +48,6 @@
       "strategy": "Orderbook"
     }
   ],
-  "debounce_ms": 1000,
-  "queues_cap": 1000
+  "queues_cap": 1000,
+  "profit_threshold_pct": 0.0010
 }

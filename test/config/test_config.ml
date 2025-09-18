@@ -23,8 +23,8 @@ let asset_cfg_sample =
 
 let runtime_cfg_sample =
   { Config.assets      = [ asset_cfg_sample ]
-  ; debounce_ms        = 250
   ; queues_cap         = 64
+  ; profit_threshold_pct = 0.0010
   }
 
 (* ------------------------------------------------------------------ *)
