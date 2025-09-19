@@ -6,12 +6,21 @@ let max_dashboard_logs = 15
 let dashboard_logs = ref []
 
 let add_dashboard_log (message : string) : unit =
-  let updated_logs = message :: !dashboard_logs in
+  (* Optimized log management with O(1) append and efficient trimming *)
+  let current_logs = !dashboard_logs in
+  let new_logs = message :: current_logs in
   dashboard_logs :=
-    if List.length updated_logs > max_dashboard_logs then
-      List.rev (List.tl (List.rev updated_logs))
+    if List.length new_logs > max_dashboard_logs then
+      (* Efficient trimming: take only the most recent entries *)
+      let rec take_first n lst =
+        if n <= 0 then []
+        else match lst with
+          | [] -> []
+          | h :: t -> h :: take_first (n - 1) t
+      in
+      take_first max_dashboard_logs new_logs
     else
-      updated_logs
+      new_logs
 
 let get_price symbol = State.get_global_price symbol
 

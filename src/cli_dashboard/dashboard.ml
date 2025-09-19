@@ -10,6 +10,9 @@ let is_stablecoin asset =
   let stablecoins = ["USD"; "USDT"; "USDC"; "USDG"; "USDR"] in
   List.mem asset stablecoins
 
+(* Mutex to prevent race conditions in dashboard state updates *)
+let state_mutex = Lwt_mutex.create ()
+
 (* ─── Enhanced Color Palette & Styles ───────────────────────────────────────── *)
 (* Professional dark theme with neon accents *)
 let rgb_of_255 ~r ~g ~b = A.rgb ~r:(r*5/255) ~g:(g*5/255) ~b:(b*5/255)
@@ -126,11 +129,55 @@ let get_strategy_indicator asset =
       ) open_orders false in
       if has_orders then "ARB" else "MONITOR"
 
-let row_of_asset asset frame =
+
+type balance_info = {
+  asset: string;
+  total_balance: float; (* spot + earn + liquid *)
+  reconciliation_balance: float; (* spot + earn *)
+  total_value_usd: float;
+  accumulated_balance: float; (* earn + spot_available *)
+  accumulated_value_usd: float; (* USD value of earn + spot_available (excluding liquid and pending orders) *)
+  unrealized_value_usd: float;
+}
+
+type dashboard_state = {
+  show_logs: bool;
+  frame: int;
+  balances: balance_info list;
+  show_balances: bool;
+  active_assets: string list;  (* Cache to prevent flickering *)
+  order_data: (string, (float * float) list * (float * float) list) Hashtbl.t;  (* Cache orders per symbol *)
+  term_dimensions: int * int;  (* Cache terminal dimensions *)
+  cached_logs: string list;  (* Cache logs to prevent polling strain *)
+  last_log_count: int;  (* Track log count to detect changes *)
+}
+
+let initial_state = {
+  show_logs = true;
+  frame = 0;
+  balances = [];
+  show_balances = true;
+  active_assets = [];
+  order_data = Hashtbl.create 16;
+  term_dimensions = (24, 80);  (* Default dimensions *)
+  cached_logs = [];
+  last_log_count = 0;
+}
+
+let rec intersperse sep = function
+  | [] -> []
+  | [x] -> [x]
+  | x :: xs -> x :: sep :: intersperse sep xs
+
+let row_of_asset asset frame state =
   let open I in
-  let _, term_width = get_term_dimensions () in
+  let _, term_width = state.term_dimensions in
   let current_price_opt = Stats.get_price asset in
-  let all_buy_orders_for_symbol, all_sell_orders_for_symbol = Stats.get_orders_for_symbol asset in
+  let all_buy_orders_for_symbol, all_sell_orders_for_symbol =
+    match Hashtbl.find_opt state.order_data asset with
+    | Some (buy_orders, sell_orders) -> (buy_orders, sell_orders)
+    | None -> ([], [])  (* Fallback if no cached data *)
+  in
   let strategy_indicator = get_strategy_indicator asset in
   let closest_buy_for_info = match current_price_opt with
     | Some current_price_val ->
@@ -189,7 +236,7 @@ let row_of_asset asset frame =
   let asset_label_img = I.string style_asset_name (Printf.sprintf "%-7s" asset) in
   let strategy_img = I.string style_logs_accent_text (Printf.sprintf "[%s]" strategy_indicator) in
   let buy_price_img = I.hcat [I.string style_buy_order_text buy_price_str; buy_perc_str] in
-  let curr_price_img = I.string (style_current_price_text ++ A.st A.bold) (match current_price_opt with 
+  let curr_price_img = I.string (style_current_price_text ++ A.st A.bold) (match current_price_opt with
     | Some p -> format_price asset (Float.of_string (Primitives.Price.to_string p))
     | None -> "-.--")
   in
@@ -207,28 +254,28 @@ let row_of_asset asset frame =
     I.string style_sell_order_text "S:"; sell_price_img;
   ] in
   let combined_info_text = I.hcat info_pane_items in
-  let content_width_for_panes = term_width - 4 in 
+  let content_width_for_panes = term_width - 4 in
   let info_pane_line = hcat [
     I.string style_header_border "┃ ";
     combined_info_text;
-    void (content_width_for_panes - I.width combined_info_text) 1; 
+    void (content_width_for_panes - I.width combined_info_text) 1;
     I.string style_header_border " ┃";
   ] in
-  let ladder_buy_orders_for_ladder_display, ladder_sell_orders_for_ladder_display = 
+  let ladder_buy_orders_for_ladder_display, ladder_sell_orders_for_ladder_display =
     match current_price_opt with
     | Some cp_val ->
         let current_f = Float.of_string (Primitives.Price.to_string cp_val) in
         let closest_buy_list =
-          all_buy_orders_for_symbol 
+          all_buy_orders_for_symbol
           |> List.filter (fun (p, _) -> p <= current_f)
-          |> List.sort (fun (p1, _) (p2, _) -> compare p2 p1) 
-          |> (fun l -> match l with [] -> [] | h :: _ -> [h]) 
+          |> List.sort (fun (p1, _) (p2, _) -> compare p2 p1)
+          |> (fun l -> match l with [] -> [] | h :: _ -> [h])
         in
         let closest_sell_list =
-          all_sell_orders_for_symbol 
+          all_sell_orders_for_symbol
           |> List.filter (fun (p, _) -> p >= current_f)
-          |> List.sort (fun (p1, _) (p2, _) -> compare p1 p2) 
-          |> (fun l -> match l with [] -> [] | h :: _ -> [h]) 
+          |> List.sort (fun (p1, _) (p2, _) -> compare p1 p2)
+          |> (fun l -> match l with [] -> [] | h :: _ -> [h])
         in
         (closest_buy_list, closest_sell_list)
     | None -> ([], [])
@@ -236,7 +283,7 @@ let row_of_asset asset frame =
   let ladder_img_content =
     match current_price_opt with
     | Some current_price_val ->
-        let orders_count_img_for_ladder_line = sell_count_img in 
+        let orders_count_img_for_ladder_line = sell_count_img in
         let separator_for_ladder_line = I.string style_header_border " │ " in
         let width_for_ladder_visual =
           max 10 (content_width_for_panes - (I.width orders_count_img_for_ladder_line + I.width separator_for_ladder_line))
@@ -251,44 +298,15 @@ let row_of_asset asset frame =
         I.hcat [orders_count_img_for_ladder_line; separator_for_ladder_line; actual_ladder_visualization]
     | None ->
         let no_data_img = I.string style_sell_order_text "No price data" in
-        I.hsnap ~align:`Left content_width_for_panes no_data_img 
+        I.hsnap ~align:`Left content_width_for_panes no_data_img
   in
   let ladder_pane_line = hcat [
     I.string style_header_border "┃ ";
-    ladder_img_content; 
-    void (content_width_for_panes - I.width ladder_img_content) 1; 
+    ladder_img_content;
+    void (content_width_for_panes - I.width ladder_img_content) 1;
     I.string style_header_border " ┃";
   ] in
   I.vcat [info_pane_line; ladder_pane_line]
-
-type balance_info = {
-  asset: string;
-  total_balance: float; (* spot + earn + liquid *)
-  reconciliation_balance: float; (* spot + earn *)
-  total_value_usd: float;
-  accumulated_balance: float; (* earn + spot_available *)
-  accumulated_value_usd: float; (* USD value of earn + spot_available (excluding liquid and pending orders) *)
-  unrealized_value_usd: float;
-}
-
-type dashboard_state = {
-  show_logs: bool;
-  frame: int;
-  balances: balance_info list;
-  show_balances: bool;
-}
-
-let initial_state = {
-  show_logs = true;
-  frame = 0;
-  balances = [];
-  show_balances = true;
-}
-
-let rec intersperse sep = function
-  | [] -> []
-  | [x] -> [x]
-  | x :: xs -> x :: sep :: intersperse sep xs
 
 (* Get all active trading symbols from order data and strategies *)
 let get_all_active_assets () =
@@ -311,8 +329,7 @@ let find_index pred lst =
   in
   aux 0 lst
 
-let compare_assets a b =
-  let active_assets = get_all_active_assets () in
+let compare_assets active_assets a b =
   let get_priority asset =
     match find_index ((=) asset) active_assets with
     | Some idx -> idx
@@ -566,7 +583,7 @@ let render_balances_section (balances: balance_info list) term_width =
 
 let render state =
   let open I in
-  let term_height, term_width = get_term_dimensions () in
+  let term_height, term_width = state.term_dimensions in
   let content_width = term_width - 4 in
 
   let horiz_border_char_str = "\u{2501}" in
@@ -574,9 +591,7 @@ let render state =
     String.concat "" (List.init (max 0 width) (fun _ -> char_str))
   in
 
-  let asset_rows = List.map (fun asset -> row_of_asset asset state.frame)
-    (get_all_active_assets () |> List.sort compare_assets)
-  in
+  let asset_rows = List.map (fun asset -> row_of_asset asset state.frame state) state.active_assets in
   let total_assets = List.length asset_rows in
 
   let dio_label_text = " Dio " in
@@ -609,12 +624,11 @@ let render state =
   ] in
 
   let get_strategy_assets strategy_type =
-    let all_assets = get_all_active_assets () in
     List.filter (fun asset ->
       match State.get_global_strategy_assignment asset with
       | Some strat when strat = strategy_type -> true
       | _ -> false
-    ) all_assets
+    ) state.active_assets
   in
 
   let grid_assets = get_strategy_assets State.Grid in
@@ -700,7 +714,7 @@ let logs_section_image =
     let logs_header_text = I.hcat [
       I.string (style_logs_accent_text ++ A.st A.bold) "System Logs ";
       I.string style_neutral_text "(";
-      I.string style_success_text (string_of_int (List.length !Stats.dashboard_logs));
+      I.string style_success_text (string_of_int (List.length state.cached_logs));
       I.string style_neutral_text " entries)"
     ] in
     let logs_header_img = 
@@ -731,7 +745,7 @@ let logs_section_image =
           vcat (List.map (fun line -> I.string style_primary_text line) wrapped_lines)
         else
           hcat [spr_power_pellet; I.string style_primary_text " "; msg_img; void (content_width - (width msg_img) - (width spr_power_pellet) - 1) 1]
-      ) (take num_log_lines_to_take (List.rev !Stats.dashboard_logs))
+      ) (take num_log_lines_to_take state.cached_logs)
     in
     let logs_body_content = vcat log_messages in
     let logs_full_content = vcat [logs_header_img; logs_body_content] in
@@ -772,23 +786,56 @@ let start ~on_quit:(on_quit: unit -> unit Lwt.t) () : Notty_lwt.Term.t =
         Lwt.return_unit
     | _ -> Lwt.return_unit
   in
-  let rec tick () =
-    get_balance_info () >>= fun balances ->
-    let new_frame = !state.frame + 1 in
-    state := { !state with frame = new_frame; balances };
 
-    (* Initialize transaction history on first tick if balances are available *)
-    (if new_frame = 1 && balances <> [] then
-      Kraken.Kraken_balances.initialize_transaction_history ()
-    else
-      Lwt.return_unit
-    ) >>= fun () ->
+let rec tick () =
+  get_balance_info () >>= fun balances ->
+  let new_frame = !state.frame + 1 in
+  let active_assets_unsorted = get_all_active_assets () in
+  let active_assets = List.sort (compare_assets active_assets_unsorted) active_assets_unsorted in
+  let term_dimensions = get_term_dimensions () in  (* Cache terminal dimensions *)
 
+  (* Cache order data for all active assets to prevent polling during render *)
+  let order_data = Hashtbl.create 16 in
+  let all_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
+  List.iter (fun asset ->
+    let orders_for_asset =
+      Hashtbl.to_seq_values all_orders
+      |> List.of_seq
+      |> List.filter (fun order -> String.equal order.Kraken.Kraken_common_types.order_symbol asset)
+    in
+    let buy_orders, sell_orders =
+      List.partition (fun order -> order.Kraken.Kraken_common_types.side = Some Core.Buy) orders_for_asset
+    in
+    let to_price_qty order = (order.Kraken.Kraken_common_types.limit_price, order.Kraken.Kraken_common_types.qty) in
+    let buy_data = List.map to_price_qty buy_orders in
+    let sell_data = List.map to_price_qty sell_orders in
+    Hashtbl.replace order_data asset (buy_data, sell_data)
+  ) active_assets;
 
-    Notty_lwt.Term.image term_instance (render !state) >>= fun () ->
-    Lwt.pause () >>= fun () ->
-    let sleep_time = 1.0 in
-    Lwt_unix.sleep sleep_time >>= tick
+  (* Stream logs in real-time - always update cache to ensure fresh logs *)
+  let cached_logs = !Stats.dashboard_logs in
+  let last_log_count = List.length cached_logs in
+
+  (* Use mutex to prevent race conditions during state updates *)
+  Lwt_mutex.with_lock state_mutex (fun () ->
+    state := { !state with frame = new_frame; balances; active_assets; order_data; term_dimensions; cached_logs; last_log_count };
+    Lwt.return_unit
+  ) >>= fun () ->
+
+  (* Initialize transaction history on first tick if balances are available *)
+  (if new_frame = 1 && balances <> [] then
+    Kraken.Kraken_balances.initialize_transaction_history ()
+  else
+    Lwt.return_unit
+  ) >>= fun () ->
+
+  (* Render with mutex protection *)
+  Lwt_mutex.with_lock state_mutex (fun () ->
+    Notty_lwt.Term.image term_instance (render !state)
+  ) >>= fun () ->
+  Lwt.pause () >>= fun () ->
+  let sleep_time = 1.0 in
+  Lwt_unix.sleep sleep_time >>= tick
   in
   let rec input_loop () =
     Lwt.catch (fun () ->

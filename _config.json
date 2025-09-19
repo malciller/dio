@@ -42,6 +42,12 @@
       "strategy": "Orderbook"
     },
     {
+      "symbol": "EURR/USD",
+      "qty": "10.0",
+      "min_usd_balance": "600.0",
+      "strategy": "Orderbook"
+    },
+    {
       "symbol": "USDR/USD",
       "qty": "10.0",
       "min_usd_balance": "600.0",
