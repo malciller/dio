@@ -428,7 +428,7 @@ let render state =
   let strategy_section = I.hcat [
     I.string style_header_border "┃ ";
     strategy_status;
-    void (content_width - I.width strategy_status - 4) 1;
+    void (content_width - I.width strategy_status) 1;
     I.string style_header_border " ┃";
   ] in
 
@@ -452,9 +452,9 @@ let render state =
       let logs_header_img = 
         hcat [
           I.string style_header_border "┏━"; logs_header_text;
-          I.string style_header_border (create_horizontal_fill (content_width - (width logs_header_text) - 4) horiz_border_char_str);
+          I.string style_header_border (create_horizontal_fill (term_width - (width logs_header_text) - 3) horiz_border_char_str);
           I.string style_header_border "┓"
-        ] |> I.pad ~l:2
+        ]
       in
       let num_log_lines_to_take = max 0 (logs_height - height logs_header_img) in 
       let log_messages = 
