@@ -62,7 +62,7 @@ Edit `_config.json` (example):
 
 ## Dashboard
 
-![Dio Dashboard](image.png)
+![Dio Dashboard](image.png) 
 
 - Real-time ladders and orders
 - Status and execution tracking
