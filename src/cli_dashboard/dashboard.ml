@@ -2,16 +2,32 @@ open Lwt.Infix
 open Notty
 open Notty.A
 open Dio_types
-module Stats = Stats 
+module Stats = Stats
 module M = State.SMap
+module StringSet = Set.Make(String)
 
-(* ─── Color Palette & Styles ───────────────────────────────────────── *)
-let style_primary_text    = A.fg (A.rgb ~r:(180*5/255) ~g:(180*5/255) ~b:(180*5/255)) (* Approx r:3 g:3 b:3 *)
-let style_buy_order_text  = A.fg (A.rgb ~r:(0*5/255)   ~g:(255*5/255) ~b:(100*5/255)) (* Approx r:0 g:5 b:1 *)
-let style_sell_order_text = A.fg (A.rgb ~r:(255*5/255) ~g:(50*5/255)  ~b:(50*5/255))  (* Approx r:5 g:0 b:0 *)
-let style_current_price_text= A.fg (A.rgb ~r:(0*5/255)   ~g:(255*5/255) ~b:(255*5/255)) (* Approx r:0 g:5 b:5 *)
-let style_header_border   = A.fg (A.rgb ~r:(50*5/255)  ~g:(150*5/255) ~b:(255*5/255)) (* Approx r:0 g:2 b:5 *)
-let style_logs_accent_text= A.fg (A.rgb ~r:(150*5/255) ~g:(100*5/255) ~b:(255*5/255)) (* Approx r:2 g:1 b:5 *)
+(* ─── Enhanced Color Palette & Styles ───────────────────────────────────────── *)
+(* Professional dark theme with neon accents *)
+let rgb_of_255 ~r ~g ~b = A.rgb ~r:(r*5/255) ~g:(g*5/255) ~b:(b*5/255)
+let style_primary_text    = A.fg (rgb_of_255 ~r:200 ~g:200 ~b:200) ++ A.bg (rgb_of_255 ~r:15 ~g:15 ~b:15)
+let style_buy_order_text  = A.fg (rgb_of_255 ~r:0 ~g:255 ~b:100) ++ A.st A.bold
+let style_sell_order_text = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100) ++ A.st A.bold
+let style_current_price_text= A.fg (rgb_of_255 ~r:100 ~g:200 ~b:255) ++ A.st A.bold ++ A.st A.underline
+let style_header_border   = A.fg (rgb_of_255 ~r:100 ~g:150 ~b:255) ++ A.st A.bold
+let style_logs_accent_text= A.fg (rgb_of_255 ~r:255 ~g:200 ~b:100) ++ A.st A.bold
+
+(* New professional colors *)
+let style_profit_text     = A.fg (rgb_of_255 ~r:50 ~g:255 ~b:100) ++ A.st A.bold
+let style_loss_text       = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100) ++ A.st A.bold
+let style_neutral_text    = A.fg (rgb_of_255 ~r:200 ~g:200 ~b:200)
+let style_highlight_text  = A.fg (rgb_of_255 ~r:255 ~g:255 ~b:150) ++ A.st A.bold
+let style_warning_text    = A.fg (rgb_of_255 ~r:255 ~g:150 ~b:50) ++ A.st A.bold
+let style_success_text    = A.fg (rgb_of_255 ~r:100 ~g:255 ~b:150) ++ A.st A.bold
+
+(* Status indicator colors *)
+let style_active_indicator = A.fg (rgb_of_255 ~r:50 ~g:255 ~b:150) ++ A.st A.bold
+let style_inactive_indicator = A.fg (rgb_of_255 ~r:150 ~g:150 ~b:150)
+let style_error_indicator  = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100) ++ A.st A.bold
 
 (* Combined styles *)
 let style_asset_name = style_current_price_text ++ A.st A.bold ++ A.st A.underline
@@ -20,17 +36,33 @@ let style_header_info_text = style_primary_text
 let style_keybinding_bracket = style_header_border
 let style_keybinding_text = style_primary_text
 
-(* ─── Updated ASCII/Unicode Sprites ────────────────────────────────────── *)
-let spr_power_pellet  = I.string style_logs_accent_text "\u{2726}"  (* ✦ Sparkle *)
-let spr_buy_order     = I.string style_buy_order_text "\u{2193}"    (* ↓ Down Arrow *)
-let spr_sell_order    = I.string style_sell_order_text "\u{2191}"   (* ↑ Up Arrow *)
-let spr_price_now     = I.string (style_current_price_text ++ A.st A.bold) "\u{25C7}" (* ◇ Open Diamond, bold, no blink *)
+(* ─── Enhanced Professional Unicode Sprites ────────────────────────────────────── *)
+let spr_power_pellet  = I.string style_logs_accent_text "*"  (* Star - for highlights *)
+let spr_buy_order     = I.string style_buy_order_text "\u{25B2}"    (* ▲ Up Triangle - for buys *)
+let spr_sell_order    = I.string style_sell_order_text "\u{25BC}"   (* ▼ Down Triangle - for sells *)
+let spr_price_now frame =
+  let blink = (frame / 10) mod 2 = 0 in
+  let style = if blink then
+    style_current_price_text ++ A.st A.bold ++ A.st A.underline
+  else
+    style_current_price_text ++ A.st A.bold in
+  I.string style "⦿" (* Circled Bullet - for current price *)
+let spr_profit        = I.string style_profit_text "+"      (* Profit indicator *)
+let spr_loss          = I.string style_loss_text "-"        (* Loss indicator *)
+let spr_neutral       = I.string style_neutral_text "."     (* Neutral indicator *)
+let spr_active        = I.string style_active_indicator "[A]" (* Active *)
+let spr_inactive      = I.string style_inactive_indicator "[I]" (* Inactive *)
+let spr_warning       = I.string style_warning_text "[W]"     (* Warning *)
+let spr_error         = I.string style_error_indicator "[E]"  (* Error *)
+let spr_grid          = I.string style_highlight_text "[G]"   (* Grid strategy *)
+let spr_orderbook     = I.string style_highlight_text "[M]"   (* Market Maker strategy *)
+let spr_arbitrage     = I.string style_highlight_text "[A]"    (* Arbitrage strategy *)
 
 
 (* ─── helpers ─────────────────────────────────────────────── *)
 let fmt_runtime start =
   let secs = int_of_float (Unix.gettimeofday () -. start) in
-  Printf.sprintf "%02dh:%02dm:%02ds"
+  Printf.sprintf "%02d:%02d:%02d"
     (secs / 3600) (secs mod 3600 / 60) (secs mod 60)
 
 let get_term_dimensions () =
@@ -38,7 +70,7 @@ let get_term_dimensions () =
   | Some (h, w) -> (max 24 h, max 80 w) 
   | None -> (24, 80) 
 
-let price_ladder ~ladder_width current_price buy_orders sell_orders =
+let price_ladder ~ladder_width current_price buy_orders sell_orders frame =
   let ladder = Array.make ladder_width (I.string A.empty " ") in
   let min_display_price, max_display_price = 
     let all_relevant_prices = current_price :: (List.map fst buy_orders) @ (List.map fst sell_orders) in
@@ -64,7 +96,7 @@ let price_ladder ~ladder_width current_price buy_orders sell_orders =
     if idx < ladder_width && idx >= 0 then ladder.(idx) <- spr_sell_order
   ) sell_orders;
   let current_idx = price_to_index current_price in
-  if current_idx < ladder_width && current_idx >= 0 then ladder.(current_idx) <- spr_price_now;
+  if current_idx < ladder_width && current_idx >= 0 then ladder.(current_idx) <- spr_price_now frame;
   I.hcat (Array.to_list ladder)
 
 let format_price asset price =
@@ -76,11 +108,26 @@ let rec take n = function
   | [] -> []
   | x :: xs -> if n <= 0 then [] else x :: take (n-1) xs
 
-let row_of_asset asset =
+let get_strategy_indicator asset =
+  match State.get_global_strategy_assignment asset with
+  | Some State.Grid -> "GRID"
+  | Some State.Orderbook -> "MM"
+  | Some State.Arbitrage -> "ARB"
+  | Some State.Monitor -> "MONITOR"
+  | None ->
+      (* Fallback: check if there are actual orders for this asset *)
+      let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
+      let has_orders = Hashtbl.fold (fun _ order acc ->
+        acc || String.equal order.Kraken.Kraken_common_types.order_symbol asset
+      ) open_orders false in
+      if has_orders then "ARB" else "MONITOR"
+
+let row_of_asset asset frame =
   let open I in
   let _, term_width = get_term_dimensions () in
   let current_price_opt = Stats.get_price asset in
   let all_buy_orders_for_symbol, all_sell_orders_for_symbol = Stats.get_orders_for_symbol asset in
+  let strategy_indicator = get_strategy_indicator asset in
   let closest_buy_for_info = match current_price_opt with
     | Some current_price_val ->
         let current = Float.of_string (Primitives.Price.to_string current_price_val) in
@@ -110,30 +157,33 @@ let row_of_asset asset =
     | Some price -> format_price asset price
     | None -> "-.--"
   in
-  let buy_perc_str = 
+  let buy_perc_str =
     match current_price_opt, closest_buy_for_info with
     | Some cp_prim, Some buy_p_float ->
         let current_f = Float.of_string (Primitives.Price.to_string cp_prim) in
         if current_f > 0.0 then (
-           (* Calculate diff of buy relative to current price *) 
+           (* Calculate diff of buy relative to current price *)
           let diff = ((buy_p_float -. current_f) /. current_f) *. 100.0 in
-          I.string style_primary_text (Printf.sprintf " (%+.2f%%)" diff)
-        ) else I.empty (* Avoid division by zero if current price is 0 *)
-    | _ -> I.empty (* Handle cases where current or buy price is missing *)
+          let style = if diff >= 0.0 then style_profit_text else style_loss_text in
+          I.hcat [I.string style (Printf.sprintf "%+.2f%%" diff)]
+        ) else I.string style_neutral_text " --"
+    | _ -> I.string style_neutral_text " --"
   in
-  let sell_perc_str = 
+  let sell_perc_str =
     match current_price_opt, closest_sell_for_info with
     | Some cp_prim, Some sell_p_float ->
         let current_f = Float.of_string (Primitives.Price.to_string cp_prim) in
         if current_f > 0.0 then (
           let diff = ((sell_p_float -. current_f) /. current_f) *. 100.0 in
-          I.string style_primary_text (Printf.sprintf " (%+.2f%%)" diff)
-        ) else I.empty
-    | _ -> I.empty
+          let style = if diff >= 0.0 then style_profit_text else style_loss_text in
+          I.hcat [I.string style (Printf.sprintf "%+.2f%%" diff)]
+        ) else I.string style_neutral_text " --"
+    | _ -> I.string style_neutral_text " --"
   in
   let buy_price_str = format_opt_price asset closest_buy_for_info in
   let sell_price_str = format_opt_price asset closest_sell_for_info in
   let asset_label_img = I.string style_asset_name (Printf.sprintf "%-7s" asset) in
+  let strategy_img = I.string style_logs_accent_text (Printf.sprintf "[%s]" strategy_indicator) in
   let buy_price_img = I.hcat [I.string style_buy_order_text buy_price_str; buy_perc_str] in
   let curr_price_img = I.string (style_current_price_text ++ A.st A.bold) (match current_price_opt with 
     | Some p -> format_price asset (Float.of_string (Primitives.Price.to_string p))
@@ -143,6 +193,8 @@ let row_of_asset asset =
   let sell_count_img = I.string style_logs_accent_text (Printf.sprintf "◎%2d" (List.length all_sell_orders_for_symbol)) in
   let info_pane_items = [
     asset_label_img;
+    I.string style_header_border " ";
+    strategy_img;
     I.string style_header_border " │ ";
     I.string style_buy_order_text "B:"; buy_price_img;
     I.string style_header_border " │ ";
@@ -186,10 +238,11 @@ let row_of_asset asset =
           max 10 (content_width_for_panes - (I.width orders_count_img_for_ladder_line + I.width separator_for_ladder_line))
         in
         let actual_ladder_visualization = price_ladder
-          ~ladder_width:width_for_ladder_visual 
+          ~ladder_width:width_for_ladder_visual
           (Float.of_string (Primitives.Price.to_string current_price_val))
-          ladder_buy_orders_for_ladder_display 
+          ladder_buy_orders_for_ladder_display
           ladder_sell_orders_for_ladder_display
+          frame
         in
         I.hcat [orders_count_img_for_ladder_line; separator_for_ladder_line; actual_ladder_visualization]
     | None ->
@@ -220,6 +273,23 @@ let rec intersperse sep = function
   | x :: xs -> x :: sep :: intersperse sep xs
 
 let priority_assets = ["BTC/USD"; "ETH/USD"; "SOL/USD"; "ADA/USD"; "TRX/USD"]
+
+(* Get all active trading symbols from order data and strategies *)
+let get_all_active_assets () =
+  let orderbook_assets = Kraken.Kraken_incoming_data.get_all_open_orders ()
+    |> Hashtbl.to_seq_values
+    |> List.of_seq
+    |> List.map (fun order -> order.Kraken.Kraken_common_types.order_symbol)
+    |> List.sort_uniq String.compare
+  in
+  let all_assets = orderbook_assets @ priority_assets
+    |> List.sort_uniq String.compare
+  in
+  (* Prioritize priority_assets first, then others *)
+  let priority_set = List.fold_left (fun set asset -> StringSet.add asset set) StringSet.empty priority_assets in
+  let (priority, others) = List.partition (fun asset -> StringSet.mem asset priority_set) all_assets in
+  priority @ others
+
 let find_index pred lst =
   let rec aux i = function
     | [] -> None
@@ -228,10 +298,11 @@ let find_index pred lst =
   aux 0 lst
 
 let compare_assets a b =
+  let active_assets = get_all_active_assets () in
   let get_priority asset =
-    match find_index ((=) asset) priority_assets with
+    match find_index ((=) asset) active_assets with
     | Some idx -> idx
-    | None -> List.length priority_assets  
+    | None -> List.length active_assets
   in
   compare (get_priority a) (get_priority b)
 
@@ -271,61 +342,69 @@ let render state =
                        I.string text_style        "ogs ";
                        I.string key_bracket_style "│";
                        I.string key_bracket_style        " ["; I.string key_text_style "Q"; I.string key_bracket_style "]";
-                       I.string text_style        "uit     ";
-                     ]
-    in
-    let line5 = I.hcat [
-                  I.string art_style         "     ┃  ██████╔╝██║╚██████╔╝  ";
-                  line5_keys;
-                  I.string art_style         "┃    ";
-                ]
-    in
+                       I.string text_style        "uit ";
+                 ]
+   in
+   let line5 = I.hcat [
+                 I.string art_style         "     ┃  ██████╔╝██║╚██████╔╝  ";
+                 line5_keys;
+                 I.string art_style         "┃    ";
+               ]
+   in
 
-    let runtime_str = fmt_runtime Stats.start_ts in
-    let runtime_img = I.string (style_logs_accent_text ++ A.st A.bold) (Printf.sprintf " %s " runtime_str) in
-    let runtime_width = I.width runtime_img in
+   let runtime_str = fmt_runtime Stats.start_ts in
+   let (status_indicator, status_text) = (I.string style_success_text ">", "LIVE") in
+   let runtime_img = I.hcat [
+     I.string (style_logs_accent_text ++ A.st A.bold) runtime_str;
+     I.string style_neutral_text " ";
+     status_indicator;
+     I.string style_neutral_text (" " ^ status_text)
+   ] in
+   let runtime_width = I.width runtime_img in
     let line6 =
-      (* Required width = 5 (pad) + 1 (┗) + Runtime(W) + 1 (┛) = W + 7 *)
-      let required_width_for_line = runtime_width + 7 in
-      if term_width >= required_width_for_line then
-        (* Total space available for dashes *)
-        let total_dash_space = term_width - required_width_for_line in
-        let dashes_before_count = max 0 ((total_dash_space / 2) - 30) in
-        let dashes_after_count = max 0 ((total_dash_space / 2) + 1 ) in
-
-        I.hcat [
-          I.string A.empty "     "; 
-          I.string art_style "\u{2517}"; 
-          I.string art_style (create_horizontal_fill dashes_before_count horiz_border_char_str); 
-          runtime_img;
-          I.string art_style (create_horizontal_fill dashes_after_count horiz_border_char_str);
-          I.string art_style "\u{251B}" 
-        ]
-      else 
-        I.empty 
+      let header_total_width = I.width line2 in
+      let inner_width = header_total_width - 5 - 4 - 2 in (* 5 left pad, 4 right pad, 2 for box corners *)
+      let dashes_width = max 0 (inner_width - runtime_width) in
+      let dashes_before_count = dashes_width / 2 in
+      let dashes_after_count = dashes_width - dashes_before_count in
+      I.hcat [
+        I.string A.empty "     ";
+        I.string art_style "\u{2517}";
+        I.string art_style (create_horizontal_fill dashes_before_count horiz_border_char_str);
+        runtime_img;
+        I.string art_style (create_horizontal_fill dashes_after_count horiz_border_char_str);
+        I.string art_style "\u{251B}";
+        I.string A.empty "    "
+      ]
     in
 
-    I.vcat [line0; line1; line2; line3; line4; line5; line6]
+   I.vcat [line0; line1; line2; line3; line4; line5; line6]
   in
 
-  let asset_rows = List.map row_of_asset
-    (M.fold (fun asset _ acc -> asset :: acc) (!Stats.state).pending_orders [] |> List.sort compare_assets)
+  let asset_rows = List.map (fun asset -> row_of_asset asset state.frame)
+    (get_all_active_assets () |> List.sort compare_assets)
   in
   let diogrid_label_text = " DioGrid " in
-  let diogrid_label_style = style_logs_accent_text ++ A.st A.bold in 
+  let diogrid_label_style = style_highlight_text ++ A.st A.bold in
   let diogrid_label_img = I.string diogrid_label_style diogrid_label_text in
-  let diogrid_label_width = I.width diogrid_label_img in
+
+  (* Add performance indicator *)
+  let total_assets = List.length asset_rows in
+  let performance_indicator = I.string style_success_text (Printf.sprintf " [%d assets]" total_assets) in
+  let enhanced_label = I.hcat [diogrid_label_img; performance_indicator] in
+
   let top_asset_box_line = 
     match asset_rows with 
     | [] -> I.empty 
     | _ -> 
       
-        let min_space_for_labeled_border = diogrid_label_width + 4 in
+        let enhanced_width = I.width enhanced_label in
+        let min_space_for_labeled_border = enhanced_width + 4 in
         if term_width >= min_space_for_labeled_border then
-          let fill_width = term_width - 2 - diogrid_label_width - 1 - 1 in 
+          let fill_width = term_width - 2 - enhanced_width - 1 - 1 in
           I.hcat [
             I.string style_header_border "\u{250F}\u{2501}";
-            diogrid_label_img;
+            enhanced_label;
             I.string style_header_border horiz_border_char_str;
             I.string style_header_border (create_horizontal_fill fill_width horiz_border_char_str);
             I.string style_header_border "\u{2513}";
@@ -348,18 +427,63 @@ let render state =
         let interspersed_rows = intersperse inter_asset_box_line asset_rows in
         I.vcat ([top_asset_box_line] @ interspersed_rows @ [bottom_asset_box_line])
   in
+  (* Strategy Status Summary *)
+  let get_strategy_assets strategy_type =
+    let all_assets = get_all_active_assets () in
+    List.filter (fun asset ->
+      match State.get_global_strategy_assignment asset with
+      | Some strat when strat = strategy_type -> true
+      | _ -> false
+    ) all_assets
+  in
+
+  let grid_assets = get_strategy_assets State.Grid in
+  let orderbook_assets = get_strategy_assets State.Orderbook in
+  let arbitrage_assets = get_strategy_assets State.Arbitrage in
+
+  let format_asset_list assets =
+    let get_base_asset s =
+      try String.sub s 0 (String.index s '/')
+      with Not_found -> s
+    in
+    String.concat "," (List.map get_base_asset assets)
+  in
+
+  let grid_str = if grid_assets <> [] then
+    Printf.sprintf "GRID[%s]" (format_asset_list grid_assets)
+  else "" in
+  let orderbook_str = if orderbook_assets <> [] then
+    Printf.sprintf "MM[%s]" (format_asset_list orderbook_assets)
+  else "" in
+  let arbitrage_str = if arbitrage_assets <> [] then "ARB[ALL]" else "" in
+
+  let active_parts = List.filter (fun s -> s <> "") [grid_str; orderbook_str; arbitrage_str] in
+  let strategy_status = I.string style_highlight_text ("Active Strategies: " ^ String.concat " • " active_parts) in
+  let strategy_section = I.hcat [
+    I.string style_header_border "┃ ";
+    strategy_status;
+    void (content_width - I.width strategy_status - 4) 1;
+    I.string style_header_border " ┃";
+  ] in
+
   let header_height = height header in
   let new_asset_rows_height = height asset_rows_section_with_boxing in
+  let strategy_section_height = height strategy_section in
   let logs_height =
     if state.show_logs then
-      let height_of_content_above_logs = header_height + new_asset_rows_height in
+      let height_of_content_above_logs = header_height + new_asset_rows_height + strategy_section_height in
       max 0 (term_height - height_of_content_above_logs - 3)
     else 0
   in
   let logs_section_image = 
     if not state.show_logs || logs_height <= 0 then void 0 0
     else
-      let logs_header_text = I.string (style_logs_accent_text ++ A.st A.bold) " Logs " in
+      let logs_header_text = I.hcat [
+        I.string (style_logs_accent_text ++ A.st A.bold) "System Logs ";
+        I.string style_neutral_text "(";
+        I.string style_success_text (string_of_int (List.length !Stats.dashboard_logs));
+        I.string style_neutral_text " entries)"
+      ] in
       let logs_header_img = 
         hcat [
           I.string style_header_border "┏━"; logs_header_text;
@@ -406,6 +530,8 @@ let render state =
     header;
     asset_rows_section_with_boxing;
     void content_width 1;
+    strategy_section;
+    void content_width 1;
     logs_section_image;
     void content_width 1;
   ]
@@ -419,14 +545,16 @@ let start ~on_quit:(on_quit: unit -> unit Lwt.t) () : Notty_lwt.Term.t =
         state := { !state with show_logs = not !state.show_logs };
         Lwt.return_unit
     | `Key (`ASCII 'q', []) | `Key (`ASCII 'Q', []) ->
-        on_quit () 
-    | _ -> Lwt.return_unit  
+        on_quit ()
+    | _ -> Lwt.return_unit
   in
   let rec tick () =
-    state := { !state with frame = !state.frame + 1 };
+    let new_frame = !state.frame + 1 in
+    state := { !state with frame = new_frame };
     Notty_lwt.Term.image term_instance (render !state) >>= fun () ->
     Lwt.pause () >>= fun () ->
-    Lwt_unix.sleep 1.0 >>= tick 
+    let sleep_time = 1.0 in
+    Lwt_unix.sleep sleep_time >>= tick
   in
   let rec input_loop () =
     Lwt.catch (fun () ->

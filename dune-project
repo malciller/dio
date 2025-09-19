@@ -31,6 +31,8 @@
   digestif
   base64
   mirage-crypto
+  cmdliner
+  ptime
   
   ;; Test dependencies
   alcotest 

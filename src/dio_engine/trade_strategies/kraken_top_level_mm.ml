@@ -442,6 +442,7 @@ module State = struct
   *)
   let update_price (tick : Event.tick) =
     Hashtbl.replace price_info tick.symbol tick;
+    State.update_global_price tick.symbol tick.current_price;
     Lwt.return_unit
 end
 

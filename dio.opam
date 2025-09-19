@@ -27,6 +27,8 @@ depends: [
   "digestif"
   "base64"
   "mirage-crypto"
+  "cmdliner"
+  "ptime"
   "alcotest"
   "alcotest-lwt"
   "mirage-crypto-rng"

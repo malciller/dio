@@ -38,9 +38,9 @@
   - Verifies grid spacing and corrects when spread becomes suboptimal
 *)
 
-open Lwt.Infix  
-open Dio_types 
-open Lwt_log_core 
+open Lwt.Infix
+open Dio_types
+open Lwt_log_core
 
 module K = Kraken 
 
@@ -264,6 +264,7 @@ module State = struct
   *)
   let update_price (tick : Event.tick) =
     Hashtbl.replace price_info tick.symbol tick;
+    State.update_global_price tick.symbol tick.current_price;
     Lwt.return_unit 
 
   (** Check and adjust grid orders based on current market conditions.

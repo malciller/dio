@@ -4,6 +4,7 @@
  (modules kraken_suicide_grid kraken_top_level_mm kraken_arbitrage)
  (libraries
   dio.dio_types
+  dio.state
   lwt
   yojson
   cohttp-lwt-unix

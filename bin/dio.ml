@@ -103,9 +103,18 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
         ) runtime_cfg.assets in
         
         let all_symbols = List.map (fun (asset: Config.asset_cfg) -> asset.symbol) runtime_cfg.assets in
-        
+
         info_f ~section:config_section "[CONFIG] Grid strategy symbols: [%s]" (String.concat ", " grid_symbols) |> Lwt.ignore_result;
         info_f ~section:config_section "[CONFIG] Orderbook strategy symbols: [%s]" (String.concat ", " orderbook_symbols) |> Lwt.ignore_result;
+
+        (* Update strategy assignments in shared state *)
+        List.iter (fun (asset: Config.asset_cfg) ->
+          let strategy = match asset.strategy with
+            | Config.Grid -> State.Grid
+            | Config.Orderbook -> State.Orderbook
+          in
+          State.update_global_strategy_assignment asset.symbol strategy
+        ) runtime_cfg.assets;
         
         let api_key = 
           match Sys.getenv_opt "KRAKEN_API_KEY" with 

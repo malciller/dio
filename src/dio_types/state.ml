@@ -1,29 +1,19 @@
-(* src/dio_state/state.ml *)
+(* src/dio_types/state.ml *)
 
-
-open Dio_types
 module SMap = Map.Make(String)
 
 let section = Lwt_log_core.Section.make "dio_state"
-
-type strategy_type =
-  | Grid
-  | Orderbook
-  | Arbitrage
-  | Monitor
 
 type t = {
   pending_orders: int SMap.t;
   trades_executed: Int64.t SMap.t;
   current_prices: Primitives.Price.t SMap.t;
-  strategy_assignments: strategy_type SMap.t;
 }
 
 let initial = {
   pending_orders = SMap.empty;
   trades_executed = SMap.empty;
   current_prices = SMap.empty;
-  strategy_assignments = SMap.empty;
 }
 
 let inc_pending asset state =
@@ -54,23 +44,3 @@ let update_price symbol price state =
   { state with current_prices }
 
 let get_price symbol state = SMap.find_opt symbol state.current_prices
-
-(* Global state instance for shared access *)
-let global_state = ref initial
-
-let update_global_price symbol price =
-  global_state := update_price symbol price !global_state
-
-let get_global_price symbol = get_price symbol !global_state
-
-let update_strategy_assignment symbol strategy state =
-  let strategy_assignments = SMap.add symbol strategy state.strategy_assignments in
-  { state with strategy_assignments }
-
-let update_global_strategy_assignment symbol strategy =
-  global_state := update_strategy_assignment symbol strategy !global_state
-
-let get_strategy_assignment symbol state =
-  SMap.find_opt symbol state.strategy_assignments
-
-let get_global_strategy_assignment symbol = get_strategy_assignment symbol !global_state
