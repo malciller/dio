@@ -594,7 +594,7 @@ module State = struct
           info_f ~section
             "Loaded existing order %s for %s" order_id symbol_str
         ) else (
-          warning_f ~section
+            info_f ~section
             "Order %s not for grid strategy symbol, skipping" order_id
         )
       in

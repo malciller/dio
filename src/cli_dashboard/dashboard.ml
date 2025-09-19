@@ -263,10 +263,11 @@ let row_of_asset asset frame =
 
 type balance_info = {
   asset: string;
-  total_balance: float;
+  total_balance: float; (* spot + earn + liquid *)
+  reconciliation_balance: float; (* spot + earn *)
   total_value_usd: float;
-  accumulated_balance: float;
-  accumulated_value_usd: float;
+  accumulated_balance: float; (* earn + spot_available *)
+  accumulated_value_usd: float; (* USD value of earn + spot_available (excluding liquid and pending orders) *)
   unrealized_value_usd: float;
 }
 
@@ -320,8 +321,7 @@ let compare_assets a b =
   compare (get_priority a) (get_priority b)
 
 let get_balance_info () : balance_info list Lwt.t =
-
-  Kraken.Kraken_balances.wait_for_balances () >>= fun balances ->
+  Kraken.Kraken_balances.wait_for_balances () >>= fun (spot_balances, earn_balances, liquid_balances, _) ->
   let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
   let on_sell_orders : (string, Kraken.Kraken_common_types.order list) Hashtbl.t = Hashtbl.create 16 in
   let get_base_asset s =
@@ -336,8 +336,15 @@ let get_balance_info () : balance_info list Lwt.t =
     | _ -> ()
   ) open_orders;
 
-  let balance_info_list_lwt = Hashtbl.fold (fun asset total_balance acc_lwt ->
-    acc_lwt >>= fun acc ->
+  let all_assets =
+    let keyset = ref StringSet.empty in
+    Hashtbl.iter (fun k _ -> keyset := StringSet.add k !keyset) spot_balances;
+    Hashtbl.iter (fun k _ -> keyset := StringSet.add k !keyset) earn_balances;
+    Hashtbl.iter (fun k _ -> keyset := StringSet.add k !keyset) liquid_balances;
+    StringSet.elements !keyset
+  in
+
+  let balance_info_list_lwt = Lwt_list.fold_left_s (fun acc asset ->
     let price_usd_lwt =
       if asset = "USD" || asset = "USDT" || asset = "USDC" then Lwt.return_some 1.0
       else
@@ -354,25 +361,29 @@ let get_balance_info () : balance_info list Lwt.t =
     price_usd_lwt >|= function
     | None -> acc
     | Some price_usd ->
+        let spot_balance = Hashtbl.find_opt spot_balances asset |> Option.value ~default:0.0 in
+        let earn_balance = Hashtbl.find_opt earn_balances asset |> Option.value ~default:0.0 in
+        let liquid_balance = Hashtbl.find_opt liquid_balances asset |> Option.value ~default:0.0 in
+
+
+        let total_balance = spot_balance +. earn_balance +. liquid_balance in
         if total_balance < 0.000001 then acc else
+
+        let reconciliation_balance = spot_balance +. earn_balance in
+        let total_value_usd = total_balance *. price_usd in
+
         let sell_orders_for_asset = Option.value ~default:[] (Hashtbl.find_opt on_sell_orders asset) in
         let on_orders_balance = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. o.qty) 0.0 sell_orders_for_asset in
 
-        (* Use transaction history for better cost basis calculation *)
-        let accumulated_cost_opt = Transaction_history.get_accumulated_cost asset (total_balance -. on_orders_balance) in
+        let spot_available = max 0.0 (spot_balance -. on_orders_balance) in
+        let pnl_accumulated_balance = spot_available +. earn_balance in
 
-        let accumulated_balance = total_balance -. on_orders_balance in
-
-        (* Calculate accumulated value using cost basis if available, otherwise fallback to current price
-           USD accumulated value must always be 0.0 regardless of cost basis or price. *)
+        (* Calculate accumulated value exactly like Python: spot_available + earn_balance (excluding liquid and pending orders) *)
+        let accumulated_balance = spot_available +. earn_balance in
         let accumulated_value_usd =
           if asset = "USD" then 0.0
-          else (
-            match accumulated_cost_opt with
-            | Some cost -> cost
-            | None -> accumulated_balance *. price_usd
-          )
-        in
+          else accumulated_balance *. price_usd in
+
 
         (* Calculate unrealized value based on pending sell orders *)
         let unrealized_value_usd =
@@ -380,9 +391,9 @@ let get_balance_info () : balance_info list Lwt.t =
           let highest_sell_price = List.fold_left (fun max_p (o:Kraken.Kraken_common_types.order) -> max max_p o.limit_price) 0.0 sell_orders_for_asset in
           let unrealized_value_accumulated =
             if highest_sell_price > 0.0 then
-              accumulated_balance *. highest_sell_price
+              pnl_accumulated_balance *. highest_sell_price
             else
-              accumulated_balance *. price_usd
+              pnl_accumulated_balance *. price_usd
           in
           unrealized_value_on_orders +. unrealized_value_accumulated
         in
@@ -390,13 +401,14 @@ let get_balance_info () : balance_info list Lwt.t =
         let info = {
           asset;
           total_balance;
-          total_value_usd = total_balance *. price_usd;
-          accumulated_balance;
+          reconciliation_balance;
+          total_value_usd;
+          accumulated_balance = pnl_accumulated_balance;
           accumulated_value_usd;
           unrealized_value_usd;
         } in
         info :: acc
-  ) balances (Lwt.return [])
+  ) [] all_assets
   in
 
   balance_info_list_lwt >|= fun balance_info_list ->
@@ -772,14 +784,6 @@ let start ~on_quit:(on_quit: unit -> unit Lwt.t) () : Notty_lwt.Term.t =
       Lwt.return_unit
     ) >>= fun () ->
 
-    (* Periodic balance reconciliation (every 60 seconds / 60 frames) *)
-    (if new_frame mod 60 = 0 then
-      Lwt_list.iter_s (fun balance_info ->
-        Dio_types.Transaction_history.reconcile_balance balance_info.asset balance_info.total_balance
-      ) balances
-    else
-      Lwt.return_unit
-    ) >>= fun () ->
 
     Notty_lwt.Term.image term_instance (render !state) >>= fun () ->
     Lwt.pause () >>= fun () ->

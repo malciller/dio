@@ -168,56 +168,7 @@ let get_unrealized_pnl asset current_balance current_price_usd =
       Some (current_value -. cost_basis_value)
   | None -> None
 
-(* Reconcile balance discrepancies *)
-let reconcile_balance asset current_balance =
-  let transactions = get_transactions asset in
-  let expected_balance = List.fold_left (fun acc tx -> acc +. tx.amount) 0.0 transactions in
-  let discrepancy = current_balance -. expected_balance in
 
-  if abs_float discrepancy > 0.000001 then (
-    if discrepancy > 0.0 then (
-      Lwt_log_core.warning ~section
-        (Printf.sprintf "Balance reconciliation needed for %s: current=%.8f expected=%.8f discrepancy=%.8f (adding positive adjustment)"
-           asset current_balance expected_balance discrepancy) >>= fun () ->
-
-      (* Create positive adjustment transaction *)
-      let adjustment_tx = {
-        id = Id.gen ();
-        asset;
-        amount = discrepancy;
-        timestamp = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-        transaction_type = Adjustment;
-        cost_basis = None;
-        total_cost = None;
-        balance_after = current_balance;
-      } in
-      add_transaction adjustment_tx >>= fun () ->
-      Lwt_log_core.info ~section
-        (Printf.sprintf "Created positive adjustment for %s: %.8f" asset discrepancy)
-    ) else (
-      Lwt_log_core.warning ~section
-        (Printf.sprintf "Negative discrepancy detected for %s: current=%.8f expected=%.8f discrepancy=%.8f (adding negative adjustment)"
-           asset current_balance expected_balance discrepancy) >>= fun () ->
-      let adjustment_tx = {
-        id = Id.gen ();
-        asset;
-        amount = discrepancy;
-        timestamp = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-        transaction_type = Adjustment;
-        cost_basis = None;
-        total_cost = None;
-        balance_after = current_balance;
-      } in
-      add_transaction adjustment_tx >>= fun () ->
-      Lwt_log_core.info ~section
-        (Printf.sprintf "Created negative adjustment for %s: %.8f" asset discrepancy)
-    )
-  ) else (
-    Lwt_log_core.debug ~section
-      (Printf.sprintf "Balance reconciliation for %s: OK (current=%.8f expected=%.8f)"
-         asset current_balance expected_balance) >>= fun () ->
-    Lwt.return_unit
-  )
 
 (* Get balance summary for reconciliation *)
 let get_balance_summary asset =

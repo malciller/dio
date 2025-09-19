@@ -65,7 +65,7 @@ module State = struct
 
   (** Fetch and update the USD balance from Kraken. *)
   let refresh_usd_balance () =
-    K.Kraken_balances.wait_for_balances () >>= fun balances ->
+    Kraken.Kraken_balances.wait_for_balances () >>= fun (_, _, _, balances) ->
     let z_usd_balance = Hashtbl.find_opt balances "ZUSD" |> Option.value ~default:0.0 in
     let usd_balance_val = Hashtbl.find_opt balances "USD" |> Option.value ~default:0.0 in
     let new_balance = z_usd_balance +. usd_balance_val in
