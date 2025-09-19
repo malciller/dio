@@ -3,18 +3,18 @@
 [![OCaml](https://img.shields.io/badge/Language-OCaml-blue.svg)](https://ocaml.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A high-performance, real-time cryptocurrency trading engine built in OCaml. Dio connects to the Kraken exchange via WebSocket and REST APIs to execute automated trading strategies with live market data. 
+An OCaml-based cryptocurrency trading engine for Kraken. It connects via WebSocket and REST APIs to execute automated trading strategies. 
 
 ## Features
 
-- **Real-time Trading**: WebSocket connections for live price feeds and instant order execution
-- **Multiple Strategies**: Grid trading, top-level orderbook market making, and price arbitrage
-- **Terminal Dashboard**: Real-time CLI interface with price visualization and order tracking
-- **Discord Notification**: Real-time order fulfillment notifications via discord webhook
-- **Modular Architecture**: Clean separation between strategies, routing, and data feeds
-- **Configuration-Driven**: JSON-based configuration for easy strategy deployment
-- **Robust Infrastructure**: Comprehensive logging, error handling, and retry mechanisms
-- **Kraken Integration**: Full API integration with authentication and order management
+- **Real-time Trading**: WebSocket connections for live price feeds and order execution.
+- **Multiple Trading Strategies**: Grid, orderbook market making, and an arbitrage engine for multi-leg cycles and single-pair spreads.
+- **Terminal Dashboard**: A CLI for price visualization and order tracking.
+- **Discord Notification**: Order fulfillment notifications via Discord webhook.
+- **Modular Architecture**: Separation between strategies, routing, and data feeds.
+- **JSON Configuration**: Strategy configuration via JSON files.
+- **Infrastructure**: Logging, error handling, and retry mechanisms.
+- **Kraken Integration**: Manages authentication, order execution, and data feeds via REST and WebSocket APIs.
 
 ## Requirements
 
@@ -76,26 +76,21 @@ Edit `_config.json`:
 ## Trading Strategies
 
 ### Grid Strategy
-Creates a dynamic grid of buy/sell orders around current market price:
-- **Adaptive**: Automatically adjusts order spacing based on market conditions
-- **Profit-Taking**: Configurable multipliers for sell orders
-- **Risk Management**: Position sizing based on portfolio value
-- **Ideal for**: Ranging markets and volatility harvesting
+Maintains a grid of buy and sell orders around the market price.
+- **Adaptive Spacing**: Adjusts order distance based on market price movements.
+- **Profit-Taking**: Configurable multipliers for sell orders.
+- **Risk Management**: Configurable order quantities for position control.
 
 ### Orderbook Strategy
-Market making at the top of the orderbook:
-- **High Frequency**: Maintains orders at best bid/ask prices
-- **Tight Spreads**: Minimizes slippage with optimal positioning
-- **Volume Management**: Dynamic quantity adjustment
-- **Ideal for**: High-liquidity pairs with competitive fees
+Places orders at the top of the orderbook bid/ask.
+- **Top-of-Book**: Maintains orders at the best bid and ask.
+- **Volume Management**: Uses fixed order quantities from configuration.
 
 ### Arbitrage Strategy
 Detects and executes multi-leg arbitrage opportunities across different trading pairs. This strategy runs automatically on all assets defined in `_config.json` and does not need to be assigned to a specific asset.
-- **Graph-Based Detection**: Builds a real-time graph of all available assets to find profitable cycles.
-- **Bellman-Ford Algorithm**: Uses an optimized Bellman-Ford algorithm to efficiently identify arbitrage opportunities from price discrepancies.
+- **Hybrid Cycle Detection**: Uses a fast triangle arbitrage algorithm and Bellman-Ford for longer cycles.
+- **Spread Capture**: Identifies and trades profitable spreads on single pairs.
 - **Liquidity Aware**: Calculates trade sizes based on available order book depth and current balances to minimize slippage and ensure execution.
-- **Automated Execution**: Submits a rapid sequence of orders to execute all legs of a profitable cycle.
-- **Ideal for**: Exploiting short-lived, cross-pair mispricings in real-time.
 
 ## Architecture
 
@@ -121,11 +116,11 @@ Detects and executes multi-leg arbitrage opportunities across different trading 
 
 ### Core Components
 
-- **Engine**: Central orchestration managing strategy execution and data flow
-- **Strategies**: Pluggable trading logic implementations
-- **Router**: Order execution and Kraken API communication layer
-- **Feed**: Real-time market data ingestion via WebSocket
-- **Dashboard**: Terminal-based monitoring and control interface
+- **Engine**: Manages strategy execution and data flow.
+- **Strategies**: Implementations of trading logic.
+- **Router**: Handles order execution and Kraken API communication.
+- **Feed**: Ingests market data from WebSockets.
+- **Dashboard**: A CLI for monitoring.
 
 ## Configuration Reference
 
@@ -200,14 +195,14 @@ dune build @doc
 
 ## Monitoring & Logging
 
-Dio provides comprehensive logging at multiple levels:
+Logs are categorized by level:
 
 - **Debug**: Detailed execution tracing
 - **Info**: Strategy decisions and order executions
 - **Warning**: Recoverable errors and rate limit hits
 - **Error**: Critical failures requiring attention
 
-Logs are timestamped and categorized by component for easy debugging.
+Logs are timestamped and categorized by component.
 
 ## Risk Management
 
@@ -243,8 +238,8 @@ We welcome contributions! Please:
 
 ## Acknowledgments
 
-- Built with [OCaml](https://ocaml.org/) and modern functional programming
-- Powered by [LWT](https://github.com/ocsigen/lwt) for concurrency
+- [OCaml](https://ocaml.org/)
+- [LWT](https://github.com/ocsigen/lwt) for concurrency
 
 ## Support & Contact
 
