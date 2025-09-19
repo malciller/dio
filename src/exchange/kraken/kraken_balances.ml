@@ -7,6 +7,9 @@ open Dio_types
 (* Ringbuffer for balance updates to prevent race conditions *)
 let balance_update_queue : (string * Yojson.Safe.t) Ringbuffer.t = Ringbuffer.create 1000
 
+(* Ringbuffer for fill events to prevent race conditions *)
+let fill_event_queue : Event.fill Ringbuffer.t = Ringbuffer.create 1000
+
 let section = Section.make "kraken.balances"
 
 (* In-memory store for balances *)
@@ -232,13 +235,96 @@ let process_balance_update_from_queue () =
         in
         Transaction_history.add_transaction final_tx
 
+(* Process fill events from the ringbuffer *)
+let process_fill_event_from_queue () =
+  Ringbuffer.pop fill_event_queue >>= fun fill ->
+  let open Event in
+  debug_f ~section "Processing fill event for %s from ringbuffer" fill.symbol >>= fun () ->
+
+  let base_tx = Transaction_history.transaction_from_fill fill in
+
+  let base_asset, quote_asset_opt =
+    try
+      let idx = String.index fill.symbol '/' in
+      let base = String.sub fill.symbol 0 idx in
+      let quote = String.sub fill.symbol (idx + 1) (String.length fill.symbol - idx - 1) in
+      (base, Some quote)
+    with Not_found -> (fill.symbol, None)
+  in
+
+  (* Update base asset spot balance *)
+  let old_base_balance = Hashtbl.find_opt spot_balances base_asset |> Option.value ~default:0.0 in
+  let new_base_spot_balance = old_base_balance +. base_tx.amount in
+  Hashtbl.replace spot_balances base_asset new_base_spot_balance;
+
+  (* Recalculate aggregated balance for base asset *)
+  let base_earn_balance = Hashtbl.find_opt earn_balances base_asset |> Option.value ~default:0.0 in
+  let new_base_total_balance = new_base_spot_balance +. base_earn_balance in
+  Hashtbl.replace balances base_asset new_base_total_balance;
+
+  let updated_base_tx = { base_tx with
+    asset = base_asset;
+    balance_after = new_base_total_balance;
+  } in
+  let%lwt _ = Transaction_history.add_transaction updated_base_tx in
+
+  (match quote_asset_opt with
+  | Some quote_asset ->
+      let qty_float = float_of_string (Primitives.Qty.to_string fill.qty) in
+      let price_float = float_of_string (Primitives.Price.to_string fill.price) in
+      let quote_amount = qty_float *. price_float in
+      let quote_tx_amount = match fill.side with
+        | `Buy -> -.quote_amount
+        | `Sell -> quote_amount
+      in
+
+      (* Update quote asset spot balance *)
+      let old_quote_balance = Hashtbl.find_opt spot_balances quote_asset |> Option.value ~default:0.0 in
+      let new_quote_spot_balance = old_quote_balance +. quote_tx_amount in
+      Hashtbl.replace spot_balances quote_asset new_quote_spot_balance;
+
+      (* Recalculate aggregated balance for quote asset *)
+      let quote_earn_balance = Hashtbl.find_opt earn_balances quote_asset |> Option.value ~default:0.0 in
+      let new_quote_total_balance = new_quote_spot_balance +. quote_earn_balance in
+      Hashtbl.replace balances quote_asset new_quote_total_balance;
+
+      let quote_tx = {
+        Primitives.id = Primitives.Id.gen ();
+        asset = quote_asset;
+        amount = quote_tx_amount;
+        timestamp = fill.ts;
+        transaction_type = Primitives.Trade {
+          order_id = fill.order_id;
+          side = fill.side;
+          price = fill.price;
+          qty = fill.qty;
+        };
+        cost_basis = None;
+        total_cost = None;
+        balance_after = new_quote_total_balance;
+      } in
+      let%lwt _ = Transaction_history.add_transaction quote_tx in
+      Lwt.return_unit
+  | None -> Lwt.return_unit
+  ) >>= fun () ->
+   debug_f ~section "Processed fill event for %s: %s %.8f @ %s"
+     fill.symbol
+     (match fill.side with `Buy -> "BUY" | `Sell -> "SELL")
+     (float_of_string (Primitives.Qty.to_string fill.qty))
+     (Primitives.Price.to_string fill.price)
+
 (* Start the balance update processor *)
 let start_balance_update_processor () =
-  let rec process_loop () =
+  let rec balance_loop () =
     process_balance_update_from_queue () >>= fun () ->
-    process_loop ()
+    balance_loop ()
   in
-  Lwt.async process_loop
+  let rec fill_loop () =
+    process_fill_event_from_queue () >>= fun () ->
+    fill_loop ()
+  in
+  Lwt.async balance_loop;
+  Lwt.async fill_loop
 
 let handle_balances_message msg =
   Lwt.catch (fun () ->
@@ -323,77 +409,9 @@ let initialize_ws_balances_feed (cfg : Config.engine_config) (token : string) =
 
 (* Handle fill events from trading *)
 let handle_fill_event fill =
-  let base_tx = Transaction_history.transaction_from_fill fill in
-
-  let base_asset, quote_asset_opt =
-    try
-      let idx = String.index fill.symbol '/' in
-      let base = String.sub fill.symbol 0 idx in
-      let quote = String.sub fill.symbol (idx + 1) (String.length fill.symbol - idx - 1) in
-      (base, Some quote)
-    with Not_found -> (fill.symbol, None)
-  in
-
-  (* Update base asset spot balance *)
-  let old_base_balance = Hashtbl.find_opt spot_balances base_asset |> Option.value ~default:0.0 in
-  let new_base_spot_balance = old_base_balance +. base_tx.amount in
-  Hashtbl.replace spot_balances base_asset new_base_spot_balance;
-
-  (* Recalculate aggregated balance for base asset *)
-  let base_earn_balance = Hashtbl.find_opt earn_balances base_asset |> Option.value ~default:0.0 in
-  let new_base_total_balance = new_base_spot_balance +. base_earn_balance in
-  Hashtbl.replace balances base_asset new_base_total_balance;
-
-  let updated_base_tx = { base_tx with
-    asset = base_asset;
-    balance_after = new_base_total_balance;
-  } in
-  let%lwt _ = Transaction_history.add_transaction updated_base_tx in
-
-  (match quote_asset_opt with
-  | Some quote_asset ->
-      let qty_float = float_of_string (Primitives.Qty.to_string fill.qty) in
-      let price_float = float_of_string (Primitives.Price.to_string fill.price) in
-      let quote_amount = qty_float *. price_float in
-      let quote_tx_amount = match fill.side with
-        | `Buy -> -.quote_amount
-        | `Sell -> quote_amount
-      in
-
-      (* Update quote asset spot balance *)
-      let old_quote_balance = Hashtbl.find_opt spot_balances quote_asset |> Option.value ~default:0.0 in
-      let new_quote_spot_balance = old_quote_balance +. quote_tx_amount in
-      Hashtbl.replace spot_balances quote_asset new_quote_spot_balance;
-
-      (* Recalculate aggregated balance for quote asset *)
-      let quote_earn_balance = Hashtbl.find_opt earn_balances quote_asset |> Option.value ~default:0.0 in
-      let new_quote_total_balance = new_quote_spot_balance +. quote_earn_balance in
-      Hashtbl.replace balances quote_asset new_quote_total_balance;
-
-      let quote_tx = {
-        Primitives.id = Primitives.Id.gen ();
-        asset = quote_asset;
-        amount = quote_tx_amount;
-        timestamp = fill.ts;
-        transaction_type = Primitives.Trade {
-          order_id = fill.order_id;
-          side = fill.side;
-          price = fill.price;
-          qty = fill.qty;
-        };
-        cost_basis = None;
-        total_cost = None;
-        balance_after = new_quote_total_balance;
-      } in
-      let%lwt _ = Transaction_history.add_transaction quote_tx in
-      Lwt.return_unit
-  | None -> Lwt.return_unit
-  ) >>= fun () ->
-   debug_f ~section "Processed fill event for %s: %s %.8f @ %s"
-     fill.symbol
-     (match fill.side with `Buy -> "BUY" | `Sell -> "SELL")
-     (float_of_string (Primitives.Qty.to_string fill.qty))
-     (Primitives.Price.to_string fill.price)
+  (* Push fill event to ringbuffer for ordered processing *)
+  Ringbuffer.push fill_event_queue fill >>= fun () ->
+  debug_f ~section "Pushed fill event for %s to ringbuffer" fill.symbol
 
 (* Initialize transaction history from current balances *)
 let initialize_transaction_history () =
