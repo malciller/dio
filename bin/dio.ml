@@ -1,9 +1,9 @@
 open Lwt.Infix
 open Conduit_lwt_unix
 open Dio_types
-open Dashboard 
-open Engine
 open Lwt_log_core 
+
+
 
 let mode_dash = ref false
 
@@ -40,7 +40,7 @@ let setup_logging () =
                 (string_of_level level) 
                 first_message_string
             in
-            Stats.add_dashboard_log formatted_message;
+            Dashboard.Stats.add_dashboard_log formatted_message;
             Lwt.return_unit
           else
             Lwt.return_unit
@@ -115,6 +115,9 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
           in
           State.update_global_strategy_assignment asset.symbol strategy
         ) runtime_cfg.assets;
+
+        let open Dio_types.State in
+        set_symbols all_symbols;
         
         let api_key = 
           match Sys.getenv_opt "KRAKEN_API_KEY" with 
@@ -176,6 +179,12 @@ let start_engine_logic () : unit Lwt.t =
           ) >>= fun auth_token_opt ->
 
           let core_cfg = { core_cfg with auth_token = auth_token_opt } in
+          Lwt.return_unit >>= fun () ->
+
+          (* Initialize the Kraken balances WebSocket feed *)
+          (match auth_token_opt with
+          | Some token -> Kraken.Kraken_balances.initialize_ws_balances_feed core_cfg token
+          | None -> ());
           Lwt.return_unit >>= fun () ->
 
           let grid_strategy : Core.grid_strategy = {

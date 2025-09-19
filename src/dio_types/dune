@@ -1,7 +1,7 @@
 (library
  (name dio_types)
  (public_name dio.dio_types)
- (modules primitives core event config ringbuffer)
+ (modules primitives core event config ringbuffer state)
  (preprocess
   (pps ppx_deriving_yojson))
  (libraries yojson ppx_deriving_yojson lwt lwt_log))

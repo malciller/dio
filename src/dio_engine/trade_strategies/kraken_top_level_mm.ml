@@ -64,12 +64,16 @@ module State = struct
   let usd_balance : float ref = ref 0.0
 
   (** Fetch and update the USD balance from Kraken. *)
-  let refresh_usd_balance (core_cfg : Config.engine_config) =
-    K.Kraken_balances.get_account_balance core_cfg >>= fun balances ->
+  let refresh_usd_balance () =
+    K.Kraken_balances.get_account_balance () >>= fun balances ->
     let z_usd_balance = Hashtbl.find_opt balances "ZUSD" |> Option.value ~default:0.0 in
     let usd_balance_val = Hashtbl.find_opt balances "USD" |> Option.value ~default:0.0 in
-    usd_balance := z_usd_balance +. usd_balance_val;
-    info_f ~section "Refreshed USD balance: %.2f" !usd_balance
+    let new_balance = z_usd_balance +. usd_balance_val in
+    usd_balance := new_balance;
+    if Hashtbl.length balances = 0 then
+      warning_f ~section "No balance data received from WebSocket, USD balance may be stale: %.2f" new_balance
+    else
+      info_f ~section "Refreshed USD balance: %.2f (from %d balance entries)" new_balance (Hashtbl.length balances)
 
   (** Check if a symbol has any open buy orders.
 
@@ -461,13 +465,13 @@ end
     @param exec_buffer Buffer for receiving order execution confirmations
     @return Never returns (infinite processing loops)
 *)
-let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
+let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
   info_f ~section "Starting orderbook market making strategy" >>= fun () ->
 
   K.Kraken_incoming_data.wait_for_snapshot () >>= fun () ->
   K.Kraken_incoming_data.wait_for_instruments () >>= fun () ->
 
-  State.refresh_usd_balance core_cfg >>= fun () ->
+  State.refresh_usd_balance () >>= fun () ->
   State.initialize_orders runtime_cfg >>= fun () ->
 
   let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
@@ -488,7 +492,7 @@ let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Config.engine_config) ~
   let balance_refresh_interval = 300.0 in (* 5 minutes *)
   let rec balance_loop () =
     Lwt_unix.sleep balance_refresh_interval >>= fun () ->
-    State.refresh_usd_balance core_cfg >>= fun () ->
+    State.refresh_usd_balance () >>= fun () ->
     balance_loop ()
   in
 

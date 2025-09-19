@@ -257,22 +257,33 @@ let row_of_asset asset frame =
   ] in
   I.vcat [info_pane_line; ladder_pane_line]
 
+type balance_info = {
+  asset: string;
+  total_balance: float;
+  total_value_usd: float;
+  accumulated_balance: float;
+  accumulated_value_usd: float;
+  unrealized_value_usd: float;
+}
+
 type dashboard_state = {
   show_logs: bool;
   frame: int;
+  balances: balance_info list;
+  show_balances: bool;
 }
 
 let initial_state = {
   show_logs = true;
   frame = 0;
+  balances = [];
+  show_balances = true;
 }
 
 let rec intersperse sep = function
   | [] -> []
   | [x] -> [x]
   | x :: xs -> x :: sep :: intersperse sep xs
-
-let priority_assets = ["BTC/USD"; "ETH/USD"; "SOL/USD"; "ADA/USD"; "TRX/USD"]
 
 (* Get all active trading symbols from order data and strategies *)
 let get_all_active_assets () =
@@ -282,13 +293,11 @@ let get_all_active_assets () =
     |> List.map (fun order -> order.Kraken.Kraken_common_types.order_symbol)
     |> List.sort_uniq String.compare
   in
-  let all_assets = orderbook_assets @ priority_assets
+  let configured_symbols = State.get_all_symbols() in
+  let all_assets = orderbook_assets @ configured_symbols
     |> List.sort_uniq String.compare
   in
-  (* Prioritize priority_assets first, then others *)
-  let priority_set = List.fold_left (fun set asset -> StringSet.add asset set) StringSet.empty priority_assets in
-  let (priority, others) = List.partition (fun asset -> StringSet.mem asset priority_set) all_assets in
-  priority @ others
+  all_assets
 
 let find_index pred lst =
   let rec aux i = function
@@ -306,6 +315,175 @@ let compare_assets a b =
   in
   compare (get_priority a) (get_priority b)
 
+let get_balance_info () : balance_info list Lwt.t =
+  Kraken.Kraken_balances.get_account_balance () >>= fun balances ->
+  let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
+  let on_sell_orders : (string, Kraken.Kraken_common_types.order list) Hashtbl.t = Hashtbl.create 16 in
+  let get_base_asset s =
+    try String.sub s 0 (String.index s '/')
+    with Not_found -> s in
+  Hashtbl.iter (fun _order_id (order: Kraken.Kraken_common_types.order) ->
+    match order.side with
+    | Some Core.Sell ->
+        let base_asset = get_base_asset order.order_symbol in
+        let current_orders = Option.value ~default:[] (Hashtbl.find_opt on_sell_orders base_asset) in
+        Hashtbl.replace on_sell_orders base_asset (order :: current_orders)
+    | _ -> ()
+  ) open_orders;
+
+  let balance_info_list_lwt = Hashtbl.fold (fun asset total_balance acc_lwt ->
+    acc_lwt >>= fun acc ->
+    let price_usd_lwt =
+      if asset = "USD" || asset = "USDT" || asset = "USDC" then Lwt.return_some 1.0
+      else
+        let pair = asset ^ "/USD" in
+        match Stats.get_price pair with
+        | Some p -> Lwt.return_some (Float.of_string (Primitives.Price.to_string p))
+        | None ->
+            let pair_usdt = asset ^ "/USDT" in
+            match Stats.get_price pair_usdt with
+            | Some p -> Lwt.return_some (Float.of_string (Primitives.Price.to_string p))
+            | None -> Lwt.return_none
+    in
+
+    price_usd_lwt >|= function
+    | None -> acc
+    | Some price_usd ->
+        if total_balance < 0.000001 then acc else
+        let sell_orders_for_asset = Option.value ~default:[] (Hashtbl.find_opt on_sell_orders asset) in
+        let on_orders_balance = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. o.qty) 0.0 sell_orders_for_asset in
+        
+        let unrealized_value_on_orders = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. (o.qty *. o.limit_price)) 0.0 sell_orders_for_asset in
+        let accumulated_balance = total_balance -. on_orders_balance in
+        
+        let highest_sell_price = List.fold_left (fun max_p (o:Kraken.Kraken_common_types.order) -> max max_p o.limit_price) 0.0 sell_orders_for_asset in
+        let unrealized_value_accumulated =
+          if highest_sell_price > 0.0 then
+            accumulated_balance *. highest_sell_price
+          else
+            accumulated_balance *. price_usd (* Fallback to current market value if no sell orders *)
+        in
+        
+        let info = {
+          asset;
+          total_balance;
+          total_value_usd = total_balance *. price_usd;
+          accumulated_balance;
+          accumulated_value_usd = (if asset = "USD" then 0.0 else accumulated_balance *. price_usd);
+          unrealized_value_usd = unrealized_value_on_orders +. unrealized_value_accumulated;
+        } in
+        info :: acc
+  ) balances (Lwt.return [])
+  in
+
+  balance_info_list_lwt >|= fun balance_info_list ->
+  List.sort (fun b1 b2 -> compare b2.total_value_usd b1.total_value_usd) balance_info_list
+
+let render_balances_section (balances: balance_info list) term_width =
+  let open I in
+  let content_width = term_width - 4 in
+  if balances = [] then I.empty
+  else
+    let horiz_border_char_str_for_balances = "\u{2500}" in
+    let create_horizontal_fill width char_str =
+      String.concat "" (List.init (max 0 width) (fun _ -> char_str))
+    in
+
+    (* Define minimum widths *)
+    let min_asset = 8 in
+    let min_total = 14 in
+    let min_value = 14 in
+    let min_accum = 18 in
+    let min_unreal = 18 in
+
+    let num_borders = 4 in  (* 4 │ separators *)
+
+
+    let available_for_columns = content_width - num_borders in
+    let min_for_columns = min_asset + min_total + min_value + min_accum + min_unreal in
+    let extra_space = max 0 (available_for_columns - min_for_columns) in
+    let num_expandable = 4 in  (* total, value, accum, unreal *)
+    let extra_per = extra_space / num_expandable in
+    let extra_rem = extra_space mod num_expandable in
+
+    let asset_w = min_asset in
+    let total_w = min_total + extra_per + (if 1 <= extra_rem then 1 else 0) in
+    let value_w = min_value + extra_per + (if 2 <= extra_rem then 1 else 0) in
+    let accum_w = min_accum + extra_per + (if 3 <= extra_rem then 1 else 0) in
+    let unreal_w = min_unreal + extra_per + (if 4 <= extra_rem then 1 else 0) in
+
+    (* Ensure minimums if screen too small *)
+    let asset_w = max min_asset asset_w in
+    let total_w = max min_total total_w in
+    let value_w = max min_value value_w in
+    let accum_w = max min_accum accum_w in
+    let unreal_w = max min_unreal unreal_w in
+
+    (* Header *)
+    let header = I.hcat [
+      I.string style_header_border "┃ ";
+      I.string (style_highlight_text ++ A.st A.bold) (Printf.sprintf "%-*s" asset_w "Asset");
+      I.string style_header_border "│";
+      I.string style_primary_text (Printf.sprintf "%*s" total_w "Total");
+      I.string style_header_border "│";
+      I.string style_primary_text (Printf.sprintf "%*s" value_w "Value");
+      I.string style_header_border "│";
+      I.string style_primary_text (Printf.sprintf "%*s" accum_w "Accumulated Value");
+      I.string style_header_border "│";
+      I.string style_primary_text (Printf.sprintf "%*s" unreal_w "Unrealized Value");
+      I.string style_header_border " ┃";
+    ] in
+
+    let rows = List.map (fun info ->
+      let value_style = if info.total_value_usd > 100.0 then style_profit_text else style_neutral_text in
+      let unrealized_style = if info.unrealized_value_usd > info.total_value_usd then style_profit_text else style_loss_text in
+      I.hcat [
+        I.string style_header_border "┃ ";
+        I.string style_asset_name (Printf.sprintf "%-*s" asset_w info.asset);
+        I.string style_header_border "│";
+        I.string style_primary_text (Printf.sprintf "%*s" total_w (Printf.sprintf "%.8f %s" info.total_balance info.asset));
+        I.string style_header_border "│";
+        I.string value_style (Printf.sprintf "%*s" value_w (Printf.sprintf "$%.2f" info.total_value_usd));
+        I.string style_header_border "│";
+        I.string style_success_text (Printf.sprintf "%*s" accum_w (Printf.sprintf "$%.2f" info.accumulated_value_usd));
+        I.string style_header_border "│";
+        I.string unrealized_style (Printf.sprintf "%*s" unreal_w (Printf.sprintf "$%.2f" info.unrealized_value_usd));
+        I.string style_header_border " ┃";
+      ]
+    ) balances in
+
+    let total_portfolio_value = List.fold_left (fun acc b -> acc +. b.total_value_usd) 0.0 balances in
+    let total_accumulated_value = List.fold_left (fun acc b -> acc +. b.accumulated_value_usd) 0.0 balances in
+    let total_unrealized_value = List.fold_left (fun acc b -> acc +. b.unrealized_value_usd) 0.0 balances in
+
+    let total_row =
+      I.hcat [
+        I.string style_header_border "┃ ";
+        I.string (style_highlight_text ++ A.st A.bold) (Printf.sprintf "%-*s" asset_w "TOTAL");
+        I.string style_header_border "│";
+        I.string style_neutral_text (Printf.sprintf "%*s" total_w "");
+        I.string style_header_border "│";
+        I.string (style_profit_text ++ A.st A.bold) (Printf.sprintf "%*s" value_w (Printf.sprintf "$%.2f" total_portfolio_value));
+        I.string style_header_border "│";
+        I.string (style_success_text ++ A.st A.bold) (Printf.sprintf "%*s" accum_w (Printf.sprintf "$%.2f" total_accumulated_value));
+        I.string style_header_border "│";
+        I.string (style_highlight_text ++ A.st A.bold) (Printf.sprintf "%*s" unreal_w (Printf.sprintf "$%.2f" total_unrealized_value));
+        I.string style_header_border " ┃";
+      ] in
+
+    let sep = I.string style_header_border (
+      "┣" ^ create_horizontal_fill asset_w horiz_border_char_str_for_balances ^
+      "┿" ^ create_horizontal_fill total_w horiz_border_char_str_for_balances ^
+      "┿" ^ create_horizontal_fill value_w horiz_border_char_str_for_balances ^
+      "┿" ^ create_horizontal_fill accum_w horiz_border_char_str_for_balances ^
+      "┿" ^ create_horizontal_fill unreal_w horiz_border_char_str_for_balances ^
+      "┫"
+    ) in
+    let top_border = I.string style_header_border ("┏" ^ (create_horizontal_fill (term_width - 2) horiz_border_char_str_for_balances) ^ "┓") in
+    let bottom_border = I.string style_header_border ("┗" ^ (create_horizontal_fill (term_width - 2) horiz_border_char_str_for_balances) ^ "┛") in
+
+    vcat ([top_border; header; sep] @ intersperse sep rows @ [sep; total_row; bottom_border])
+
 let render state =
   let open I in
   let term_height, term_width = get_term_dimensions () in
@@ -319,16 +497,14 @@ let render state =
   let asset_rows = List.map (fun asset -> row_of_asset asset state.frame)
     (get_all_active_assets () |> List.sort compare_assets)
   in
+  let total_assets = List.length asset_rows in
+
   let dio_label_text = " Dio " in
   let dio_label_style = style_highlight_text ++ A.st A.bold in
   let dio_label_img = I.string dio_label_style dio_label_text in
-
-  (* Add performance indicator *)
-  let total_assets = List.length asset_rows in
-  let performance_indicator = I.string style_success_text (Printf.sprintf " [%d assets]" total_assets) in
+  let performance_indicator = I.string style_success_text (Printf.sprintf "[%d assets]" total_assets) in
   let left_label = I.hcat [dio_label_img; performance_indicator] in
 
-  (* Keybindings *)
   let key_bracket_style = style_keybinding_bracket in
   let key_text_style = style_keybinding_text in
   let text_style = style_header_info_text in
@@ -336,11 +512,13 @@ let render state =
       I.string key_bracket_style "["; I.string key_text_style "L"; I.string key_bracket_style "]";
       I.string text_style "ogs ";
       I.string key_bracket_style "│";
+      I.string key_bracket_style " ["; I.string key_text_style "B"; I.string key_bracket_style "]";
+      I.string text_style "alances ";
+      I.string key_bracket_style "│";
       I.string key_bracket_style " ["; I.string key_text_style "Q"; I.string key_bracket_style "]";
       I.string text_style "uit";
     ] in
 
-  (* Runtime Info *)
   let runtime_str = fmt_runtime Stats.start_ts in
   let (status_indicator, status_text) = (I.string style_success_text ">", "LIVE") in
   let runtime_img = I.hcat [
@@ -350,50 +528,6 @@ let render state =
     I.string style_neutral_text (" " ^ status_text)
   ] in
 
-  let top_asset_box_line =
-    match asset_rows with
-    | [] -> I.empty
-    | _ ->
-        let left_part = I.hcat [
-          I.string style_header_border "\u{250F}\u{2501}";
-          left_label;
-        ] in
-        let right_part = I.hcat [
-          key_bindings_img;
-          I.string style_header_border "\u{2501}\u{2513}";
-        ] in
-
-        let fixed_width = I.width left_part + I.width runtime_img + I.width right_part + 2 (* separators *) in
-        let fill_width = max 0 (term_width - fixed_width) in
-        let fill_left = fill_width / 2 in
-        let fill_right = fill_width - fill_left in
-
-        I.hcat [
-          left_part;
-          I.string style_header_border (create_horizontal_fill fill_left horiz_border_char_str);
-          I.string style_header_border " ";
-          runtime_img;
-          I.string style_header_border " ";
-          I.string style_header_border (create_horizontal_fill fill_right horiz_border_char_str);
-          right_part;
-        ]
-  in
-  let inter_asset_box_line =
-    I.string style_header_border (Printf.sprintf "\u{2523}%s\u{252B}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))
-  in
-  let bottom_asset_box_line = 
-    match asset_rows with
-    | [] -> I.empty
-    | _ -> I.string style_header_border (Printf.sprintf "\u{2517}%s\u{251B}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))
-  in
-  let asset_rows_section_with_boxing = 
-    match asset_rows with
-    | [] -> I.empty
-    | _ -> 
-        let interspersed_rows = intersperse inter_asset_box_line asset_rows in
-        I.vcat ([top_asset_box_line] @ interspersed_rows @ [bottom_asset_box_line])
-  in
-  (* Strategy Status Summary *)
   let get_strategy_assets strategy_type =
     let all_assets = get_all_active_assets () in
     List.filter (fun asset ->
@@ -412,7 +546,8 @@ let render state =
       try String.sub s 0 (String.index s '/')
       with Not_found -> s
     in
-    String.concat "," (List.map get_base_asset assets)
+    let formatted_list = List.map get_base_asset assets in
+    String.concat "," formatted_list
   in
 
   let grid_str = if grid_assets <> [] then
@@ -421,84 +556,126 @@ let render state =
   let orderbook_str = if orderbook_assets <> [] then
     Printf.sprintf "MM[%s]" (format_asset_list orderbook_assets)
   else "" in
-  let arbitrage_str = if arbitrage_assets <> [] then "ARB[ALL]" else "" in
+  let arbitrage_str = if arbitrage_assets <> [] then
+    Printf.sprintf "ARB[%s]" (format_asset_list arbitrage_assets)
+  else "" in
 
   let active_parts = List.filter (fun s -> s <> "") [grid_str; orderbook_str; arbitrage_str] in
   let strategy_status = I.string style_highlight_text ("Active Strategies: " ^ String.concat " • " active_parts) in
-  let strategy_section = I.hcat [
-    I.string style_header_border "┃ ";
-    strategy_status;
-    void (content_width - I.width strategy_status) 1;
-    I.string style_header_border " ┃";
+
+  let header_components = [left_label; runtime_img; strategy_status; key_bindings_img] in
+  let separator = I.string style_header_border " │ " in
+  let header_content = I.hcat (intersperse separator header_components) in
+  let inner_width = term_width - 2 in
+  let content_w = I.width header_content in
+  let fill_w = max 0 (inner_width - content_w) in
+  let new_header = hcat [
+    I.string style_header_border "┏";
+    header_content;
+    I.string style_header_border (create_horizontal_fill fill_w horiz_border_char_str);
+    I.string style_header_border "┓";
   ] in
 
-  let new_asset_rows_height = height asset_rows_section_with_boxing in
-  let strategy_section_height = height strategy_section in
-  let logs_height =
-    if state.show_logs then
-      let height_of_content_above_logs = new_asset_rows_height + strategy_section_height in
-      max 0 (term_height - height_of_content_above_logs - 3)
-    else 0
+  let top_asset_box_line = 
+    I.string style_header_border (Printf.sprintf "\u{250F}%s\u{2513}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))
   in
-  let logs_section_image = 
-    if not state.show_logs || logs_height <= 0 then void 0 0
+  let inter_asset_box_line =
+    I.string style_header_border (Printf.sprintf "\u{2523}%s\u{252B}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))
+  in
+  let bottom_asset_box_line = 
+    match asset_rows with
+    | [] -> I.empty
+    | _ -> I.string style_header_border (Printf.sprintf "\u{2517}%s\u{251B}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))
+  in
+  let asset_rows_section_with_boxing = 
+    match asset_rows with
+    | [] -> I.empty
+    | _ -> 
+        let interspersed_rows = intersperse inter_asset_box_line asset_rows in
+        I.vcat ([top_asset_box_line] @ interspersed_rows @ [bottom_asset_box_line])
+  in
+
+  let balances_section_image =
+    if state.show_balances then
+      render_balances_section state.balances term_width
     else
-      let logs_header_text = I.hcat [
-        I.string (style_logs_accent_text ++ A.st A.bold) "System Logs ";
-        I.string style_neutral_text "(";
-        I.string style_success_text (string_of_int (List.length !Stats.dashboard_logs));
-        I.string style_neutral_text " entries)"
-      ] in
-      let logs_header_img = 
-        hcat [
-          I.string style_header_border "┏━"; logs_header_text;
-          I.string style_header_border (create_horizontal_fill (term_width - (width logs_header_text) - 3) horiz_border_char_str);
-          I.string style_header_border "┓"
-        ]
-      in
-      let num_log_lines_to_take = max 0 (logs_height - height logs_header_img) in 
-      let log_messages = 
-        List.map (fun msg -> 
-          let msg_img = I.string style_primary_text msg in
-          let msg_width = width msg_img in
-          if msg_width > content_width then
-            let chars_per_line = content_width in
-            let rec wrap_text remaining_text acc =
-              if String.length remaining_text <= chars_per_line then
-                remaining_text :: acc
-              else
-                let line = String.sub remaining_text 0 chars_per_line in
-                let rest = String.sub remaining_text chars_per_line 
-                  (String.length remaining_text - chars_per_line) in
-                wrap_text rest (line :: acc)
-            in
-            let wrapped_lines = wrap_text msg [] |> List.rev in
-            vcat (List.map (fun line -> I.string style_primary_text line) wrapped_lines)
-          else
-            hcat [spr_power_pellet; I.string style_primary_text " "; msg_img; void (content_width - (width msg_img) - (width spr_power_pellet) - 1) 1]
-        ) (take num_log_lines_to_take (List.rev !Stats.dashboard_logs))
-      in
-      let logs_body_content = vcat log_messages in
-      let logs_full_content = vcat [logs_header_img; logs_body_content] in
-      let cropped_logs_content = 
-        if height logs_full_content > logs_height then 
-          vsnap ~align:`Top logs_height logs_full_content 
-        else 
-          logs_full_content 
-      in
-      if width cropped_logs_content < content_width then
-        hcat [cropped_logs_content; void (content_width - width cropped_logs_content) (height cropped_logs_content)]
-      else
-        cropped_logs_content
+      I.empty
   in
-  vcat [
-    asset_rows_section_with_boxing;
-    void content_width 1;
-    strategy_section;
-    void content_width 1;
-    logs_section_image;
-    void content_width 1;
-  ]
+  let balances_section_height = height balances_section_image in
+
+  let new_asset_rows_height = height asset_rows_section_with_boxing in
+
+  let other_height = 1 (* header *) + 1 (* void after header *) + 
+                   (if state.show_balances && state.balances <> [] then balances_section_height + 1 (* void after balances *) else  0) + 
+                   1 (* void before assets *) + new_asset_rows_height + 1 (* void after assets *) in
+let logs_height =
+  if state.show_logs then
+    max 0 (term_height - other_height)
+  else 0
+in
+
+let logs_section_image = 
+  if not state.show_logs || logs_height <= 0 then void 0 0
+  else
+    let logs_header_text = I.hcat [
+      I.string (style_logs_accent_text ++ A.st A.bold) "System Logs ";
+      I.string style_neutral_text "(";
+      I.string style_success_text (string_of_int (List.length !Stats.dashboard_logs));
+      I.string style_neutral_text " entries)"
+    ] in
+    let logs_header_img = 
+      hcat [
+        I.string style_header_border "┏━"; logs_header_text;
+        I.string style_header_border (create_horizontal_fill (term_width - (width logs_header_text) - 3) horiz_border_char_str);
+        I.string style_header_border "┓"
+      ]
+    in
+    let logs_header_h = height logs_header_img in
+    let num_log_lines_to_take = max 0 (logs_height - logs_header_h) in 
+    let log_messages = 
+      List.map (fun msg -> 
+        let msg_img = I.string style_primary_text msg in
+        let msg_width = width msg_img in
+        if msg_width > content_width then
+          let chars_per_line = content_width in
+          let rec wrap_text remaining_text acc =
+            if String.length remaining_text <= chars_per_line then
+              remaining_text :: acc
+            else
+              let line = String.sub remaining_text 0 chars_per_line in
+              let rest = String.sub remaining_text chars_per_line 
+                (String.length remaining_text - chars_per_line) in
+              wrap_text rest (line :: acc)
+          in
+          let wrapped_lines = wrap_text msg [] |> List.rev in
+          vcat (List.map (fun line -> I.string style_primary_text line) wrapped_lines)
+        else
+          hcat [spr_power_pellet; I.string style_primary_text " "; msg_img; void (content_width - (width msg_img) - (width spr_power_pellet) - 1) 1]
+      ) (take num_log_lines_to_take (List.rev !Stats.dashboard_logs))
+    in
+    let logs_body_content = vcat log_messages in
+    let logs_full_content = vcat [logs_header_img; logs_body_content] in
+    let cropped_logs_content = 
+      if height logs_full_content > logs_height then 
+        vsnap ~align:`Top logs_height logs_full_content 
+      else 
+        logs_full_content 
+    in
+    if width cropped_logs_content < content_width then
+      hcat [cropped_logs_content; void (content_width - width cropped_logs_content) (height cropped_logs_content)]
+    else
+      cropped_logs_content
+in
+vcat [
+  new_header;
+  void term_width 1;
+  balances_section_image;
+  (if state.show_balances && state.balances <> [] then void term_width 1 else I.empty);
+  asset_rows_section_with_boxing;
+  void term_width 1;
+  logs_section_image;
+  void term_width 1
+]
 
 (* ─── loop ────────────────────────────────────────────────── *)
 let start ~on_quit:(on_quit: unit -> unit Lwt.t) () : Notty_lwt.Term.t =
@@ -510,11 +687,15 @@ let start ~on_quit:(on_quit: unit -> unit Lwt.t) () : Notty_lwt.Term.t =
         Lwt.return_unit
     | `Key (`ASCII 'q', []) | `Key (`ASCII 'Q', []) ->
         on_quit ()
+    | `Key (`ASCII 'b', []) | `Key (`ASCII 'B', []) ->
+        state := { !state with show_balances = not !state.show_balances };
+        Lwt.return_unit
     | _ -> Lwt.return_unit
   in
   let rec tick () =
+    get_balance_info () >>= fun balances ->
     let new_frame = !state.frame + 1 in
-    state := { !state with frame = new_frame };
+    state := { !state with frame = new_frame; balances };
     Notty_lwt.Term.image term_instance (render !state) >>= fun () ->
     Lwt.pause () >>= fun () ->
     let sleep_time = 1.0 in

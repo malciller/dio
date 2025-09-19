@@ -38,7 +38,7 @@ let start ~(feed_initializer_fn : unit -> unit Lwt.t)
   let orderbook_strat_fut = supervise "orderbook_strategy" (fun () -> orderbook_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
   let arbitrage_strat_fut = supervise "arbitrage_strategy" (fun () -> arbitrage_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
   let router_fut = supervise "router" (fun () -> router.start core_cfg ~cmd_buffer ~exec_buffer) in
-  let balance_fetcher = Kraken.Kraken_balances.get_account_balance in
+  let balance_fetcher _ = Kraken.Kraken_balances.get_account_balance () in
   let discord_webhook_fut = supervise "discord_webhook" (fun () -> Discord_webhook.start balance_fetcher core_cfg) in
 
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.supervisor") "Starting all components under supervision..." >>= fun () ->
