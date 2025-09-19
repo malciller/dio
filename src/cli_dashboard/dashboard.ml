@@ -377,7 +377,7 @@ let get_balance_info () : balance_info list Lwt.t =
   in
 
   balance_info_list_lwt >|= fun balance_info_list ->
-  List.sort (fun b1 b2 -> compare b2.total_value_usd b1.total_value_usd) balance_info_list
+  List.sort (fun b1 b2 -> compare b1.asset b2.asset) balance_info_list
 
 let render_balances_section (balances: balance_info list) term_width =
   let open I in
