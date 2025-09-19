@@ -99,7 +99,25 @@ Detects and executes multi-leg arbitrage opportunities across different trading 
 
 ## Architecture
 
-![Dio Dashboard](image.png)
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   CLI Dashboard │    │     Engine      │    │     Router      │
+│                 │    │                 │    │                 │
+│ • Real-time UI  │◄──►│ • Orchestration │◄──►│ • Order Mgmt    │
+│ • Price Display │    │ • Buffer Mgmt   │    │ • Kraken API    │
+│ • Order Status  │    │ • Strategy Exec │    │ • REST/WS       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         └───────────────────────┼───────────────────────┘
+                                 │
+                    ┌─────────────────┐
+                    │      Feed       │
+                    │                 │
+                    │ • Market Data   │
+                    │ • WebSocket     │
+                    │ • Price Updates │
+                    └─────────────────┘
+```
 
 ### Core Components
 
@@ -140,19 +158,8 @@ Detects and executes multi-leg arbitrage opportunities across different trading 
 
 The terminal dashboard provides real-time monitoring:
 
-```
-┌─ Dio Trading Engine ──────────────────────────────┐
-│ Runtime: 02h:15m:30s  │ Status: Connected         │
-├───────────────────────────────────────────────────┤
-│ BTC/USD: $43,250.00  ▲0.5%                       │
-│ ├── Buy Orders: 3     │ Sell Orders: 2           │
-│ ├── Best Bid: $43,245 │ Best Ask: $43,255        │
-│ └─────────────────────────────────────────────────┘
-│ ETH/USD: $2,650.00   ▼0.2%                       │
-│ └── [•••••••••••••••••••••••••••••••••••••] ◇ [••] │
-└───────────────────────────────────────────────────┘
-Commands: q=quit | Press any key to refresh
-```
+![Dio Dashboard](image.png)
+
 
 **Key Features:**
 - Real-time price ladders with order visualization
