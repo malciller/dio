@@ -39,8 +39,19 @@ let start ~(feed_initializer_fn : unit -> unit Lwt.t)
   let arbitrage_strat_fut = supervise "arbitrage_strategy" (fun () -> arbitrage_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
   let router_fut = supervise "router" (fun () -> router.start core_cfg ~cmd_buffer ~exec_buffer) in
   let balance_fetcher _ =
-    Kraken.Kraken_balances.wait_for_balances () >|= fun (_, _, _, aggregated_balances) ->
-    aggregated_balances
+    Kraken.Kraken_balances.wait_for_balances () >|= fun (spot_balances, earn_balances, liquid_balances, _) ->
+    (* Combine all balances: spot + earn + liquid *)
+    let all_balances = Hashtbl.create 32 in
+    Hashtbl.iter (fun asset balance -> Hashtbl.replace all_balances asset balance) spot_balances;
+    Hashtbl.iter (fun asset balance ->
+      let current = Hashtbl.find_opt all_balances asset |> Option.value ~default:0.0 in
+      Hashtbl.replace all_balances asset (current +. balance)
+    ) earn_balances;
+    Hashtbl.iter (fun asset balance ->
+      let current = Hashtbl.find_opt all_balances asset |> Option.value ~default:0.0 in
+      Hashtbl.replace all_balances asset (current +. balance)
+    ) liquid_balances;
+    all_balances
   in
   let discord_webhook_fut = supervise "discord_webhook" (fun () -> Discord_webhook.start balance_fetcher core_cfg) in
 
