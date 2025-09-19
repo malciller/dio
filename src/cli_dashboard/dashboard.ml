@@ -67,8 +67,8 @@ let fmt_runtime start =
 
 let get_term_dimensions () =
   match Notty_unix.winsize Unix.stdout with
-  | Some (h, w) -> (max 24 h, max 80 w) 
-  | None -> (24, 80) 
+  | Some (w, h) -> (h, w)
+  | None -> (24, 80)
 
 let price_ladder ~ladder_width current_price buy_orders sell_orders frame =
   let ladder = Array.make ladder_width (I.string A.empty " ") in
@@ -316,103 +316,69 @@ let render state =
     String.concat "" (List.init (max 0 width) (fun _ -> char_str))
   in
 
-  let header =
-    let art_style = style_header_title_art in
-    let text_style = style_header_info_text in
-    let key_bracket_style = style_keybinding_bracket in
-    let key_text_style = style_keybinding_text in
-
-    let line0 = I.string art_style "     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓    " in
-    let line1 = I.hcat [
-                  I.string art_style         "     ┃  ██████╗ ██╗ ██████╗   ";
-                  I.string text_style         "ALGORITHMIC TRADING";
-                  I.string art_style         " ┃    ";
-                ]
-    in
-    let line2 = I.string art_style "     ┃  ██╔══██╗██║██╔═══██╗  ═══════════════════ ┃    " in
-    let line3 = I.hcat [
-                  I.string art_style         "     ┃  ██║  ██║██║██║   ██║  ";
-                  I.string text_style         "DIOPHANT SOLUTIONS "; 
-                  I.string art_style         " ┃    ";
-                ]
-    in
-    let line4 = I.string art_style "     ┃  ██║  ██║██║██║   ██║  ═══════════════════ ┃    " in
-    let line5_keys = I.hcat [
-                       I.string key_bracket_style "["; I.string key_text_style "L"; I.string key_bracket_style "]";
-                       I.string text_style        "ogs ";
-                       I.string key_bracket_style "│";
-                       I.string key_bracket_style        " ["; I.string key_text_style "Q"; I.string key_bracket_style "]";
-                       I.string text_style        "uit ";
-                 ]
-   in
-   let line5 = I.hcat [
-                 I.string art_style         "     ┃  ██████╔╝██║╚██████╔╝  ";
-                 line5_keys;
-                 I.string art_style         "┃    ";
-               ]
-   in
-
-   let runtime_str = fmt_runtime Stats.start_ts in
-   let (status_indicator, status_text) = (I.string style_success_text ">", "LIVE") in
-   let runtime_img = I.hcat [
-     I.string (style_logs_accent_text ++ A.st A.bold) runtime_str;
-     I.string style_neutral_text " ";
-     status_indicator;
-     I.string style_neutral_text (" " ^ status_text)
-   ] in
-   let runtime_width = I.width runtime_img in
-    let line6 =
-      let header_total_width = I.width line2 in
-      let inner_width = header_total_width - 5 - 4 - 2 in (* 5 left pad, 4 right pad, 2 for box corners *)
-      let dashes_width = max 0 (inner_width - runtime_width) in
-      let dashes_before_count = dashes_width / 2 in
-      let dashes_after_count = dashes_width - dashes_before_count in
-      I.hcat [
-        I.string A.empty "     ";
-        I.string art_style "\u{2517}";
-        I.string art_style (create_horizontal_fill dashes_before_count horiz_border_char_str);
-        runtime_img;
-        I.string art_style (create_horizontal_fill dashes_after_count horiz_border_char_str);
-        I.string art_style "\u{251B}";
-        I.string A.empty "    "
-      ]
-    in
-
-   I.vcat [line0; line1; line2; line3; line4; line5; line6]
-  in
-
   let asset_rows = List.map (fun asset -> row_of_asset asset state.frame)
     (get_all_active_assets () |> List.sort compare_assets)
   in
-  let diogrid_label_text = " DioGrid " in
-  let diogrid_label_style = style_highlight_text ++ A.st A.bold in
-  let diogrid_label_img = I.string diogrid_label_style diogrid_label_text in
+  let dio_label_text = " Dio " in
+  let dio_label_style = style_highlight_text ++ A.st A.bold in
+  let dio_label_img = I.string dio_label_style dio_label_text in
 
   (* Add performance indicator *)
   let total_assets = List.length asset_rows in
   let performance_indicator = I.string style_success_text (Printf.sprintf " [%d assets]" total_assets) in
-  let enhanced_label = I.hcat [diogrid_label_img; performance_indicator] in
+  let left_label = I.hcat [dio_label_img; performance_indicator] in
 
-  let top_asset_box_line = 
-    match asset_rows with 
-    | [] -> I.empty 
-    | _ -> 
-      
-        let enhanced_width = I.width enhanced_label in
-        let min_space_for_labeled_border = enhanced_width + 4 in
-        if term_width >= min_space_for_labeled_border then
-          let fill_width = term_width - 2 - enhanced_width - 1 - 1 in
-          I.hcat [
-            I.string style_header_border "\u{250F}\u{2501}";
-            enhanced_label;
-            I.string style_header_border horiz_border_char_str;
-            I.string style_header_border (create_horizontal_fill fill_width horiz_border_char_str);
-            I.string style_header_border "\u{2513}";
-          ]
-        else (* Fallback to a simple line if not enough space *) 
-          I.string style_header_border (Printf.sprintf "\u{250F}%s\u{2513}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))
+  (* Keybindings *)
+  let key_bracket_style = style_keybinding_bracket in
+  let key_text_style = style_keybinding_text in
+  let text_style = style_header_info_text in
+  let key_bindings_img = I.hcat [
+      I.string key_bracket_style "["; I.string key_text_style "L"; I.string key_bracket_style "]";
+      I.string text_style "ogs ";
+      I.string key_bracket_style "│";
+      I.string key_bracket_style " ["; I.string key_text_style "Q"; I.string key_bracket_style "]";
+      I.string text_style "uit";
+    ] in
+
+  (* Runtime Info *)
+  let runtime_str = fmt_runtime Stats.start_ts in
+  let (status_indicator, status_text) = (I.string style_success_text ">", "LIVE") in
+  let runtime_img = I.hcat [
+    I.string (style_logs_accent_text ++ A.st A.bold) runtime_str;
+    I.string style_neutral_text " ";
+    status_indicator;
+    I.string style_neutral_text (" " ^ status_text)
+  ] in
+
+  let top_asset_box_line =
+    match asset_rows with
+    | [] -> I.empty
+    | _ ->
+        let left_part = I.hcat [
+          I.string style_header_border "\u{250F}\u{2501}";
+          left_label;
+        ] in
+        let right_part = I.hcat [
+          key_bindings_img;
+          I.string style_header_border "\u{2501}\u{2513}";
+        ] in
+
+        let fixed_width = I.width left_part + I.width runtime_img + I.width right_part + 2 (* separators *) in
+        let fill_width = max 0 (term_width - fixed_width) in
+        let fill_left = fill_width / 2 in
+        let fill_right = fill_width - fill_left in
+
+        I.hcat [
+          left_part;
+          I.string style_header_border (create_horizontal_fill fill_left horiz_border_char_str);
+          I.string style_header_border " ";
+          runtime_img;
+          I.string style_header_border " ";
+          I.string style_header_border (create_horizontal_fill fill_right horiz_border_char_str);
+          right_part;
+        ]
   in
-  let inter_asset_box_line = 
+  let inter_asset_box_line =
     I.string style_header_border (Printf.sprintf "\u{2523}%s\u{252B}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))
   in
   let bottom_asset_box_line = 
@@ -466,12 +432,11 @@ let render state =
     I.string style_header_border " ┃";
   ] in
 
-  let header_height = height header in
   let new_asset_rows_height = height asset_rows_section_with_boxing in
   let strategy_section_height = height strategy_section in
   let logs_height =
     if state.show_logs then
-      let height_of_content_above_logs = header_height + new_asset_rows_height + strategy_section_height in
+      let height_of_content_above_logs = new_asset_rows_height + strategy_section_height in
       max 0 (term_height - height_of_content_above_logs - 3)
     else 0
   in
@@ -527,7 +492,6 @@ let render state =
         cropped_logs_content
   in
   vcat [
-    header;
     asset_rows_section_with_boxing;
     void content_width 1;
     strategy_section;
