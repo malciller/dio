@@ -165,9 +165,15 @@ let initialize_ws_balances_feed (cfg : Config.engine_config) (token : string) =
 (* Handle fill events from trading *)
 let handle_fill_event fill =
   let tx = Transaction_history.transaction_from_fill fill in
-  (* Update balance_after with current balance *)
+  (* Update balance_after with current balance of the base asset (e.g., SOL for SOL/USD) *)
+  let base_asset =
+    try
+      let idx = String.index fill.symbol '/' in
+      String.sub fill.symbol 0 idx
+    with Not_found -> fill.symbol
+  in
   let updated_tx = { tx with
-    balance_after = Hashtbl.find_opt balances fill.symbol |> Option.value ~default:0.0
+    balance_after = Hashtbl.find_opt balances base_asset |> Option.value ~default:0.0
   } in
   let%lwt _ = Transaction_history.add_transaction updated_tx in
   debug_f ~section "Processed fill event for %s: %s %.8f @ %s"

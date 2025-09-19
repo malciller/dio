@@ -102,7 +102,13 @@ let get_accumulated_cost asset current_balance =
 (* Create transaction from fill event *)
 let transaction_from_fill fill =
   let order_id = fill.order_id in
-  let asset = fill.symbol in
+  let asset =
+    (* Use base asset when symbol is a pair like "SOL/USD" *)
+    try
+      let idx = String.index fill.symbol '/' in
+      String.sub fill.symbol 0 idx
+    with Not_found -> fill.symbol
+  in
   let qty_float = float_of_string (Qty.to_string fill.qty) in
   let price_float = float_of_string (Price.to_string fill.price) in
   let amount = match fill.side with

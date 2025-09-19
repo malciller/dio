@@ -13,7 +13,7 @@ let is_stablecoin asset =
 (* ─── Enhanced Color Palette & Styles ───────────────────────────────────────── *)
 (* Professional dark theme with neon accents *)
 let rgb_of_255 ~r ~g ~b = A.rgb ~r:(r*5/255) ~g:(g*5/255) ~b:(b*5/255)
-let style_primary_text    = A.fg (rgb_of_255 ~r:200 ~g:200 ~b:200) ++ A.bg (rgb_of_255 ~r:15 ~g:15 ~b:15)
+let style_primary_text    = A.fg (rgb_of_255 ~r:200 ~g:200 ~b:200)
 let style_buy_order_text  = A.fg (rgb_of_255 ~r:0 ~g:255 ~b:100) ++ A.st A.bold
 let style_sell_order_text = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100) ++ A.st A.bold
 let style_current_price_text= A.fg (rgb_of_255 ~r:0 ~g:200 ~b:200) ++ A.st A.bold ++ A.st A.underline
@@ -363,13 +363,15 @@ let get_balance_info () : balance_info list Lwt.t =
 
         let accumulated_balance = total_balance -. on_orders_balance in
 
-        (* Calculate accumulated value using cost basis if available, otherwise fallback to current price *)
+        (* Calculate accumulated value using cost basis if available, otherwise fallback to current price
+           USD accumulated value must always be 0.0 regardless of cost basis or price. *)
         let accumulated_value_usd =
-          match accumulated_cost_opt with
-          | Some cost -> cost
-          | None ->
-              if asset = "USD" then 0.0
-              else accumulated_balance *. price_usd
+          if asset = "USD" then 0.0
+          else (
+            match accumulated_cost_opt with
+            | Some cost -> cost
+            | None -> accumulated_balance *. price_usd
+          )
         in
 
         (* Calculate unrealized value based on pending sell orders *)
