@@ -2,7 +2,7 @@ open Dio_types
 
 let start_ts = Unix.gettimeofday ()
 
-let max_dashboard_logs = 10
+let max_dashboard_logs = 15
 let dashboard_logs = ref []
 
 let add_dashboard_log (message : string) : unit =

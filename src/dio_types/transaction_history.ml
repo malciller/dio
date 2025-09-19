@@ -175,24 +175,31 @@ let reconcile_balance asset current_balance =
   let discrepancy = current_balance -. expected_balance in
 
   if abs_float discrepancy > 0.000001 then (
-    Lwt_log_core.warning ~section
-      (Printf.sprintf "Balance reconciliation needed for %s: current=%.8f expected=%.8f discrepancy=%.8f"
-         asset current_balance expected_balance discrepancy) >>= fun () ->
+    if discrepancy > 0.0 then (
+      Lwt_log_core.warning ~section
+        (Printf.sprintf "Balance reconciliation needed for %s: current=%.8f expected=%.8f discrepancy=%.8f (adding positive adjustment)"
+           asset current_balance expected_balance discrepancy) >>= fun () ->
 
-    (* Create adjustment transaction to reconcile *)
-    let adjustment_tx = {
-      id = Id.gen ();
-      asset;
-      amount = discrepancy;
-      timestamp = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-      transaction_type = Adjustment;
-      cost_basis = None;
-      total_cost = None;
-      balance_after = current_balance;
-    } in
-    add_transaction adjustment_tx >>= fun () ->
-    Lwt_log_core.info ~section
-      (Printf.sprintf "Created adjustment transaction for %s: %.8f" asset discrepancy)
+      (* Create positive adjustment transaction *)
+      let adjustment_tx = {
+        id = Id.gen ();
+        asset;
+        amount = discrepancy;
+        timestamp = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+        transaction_type = Adjustment;
+        cost_basis = None;
+        total_cost = None;
+        balance_after = current_balance;
+      } in
+      add_transaction adjustment_tx >>= fun () ->
+      Lwt_log_core.info ~section
+        (Printf.sprintf "Created positive adjustment for %s: %.8f" asset discrepancy)
+    ) else (
+      Lwt_log_core.warning ~section
+        (Printf.sprintf "Negative discrepancy detected for %s: current=%.8f expected=%.8f discrepancy=%.8f (skipping adjustment)"
+           asset current_balance expected_balance discrepancy) >>= fun () ->
+      Lwt.return_unit
+    )
   ) else (
     Lwt_log_core.debug ~section
       (Printf.sprintf "Balance reconciliation for %s: OK (current=%.8f expected=%.8f)"

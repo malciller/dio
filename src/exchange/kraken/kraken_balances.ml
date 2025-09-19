@@ -55,6 +55,20 @@ let process_balance_change asset old_balance new_balance =
         total_cost = None;
         balance_after = new_balance;
       } in
+
+      let tx = if tx_type = Primitives.Deposit || tx_type = Primitives.Staking_Reward then (
+        let pair = asset ^ "/USD" in
+        match Hashtbl.find_opt Dio_types.State.global_state.prices pair with
+        | Some pi ->
+            let p = pi.price in
+            let price_float = Float.of_string (Primitives.Price.to_string p) in
+            { tx with
+              cost_basis = Some price_float;
+              total_cost = Some (price_float *. amount);
+            }
+        | None -> tx
+      ) else tx in
+
       let%lwt _ = Transaction_history.add_transaction tx in
       debug_f ~section "Balance change detected: %s %.8f (%s)"
         asset amount
@@ -87,28 +101,71 @@ let handle_balance_snapshot data =
 let handle_balance_update data =
   let open Yojson.Safe.Util in
   data |> to_list |> Lwt_list.iter_s (fun item ->
+    debug_f ~section "Full balance update item: %s" (Yojson.Safe.to_string item) >>= fun () ->
+
     let asset = item |> member "asset" |> to_string in
     let new_balance = item |> member "balance" |> to_float in
     let old_balance = Hashtbl.find_opt balances asset |> Option.value ~default:0.0 in
+    let event_type = item |> member "type" |> to_string in
+    let subtype_opt = try Some (item |> member "subtype" |> to_string) with _ -> None in
+    let category = item |> member "category" |> to_string in
+    let wallet_type = item |> member "wallet_type" |> to_string in
+    let wallet_id = item |> member "wallet_id" |> to_string in
 
-    (* Process balance change before updating *)
-    process_balance_change asset old_balance new_balance >>= fun () ->
-    Hashtbl.replace balances asset new_balance;
-    debug_f ~section "Balance update: %s -> %f (was %f)" asset new_balance old_balance
+    let is_trade = event_type = "trade" in
+    let is_staking = event_type = "staking" in
+    let is_earn = event_type = "earn" in
+    let is_staking_trade = is_trade && category = "trade" && (wallet_type = "earn" || wallet_id = "bonded") in
+    let is_internal_transfer = match subtype_opt with
+      | Some subtype -> List.mem subtype ["stakingfromspot"; "spotfromstaking"; "stakingtospot"; "spottostaking"]
+      | None -> false
+    in
+
+    if is_earn then (
+      let amount = item |> member "amount" |> to_float in
+      let updated_balance = old_balance +. amount in
+      Hashtbl.replace balances asset updated_balance;
+      process_balance_change asset old_balance updated_balance >>= fun () ->
+      debug_f ~section "Balance update (via earn amount): %s -> %f (was %f)" asset updated_balance old_balance
+    ) else if is_internal_transfer || is_trade || is_staking || is_staking_trade then (
+      let skip_reason = if is_trade then "trade" else if is_staking then "staking" else if is_staking_trade then "staking trade" else "internal transfer" in
+      debug_f ~section "Skipping %s for %s: %s %s (wallet: %s/%s)" 
+        skip_reason asset event_type (Option.value ~default:"" subtype_opt) wallet_type wallet_id >>= fun () ->
+      Hashtbl.replace balances asset new_balance;
+      Lwt.return_unit
+    ) else (
+      (* Process balance change before updating *)
+      process_balance_change asset old_balance new_balance >>= fun () ->
+      Hashtbl.replace balances asset new_balance;
+      debug_f ~section "Balance update: %s -> %f (was %f)" asset new_balance old_balance
+    )
   )
 
 let handle_balances_message msg =
-  let json = Yojson.Safe.from_string msg in
-  let open Yojson.Safe.Util in
-  match member "channel" json with
-  | `String "balances" ->
-      (match member "type" json with
-      | `String "snapshot" -> handle_balance_snapshot (member "data" json)
-      | `String "update" -> handle_balance_update (member "data" json)
-      | _ -> warning_f ~section "Unhandled message type on balances channel: %s" msg
-      )
-  | _ ->
-      debug_f ~section "Received non-balances message: %s" msg
+  Lwt.catch (fun () ->
+    let json = Yojson.Safe.from_string msg in
+    let open Yojson.Safe.Util in
+    match member "channel" json with
+    | `String "balances" ->
+        (match member "type" json with
+        | `String "snapshot" -> handle_balance_snapshot (member "data" json)
+        | `String "update" -> handle_balance_update (member "data" json)
+        | _ -> warning_f ~section "Unhandled message type on balances channel: %s" msg
+        )
+    | _ ->
+        Lwt.catch (fun () ->
+          let channel = member "channel" json |> to_string in
+          if channel <> "heartbeat" then
+            debug_f ~section "Received non-balances message: %s" msg
+          else
+            Lwt.return_unit
+        ) (fun exn ->
+          warning_f ~section "Error parsing non-balances message: %s (%s)" msg (Printexc.to_string exn)
+        )
+  ) (fun exn ->
+    error_f ~section "JSON parsing error in balances message: %s (%s)" msg (Printexc.to_string exn) >>= fun () ->
+    Lwt.return_unit
+  )
 
 let subscribe_to_balances conn token =
   let sub_msg =

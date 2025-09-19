@@ -16,7 +16,7 @@ let setup_logging () =
      They will direct to whichever logger becomes the default. *)
   Lwt_log.add_rule "*" Error;  
   Lwt_log.add_rule "*" Warning; 
-  Lwt_log.add_rule "*" Info;  
+  (*Lwt_log.add_rule "*" Info;  *)
   
 
   let default_logger =
@@ -75,9 +75,8 @@ let setup_logging () =
   default := default_logger;
 
   (* Specific rules for log levels and sections. Amended to the rules above.*) 
-   (* Lwt_log.add_rule "kraken.balances" Info;  *)
-   (* Lwt_log.add_rule "transaction_history" Info;  *)
-  
+   Lwt_log.add_rule "kraken.balances" Info;  
+   Lwt_log.add_rule "transaction_history" Info;  
   
   ()
 

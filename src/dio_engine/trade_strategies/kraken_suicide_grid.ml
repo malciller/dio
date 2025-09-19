@@ -469,6 +469,17 @@ module State = struct
                 symbol
                 (Primitives.Price.to_string price)
                 order_side_str >>= fun () ->
+
+            let fill_event = {
+              Event.src = "kraken";
+              symbol = symbol;
+              order_id = order_id;
+              side = (match side with Buy -> `Buy | Sell -> `Sell);
+              qty = qty;
+              price = price;
+              ts = Unix.gettimeofday () *. 1000000. |> Int64.of_float;
+            } in
+            Kraken.Kraken_balances.handle_fill_event fill_event >>= fun () ->
             sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
             if not (Hashtbl.mem open_orders order_id) then (
               info_f ~section

@@ -814,7 +814,7 @@ let execute_cycle_leg cycle_exec leg_index current_qty fill_ratio graph cmd_buff
 
              info_f ~section "Executing leg %d: %s %s %.8f@%s (from %.8f %s)"
                leg_index edge.pair
-               (match side with Buy -> "BUY" | Sell -> "SELL")
+               (match side with Core.Buy -> "BUY" | Core.Sell -> "SELL")
                order_qty_adj price_str current_qty current_asset >>= fun () ->
 
              Ringbuffer.push cmd_buffer order_cmd >>= fun () ->
@@ -856,6 +856,16 @@ let execute_cycle_leg cycle_exec leg_index current_qty fill_ratio graph cmd_buff
                     in
                     info_f ~section "Leg %d filled: %.8f/%.8f -> %.8f %s"
                       leg_index filled_qty order_qty_adj next_qty next_asset >>= fun () ->
+                    let fill_event = Event.({
+                      src = "kraken";
+                      symbol = edge.pair;
+                      order_id = client_id;
+                      side = (match side with Core.Buy -> `Buy | Core.Sell -> `Sell);
+                      qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" filled_qty);
+                      price = Primitives.Price.of_string_exn ~scale:8 (Printf.sprintf "%.8f" fill_price);
+                      ts = Unix.gettimeofday () *. 1000000. |> Int64.of_float;
+                    }) in
+                    Kraken.Kraken_balances.handle_fill_event fill_event >>= fun () ->
                     Lwt.return (Some (next_qty, new_fill_ratio))
                   end else if status = "cancelled" then (
                     warning_f ~section "Leg %d was cancelled" leg_index >>= fun () ->
