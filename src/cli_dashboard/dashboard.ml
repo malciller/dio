@@ -436,7 +436,29 @@ let render_balances_section (balances: balance_info list) term_width =
 
     let rows = List.map (fun info ->
       let value_style = if info.total_value_usd > 100.0 then style_profit_text else style_neutral_text in
-      let unrealized_style = if info.unrealized_value_usd > info.total_value_usd then style_profit_text else style_loss_text in
+      let unrealized_display =
+        let dollar_str = Printf.sprintf "$%.2f" info.unrealized_value_usd in
+        if info.total_value_usd = 0.0 then
+          I.string style_neutral_text (Printf.sprintf "%*s" unreal_w dollar_str)
+        else
+          let perc = ((info.unrealized_value_usd -. info.total_value_usd) /. info.total_value_usd) *. 100.0 in
+          let perc_style = if perc >= 0.0 then style_profit_text else style_loss_text in
+          let perc_str = Printf.sprintf "%+.2f%%" perc in
+          let dollar_len = String.length dollar_str in
+          let perc_len = String.length perc_str in
+          let available_for_perc = max 0 (unreal_w - dollar_len - 1) in (* -1 for space *)
+          if available_for_perc >= perc_len then
+            (* Both fit: show "$X.XX (+Y.YY%)" *)
+            I.hcat [
+              I.string style_primary_text dollar_str;
+              I.string style_neutral_text " ";
+              I.string perc_style (Printf.sprintf "%*s" available_for_perc perc_str)
+            ]
+          else
+            (* Doesn't fit, show colored dollar amount *)
+            let display_style = if perc >= 0.0 then style_profit_text else style_loss_text in
+            I.string display_style (Printf.sprintf "%*s" unreal_w dollar_str)
+      in
       I.hcat [
         I.string style_header_border "┃ ";
         I.string style_asset_name (Printf.sprintf "%-*s" asset_w info.asset);
@@ -447,7 +469,7 @@ let render_balances_section (balances: balance_info list) term_width =
         I.string style_header_border "│";
         I.string style_success_text (Printf.sprintf "%*s" accum_w (Printf.sprintf "$%.2f" info.accumulated_value_usd));
         I.string style_header_border "│";
-        I.string unrealized_style (Printf.sprintf "%*s" unreal_w (Printf.sprintf "$%.2f" info.unrealized_value_usd));
+        unrealized_display;
         I.string style_header_border " ┃";
       ]
     ) balances in
@@ -456,6 +478,29 @@ let render_balances_section (balances: balance_info list) term_width =
     let total_accumulated_value = List.fold_left (fun acc b -> acc +. b.accumulated_value_usd) 0.0 balances in
     let total_unrealized_value = List.fold_left (fun acc b -> acc +. b.unrealized_value_usd) 0.0 balances in
 
+    let total_unrealized_display =
+      let dollar_str = Printf.sprintf "$%.2f" total_unrealized_value in
+      if total_portfolio_value = 0.0 then
+        I.string (style_neutral_text ++ A.st A.bold) (Printf.sprintf "%*s" unreal_w dollar_str)
+      else
+        let perc = ((total_unrealized_value -. total_portfolio_value) /. total_portfolio_value) *. 100.0 in
+        let perc_style = if perc >= 0.0 then (style_highlight_text ++ A.st A.bold) else (style_loss_text ++ A.st A.bold) in
+        let perc_str = Printf.sprintf "%+.2f%%" perc in
+        let dollar_len = String.length dollar_str in
+        let perc_len = String.length perc_str in
+        let available_for_perc = max 0 (unreal_w - dollar_len - 1) in (* -1 for space *)
+        if available_for_perc >= perc_len then
+          (* Both fit: show "$X.XX (+Y.YY%)" *)
+          I.hcat [
+            I.string (style_highlight_text ++ A.st A.bold) dollar_str;
+            I.string (style_neutral_text ++ A.st A.bold) " ";
+            I.string perc_style (Printf.sprintf "%*s" available_for_perc perc_str)
+          ]
+        else
+          (* Doesn't fit, show colored dollar amount *)
+          let display_style = if perc >= 0.0 then (style_highlight_text ++ A.st A.bold) else (style_loss_text ++ A.st A.bold) in
+          I.string display_style (Printf.sprintf "%*s" unreal_w dollar_str)
+    in
     let total_row =
       I.hcat [
         I.string style_header_border "┃ ";
@@ -467,7 +512,7 @@ let render_balances_section (balances: balance_info list) term_width =
         I.string style_header_border "│";
         I.string (style_success_text ++ A.st A.bold) (Printf.sprintf "%*s" accum_w (Printf.sprintf "$%.2f" total_accumulated_value));
         I.string style_header_border "│";
-        I.string (style_highlight_text ++ A.st A.bold) (Printf.sprintf "%*s" unreal_w (Printf.sprintf "$%.2f" total_unrealized_value));
+        total_unrealized_display;
         I.string style_header_border " ┃";
       ] in
 
