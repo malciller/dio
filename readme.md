@@ -204,22 +204,6 @@ Logs are categorized by level:
 
 Logs are timestamped and categorized by component.
 
-## Risk Management
-
-**CRITICAL**: This software is for educational and research purposes only.
-
-### Important Warnings
-- **Financial Risk**: Cryptocurrency trading involves substantial risk of loss
-- **API Limits**: Respect exchange rate limits to avoid account restrictions
-- **Testing**: Always test strategies with minimal capital first
-- **Monitoring**: Never run unattended without proper monitoring
-- **Backup**: Maintain separate emergency funds
-
-### Best Practices
-- Start with small position sizes
-- Implement proper stop-loss mechanisms
-- Monitor API usage and account balances
-- Keep multiple backup configurations
 
 ## Contributing
 
