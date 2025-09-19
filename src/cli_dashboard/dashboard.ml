@@ -136,7 +136,7 @@ type balance_info = {
   reconciliation_balance: float; (* spot + earn *)
   total_value_usd: float;
   accumulated_balance: float; (* earn + spot_available *)
-  accumulated_value_usd: float; (* USD value of earn + spot_available (excluding liquid and pending orders) *)
+  accumulated_value_usd: float; (* USD value of assets not in pending sell orders *)
   unrealized_value_usd: float;
 }
 
@@ -363,7 +363,7 @@ let get_balance_info () : balance_info list Lwt.t =
 
   let balance_info_list_lwt = Lwt_list.fold_left_s (fun acc asset ->
     let price_usd_lwt =
-      if asset = "USD" || asset = "USDT" || asset = "USDC" then Lwt.return_some 1.0
+      if asset = "USD" then Lwt.return_some 1.0
       else
         let pair = asset ^ "/USD" in
         match Stats.get_price pair with
@@ -372,7 +372,10 @@ let get_balance_info () : balance_info list Lwt.t =
             let pair_usdt = asset ^ "/USDT" in
             match Stats.get_price pair_usdt with
             | Some p -> Lwt.return_some (Float.of_string (Primitives.Price.to_string p))
-            | None -> Lwt.return_none
+            | None ->
+                (* Fallback for stablecoins: use 1.0 if no market data available *)
+                if is_stablecoin asset then Lwt.return_some 1.0
+                else Lwt.return_none
     in
 
     price_usd_lwt >|= function
@@ -390,13 +393,12 @@ let get_balance_info () : balance_info list Lwt.t =
         let total_value_usd = total_balance *. price_usd in
 
         let sell_orders_for_asset = Option.value ~default:[] (Hashtbl.find_opt on_sell_orders asset) in
-        let on_orders_balance = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. o.qty) 0.0 sell_orders_for_asset in
+        let qty_on_sell_orders = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. o.qty) 0.0 sell_orders_for_asset in
 
-        let spot_available = max 0.0 (spot_balance -. on_orders_balance) in
-        let pnl_accumulated_balance = spot_available +. earn_balance in
+        (* Accumulated balance is total balance less assets held in open sell orders *)
+        let accumulated_balance = total_balance -. qty_on_sell_orders in
 
-        (* Calculate accumulated value exactly like Python: spot_available + earn_balance (excluding liquid and pending orders) *)
-        let accumulated_balance = spot_available +. earn_balance in
+        let pnl_accumulated_balance = accumulated_balance in
         let accumulated_value_usd =
           if asset = "USD" then 0.0
           else accumulated_balance *. price_usd in
@@ -407,9 +409,10 @@ let get_balance_info () : balance_info list Lwt.t =
           let unrealized_value_on_orders = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. (o.qty *. o.limit_price)) 0.0 sell_orders_for_asset in
           let highest_sell_price = List.fold_left (fun max_p (o:Kraken.Kraken_common_types.order) -> max max_p o.limit_price) 0.0 sell_orders_for_asset in
           let unrealized_value_accumulated =
-            if highest_sell_price > 0.0 then
+            if sell_orders_for_asset <> [] then
               pnl_accumulated_balance *. highest_sell_price
             else
+              (* Use current market price for assets without pending sell orders *)
               pnl_accumulated_balance *. price_usd
           in
           unrealized_value_on_orders +. unrealized_value_accumulated
