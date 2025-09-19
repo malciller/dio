@@ -4,6 +4,9 @@ open Lwt.Infix
 open Lwt_log_core
 open Dio_types
 
+(* Mutex to prevent race conditions during balance updates *)
+let balance_mutex = Lwt_mutex.create ()
+
 (* Ringbuffer for balance updates to prevent race conditions *)
 let balance_update_queue : (string * Yojson.Safe.t) Ringbuffer.t = Ringbuffer.create 1000
 
@@ -89,51 +92,53 @@ let process_balance_change asset old_balance new_balance =
       debug_f ~section "No significant balance change for %s" asset
 
 let handle_balance_snapshot data =
-  let open Yojson.Safe.Util in
-  (* Clear all balance tables *)
-  Hashtbl.clear previous_balances;
-  Hashtbl.iter (fun asset balance -> Hashtbl.replace previous_balances asset balance) balances;
-  Hashtbl.clear balances;
-  Hashtbl.clear spot_balances;
-  Hashtbl.clear earn_balances;
-  Hashtbl.clear liquid_balances;
+  Lwt_mutex.with_lock balance_mutex (fun () ->
+    let open Yojson.Safe.Util in
+    (* Clear all balance tables *)
+    Hashtbl.clear previous_balances;
+    Hashtbl.iter (fun asset balance -> Hashtbl.replace previous_balances asset balance) balances;
+    Hashtbl.clear balances;
+    Hashtbl.clear spot_balances;
+    Hashtbl.clear earn_balances;
+    Hashtbl.clear liquid_balances;
 
-  data |> to_list |> Lwt_list.iter_s (fun item ->
-    let asset = item |> member "asset" |> to_string in
-    let wallets = item |> member "wallets" |> to_list in
+    data |> to_list |> Lwt_list.iter_s (fun item ->
+      let asset = item |> member "asset" |> to_string in
+      let wallets = item |> member "wallets" |> to_list in
 
-    Lwt_list.iter_s (fun wallet ->
-      let wallet_type = wallet |> member "type" |> to_string in
-      let wallet_id = wallet |> member "id" |> to_string in
-      let balance = wallet |> member "balance" |> to_float in
+      Lwt_list.iter_s (fun wallet ->
+        let wallet_type = wallet |> member "type" |> to_string in
+        let wallet_id = wallet |> member "id" |> to_string in
+        let balance = wallet |> member "balance" |> to_float in
 
-      (match wallet_type with
-      | "spot" when wallet_id = "main" -> Hashtbl.replace spot_balances asset balance
-      | "earn" ->
-          (match wallet_id with
-          | "liquid" -> Hashtbl.replace liquid_balances asset balance
-          | _ -> (* bonded, flexible, locked *)
-              let current_earn = Hashtbl.find_opt earn_balances asset |> Option.value ~default:0.0 in
-              Hashtbl.replace earn_balances asset (current_earn +. balance)
-          )
-      | _ -> ()
-      );
-      Lwt.return_unit
-    ) wallets >>= fun () ->
+        (match wallet_type with
+        | "spot" when wallet_id = "main" -> Hashtbl.replace spot_balances asset balance
+        | "earn" ->
+            (match wallet_id with
+            | "liquid" -> Hashtbl.replace liquid_balances asset balance
+            | _ -> (* bonded, flexible, locked *)
+                let current_earn = Hashtbl.find_opt earn_balances asset |> Option.value ~default:0.0 in
+                Hashtbl.replace earn_balances asset (current_earn +. balance)
+            )
+        | _ -> ()
+        );
+        Lwt.return_unit
+      ) wallets >>= fun () ->
 
-    (* Update aggregated balance *)
-    let spot = Hashtbl.find_opt spot_balances asset |> Option.value ~default:0.0 in
-    let earn = Hashtbl.find_opt earn_balances asset |> Option.value ~default:0.0 in
-    Hashtbl.replace balances asset (spot +. earn);
+      (* Update aggregated balance *)
+      let spot = Hashtbl.find_opt spot_balances asset |> Option.value ~default:0.0 in
+      let earn = Hashtbl.find_opt earn_balances asset |> Option.value ~default:0.0 in
+      Hashtbl.replace balances asset (spot +. earn);
 
-    debug_f ~section "Balance snapshot for %s: spot=%.8f, earn=%.8f, liquid=%.8f, total=%.8f"
-      asset spot earn
-      (Hashtbl.find_opt liquid_balances asset |> Option.value ~default:0.0)
-      (spot +. earn)
-  ) >>= fun () ->
-  balances_ready := true;
-  Lwt_condition.broadcast balances_initialized ();
-  info_f ~section "Processed balance snapshot. %d assets loaded." (Hashtbl.length balances)
+      debug_f ~section "Balance snapshot for %s: spot=%.8f, earn=%.8f, liquid=%.8f, total=%.8f"
+        asset spot earn
+        (Hashtbl.find_opt liquid_balances asset |> Option.value ~default:0.0)
+        (spot +. earn)
+    ) >>= fun () ->
+    balances_ready := true;
+    Lwt_condition.broadcast balances_initialized ();
+    info_f ~section "Processed balance snapshot. %d assets loaded." (Hashtbl.length balances)
+  )
 
 let handle_balance_update data =
   let open Yojson.Safe.Util in
@@ -150,168 +155,172 @@ let handle_balance_update data =
 (* Process balance updates from the ringbuffer in order *)
 let process_balance_update_from_queue () =
   Ringbuffer.pop balance_update_queue >>= fun (asset, item) ->
-  let open Yojson.Safe.Util in
-  debug_f ~section "Processing balance update for %s from ringbuffer" asset >>= fun () ->
+  Lwt_mutex.with_lock balance_mutex (fun () ->
+    let open Yojson.Safe.Util in
+    debug_f ~section "Processing balance update for %s from ringbuffer" asset >>= fun () ->
 
-  let event_type = item |> member "type" |> to_string in
-  let subtype_opt = try Some (item |> member "subtype" |> to_string) with _ -> None in
+    let event_type = item |> member "type" |> to_string in
+    let subtype_opt = try Some (item |> member "subtype" |> to_string) with _ -> None in
 
-  (* Trade-related events are handled via the fill feed, so we skip tx generation here
-     but MUST still update the balance correctly using the amount field. *)
-  let is_trade_related =
-    let category = try Some (item |> member "category" |> to_string) with _ -> None in
-    let wallet_type = try Some (item |> member "wallet_type" |> to_string) with _ -> None in
-    let is_internal_transfer = event_type = "transfer" || (
-      event_type = "earn" && match subtype_opt with
-      | Some subtype -> List.mem subtype ["deposit"; "withdrawal"]
-      | None -> false
-    )
+    (* Trade-related events are handled via the fill feed, so we skip tx generation here
+       but MUST still update the balance correctly using the authoritative `balance` field. *)
+    let is_trade_related =
+      let category = try Some (item |> member "category" |> to_string) with _ -> None in
+      let wallet_type = try Some (item |> member "wallet_type" |> to_string) with _ -> None in
+      let is_internal_transfer = event_type = "transfer" || (
+        event_type = "earn" && match subtype_opt with
+        | Some subtype -> List.mem subtype ["deposit"; "withdrawal"]
+        | None -> false
+      )
+      in
+      let is_spot_trade = event_type = "trade" && wallet_type = Some "spot" in
+      let is_staking_trade = event_type = "trade" && category = Some "trade" && wallet_type = Some "earn" in
+      is_internal_transfer || is_spot_trade || is_staking_trade
     in
-    let is_spot_trade = event_type = "trade" && wallet_type = Some "spot" in
-    let is_staking_trade = event_type = "trade" && category = Some "trade" && wallet_type = Some "earn" in
-    is_internal_transfer || is_spot_trade || is_staking_trade
-  in
 
-  match item |> member "balance" |> to_float_option with
-  | None ->
-      warning_f ~section "Balance update for %s has no 'balance' field. Cannot process update: %s" asset (Yojson.Safe.to_string item)
-  | Some new_balance ->
-      let wallet_type = item |> member "wallet_type" |> to_string_option |> Option.value ~default:"" in
-      let wallet_id = item |> member "wallet_id" |> to_string_option |> Option.value ~default:"" in
+    match item |> member "balance" |> to_float_option with
+    | None ->
+        warning_f ~section "Balance update for %s has no 'balance' field. Cannot process update: %s" asset (Yojson.Safe.to_string item)
+    | Some new_balance ->
+        let wallet_type = item |> member "wallet_type" |> to_string_option |> Option.value ~default:"" in
+        let wallet_id = item |> member "wallet_id" |> to_string_option |> Option.value ~default:"" in
 
-      (* Update specific wallet balance *)
-      (match wallet_type with
-      | "spot" when wallet_id = "main" -> Hashtbl.replace spot_balances asset new_balance
-      | "earn" ->
-          (match wallet_id with
-          | "liquid" -> Hashtbl.replace liquid_balances asset new_balance
-          | _ -> (* This assumes the update provides the new total for the specific earn wallet, not a delta *)
-             Hashtbl.replace earn_balances asset new_balance
-          )
-      | _ -> ()
-      );
+        (* Update specific wallet balance *)
+        (match wallet_type with
+        | "spot" when wallet_id = "main" -> Hashtbl.replace spot_balances asset new_balance
+        | "earn" ->
+            (match wallet_id with
+            | "liquid" -> Hashtbl.replace liquid_balances asset new_balance
+            | _ -> (* This assumes the update provides the new total for the specific earn wallet, not a delta *)
+               Hashtbl.replace earn_balances asset new_balance
+            )
+        | _ -> ()
+        );
 
-      (* Recalculate and update aggregated balance *)
-      let spot = Hashtbl.find_opt spot_balances asset |> Option.value ~default:0.0 in
-      let earn = Hashtbl.find_opt earn_balances asset |> Option.value ~default:0.0 in
-      let new_total_balance = spot +. earn in
-      Hashtbl.replace balances asset new_total_balance;
+        (* Recalculate and update aggregated balance *)
+        let spot = Hashtbl.find_opt spot_balances asset |> Option.value ~default:0.0 in
+        let earn = Hashtbl.find_opt earn_balances asset |> Option.value ~default:0.0 in
+        let new_total_balance = spot +. earn in
+        Hashtbl.replace balances asset new_total_balance;
 
-      let amount = item |> member "amount" |> to_float in (* amount is still useful for tx creation *)
+        let amount = item |> member "amount" |> to_float in (* amount is still useful for tx creation *)
 
-      if is_trade_related then
-        debug_f ~section "Skipping tx generation for trade-related event on %s, balance updated to %.8f" asset new_total_balance
-      else
-        let tx_type =
-          match event_type with
-          | "earn" | "staking" -> if amount > 0.0 then Primitives.Staking_Reward else Primitives.Withdrawal
-          | "deposit" -> Primitives.Deposit
-          | "withdrawal" -> Primitives.Withdrawal
-          | "trade" -> if amount > 0.0 then Primitives.Deposit else Primitives.Withdrawal (* Treat non-spot trades as deposit/withdrawal *)
-          | _ -> if amount > 0.0 then Primitives.Deposit else Primitives.Fee (* Fallback for unknown types *)
-        in
-        let tx = {
-          Primitives.id = Primitives.Id.gen ();
-          asset;
-          amount;
-          timestamp = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-          transaction_type = tx_type;
-          cost_basis = None;
-          total_cost = None;
-          balance_after = new_total_balance;
-        } in
+        if is_trade_related then
+          debug_f ~section "Skipping tx generation for trade-related event on %s, balance updated to %.8f" asset new_total_balance
+        else
+          let tx_type =
+            match event_type with
+            | "earn" | "staking" -> if amount > 0.0 then Primitives.Staking_Reward else Primitives.Withdrawal
+            | "deposit" -> Primitives.Deposit
+            | "withdrawal" -> Primitives.Withdrawal
+            | "trade" -> if amount > 0.0 then Primitives.Deposit else Primitives.Withdrawal (* Treat non-spot trades as deposit/withdrawal *)
+            | _ -> if amount > 0.0 then Primitives.Deposit else Primitives.Fee (* Fallback for unknown types *)
+          in
+          let tx = {
+            Primitives.id = Primitives.Id.gen ();
+            asset;
+            amount;
+            timestamp = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+            transaction_type = tx_type;
+            cost_basis = None;
+            total_cost = None;
+            balance_after = new_total_balance;
+          } in
 
-        let final_tx =
-          if tx_type = Primitives.Staking_Reward || tx_type = Primitives.Deposit then
-            let pair = asset ^ "/USD" in
-            match Hashtbl.find_opt Dio_types.State.global_state.prices pair with
-            | Some pi ->
-                let p = pi.price in
-                let price_float = Float.of_string (Primitives.Price.to_string p) in
-                { tx with cost_basis = Some price_float; total_cost = Some (price_float *. amount) }
-            | None -> tx
-          else
-            tx
-        in
-        Transaction_history.add_transaction final_tx
+          let final_tx =
+            if tx_type = Primitives.Staking_Reward || tx_type = Primitives.Deposit then
+              let pair = asset ^ "/USD" in
+              match Hashtbl.find_opt Dio_types.State.global_state.prices pair with
+              | Some pi ->
+                  let p = pi.price in
+                  let price_float = Float.of_string (Primitives.Price.to_string p) in
+                  { tx with cost_basis = Some price_float; total_cost = Some (price_float *. amount) }
+              | None -> tx
+            else
+              tx
+          in
+          Transaction_history.add_transaction final_tx
+  )
 
 (* Process fill events from the ringbuffer *)
 let process_fill_event_from_queue () =
   Ringbuffer.pop fill_event_queue >>= fun fill ->
-  let open Event in
-  debug_f ~section "Processing fill event for %s from ringbuffer" fill.symbol >>= fun () ->
+  Lwt_mutex.with_lock balance_mutex (fun () ->
+    let open Event in
+    debug_f ~section "Processing fill event for %s from ringbuffer" fill.symbol >>= fun () ->
 
-  let base_tx = Transaction_history.transaction_from_fill fill in
+    let base_tx = Transaction_history.transaction_from_fill fill in
 
-  let base_asset, quote_asset_opt =
-    try
-      let idx = String.index fill.symbol '/' in
-      let base = String.sub fill.symbol 0 idx in
-      let quote = String.sub fill.symbol (idx + 1) (String.length fill.symbol - idx - 1) in
-      (base, Some quote)
-    with Not_found -> (fill.symbol, None)
-  in
+    let base_asset, quote_asset_opt =
+      try
+        let idx = String.index fill.symbol '/' in
+        let base = String.sub fill.symbol 0 idx in
+        let quote = String.sub fill.symbol (idx + 1) (String.length fill.symbol - idx - 1) in
+        (base, Some quote)
+      with Not_found -> (fill.symbol, None)
+    in
 
-  (* Update base asset spot balance *)
-  let old_base_balance = Hashtbl.find_opt spot_balances base_asset |> Option.value ~default:0.0 in
-  let new_base_spot_balance = old_base_balance +. base_tx.amount in
-  Hashtbl.replace spot_balances base_asset new_base_spot_balance;
+    (* Update base asset spot balance *)
+    let old_base_balance = Hashtbl.find_opt spot_balances base_asset |> Option.value ~default:0.0 in
+    let new_base_spot_balance = old_base_balance +. base_tx.amount in
+    Hashtbl.replace spot_balances base_asset new_base_spot_balance;
 
-  (* Recalculate aggregated balance for base asset *)
-  let base_earn_balance = Hashtbl.find_opt earn_balances base_asset |> Option.value ~default:0.0 in
-  let new_base_total_balance = new_base_spot_balance +. base_earn_balance in
-  Hashtbl.replace balances base_asset new_base_total_balance;
+    (* Recalculate aggregated balance for base asset *)
+    let base_earn_balance = Hashtbl.find_opt earn_balances base_asset |> Option.value ~default:0.0 in
+    let new_base_total_balance = new_base_spot_balance +. base_earn_balance in
+    Hashtbl.replace balances base_asset new_base_total_balance;
 
-  let updated_base_tx = { base_tx with
-    asset = base_asset;
-    balance_after = new_base_total_balance;
-  } in
-  let%lwt _ = Transaction_history.add_transaction updated_base_tx in
+    let updated_base_tx = { base_tx with
+      asset = base_asset;
+      balance_after = new_base_total_balance;
+    } in
+    let%lwt _ = Transaction_history.add_transaction updated_base_tx in
 
-  (match quote_asset_opt with
-  | Some quote_asset ->
-      let qty_float = float_of_string (Primitives.Qty.to_string fill.qty) in
-      let price_float = float_of_string (Primitives.Price.to_string fill.price) in
-      let quote_amount = qty_float *. price_float in
-      let quote_tx_amount = match fill.side with
-        | `Buy -> -.quote_amount
-        | `Sell -> quote_amount
-      in
+    (match quote_asset_opt with
+    | Some quote_asset ->
+        let qty_float = float_of_string (Primitives.Qty.to_string fill.qty) in
+        let price_float = float_of_string (Primitives.Price.to_string fill.price) in
+        let quote_amount = qty_float *. price_float in
+        let quote_tx_amount = match fill.side with
+          | `Buy -> -.quote_amount
+          | `Sell -> quote_amount
+        in
 
-      (* Update quote asset spot balance *)
-      let old_quote_balance = Hashtbl.find_opt spot_balances quote_asset |> Option.value ~default:0.0 in
-      let new_quote_spot_balance = old_quote_balance +. quote_tx_amount in
-      Hashtbl.replace spot_balances quote_asset new_quote_spot_balance;
+        (* Update quote asset spot balance *)
+        let old_quote_balance = Hashtbl.find_opt spot_balances quote_asset |> Option.value ~default:0.0 in
+        let new_quote_spot_balance = old_quote_balance +. quote_tx_amount in
+        Hashtbl.replace spot_balances quote_asset new_quote_spot_balance;
 
-      (* Recalculate aggregated balance for quote asset *)
-      let quote_earn_balance = Hashtbl.find_opt earn_balances quote_asset |> Option.value ~default:0.0 in
-      let new_quote_total_balance = new_quote_spot_balance +. quote_earn_balance in
-      Hashtbl.replace balances quote_asset new_quote_total_balance;
+        (* Recalculate aggregated balance for quote asset *)
+        let quote_earn_balance = Hashtbl.find_opt earn_balances quote_asset |> Option.value ~default:0.0 in
+        let new_quote_total_balance = new_quote_spot_balance +. quote_earn_balance in
+        Hashtbl.replace balances quote_asset new_quote_total_balance;
 
-      let quote_tx = {
-        Primitives.id = Primitives.Id.gen ();
-        asset = quote_asset;
-        amount = quote_tx_amount;
-        timestamp = fill.ts;
-        transaction_type = Primitives.Trade {
-          order_id = fill.order_id;
-          side = fill.side;
-          price = fill.price;
-          qty = fill.qty;
-        };
-        cost_basis = None;
-        total_cost = None;
-        balance_after = new_quote_total_balance;
-      } in
-      let%lwt _ = Transaction_history.add_transaction quote_tx in
-      Lwt.return_unit
-  | None -> Lwt.return_unit
-  ) >>= fun () ->
-   debug_f ~section "Processed fill event for %s: %s %.8f @ %s"
-     fill.symbol
-     (match fill.side with `Buy -> "BUY" | `Sell -> "SELL")
-     (float_of_string (Primitives.Qty.to_string fill.qty))
-     (Primitives.Price.to_string fill.price)
+        let quote_tx = {
+          Primitives.id = Primitives.Id.gen ();
+          asset = quote_asset;
+          amount = quote_tx_amount;
+          timestamp = fill.ts;
+          transaction_type = Primitives.Trade {
+            order_id = fill.order_id;
+            side = fill.side;
+            price = fill.price;
+            qty = fill.qty;
+          };
+          cost_basis = None;
+          total_cost = None;
+          balance_after = new_quote_total_balance;
+        } in
+        let%lwt _ = Transaction_history.add_transaction quote_tx in
+        Lwt.return_unit
+    | None -> Lwt.return_unit
+    ) >>= fun () ->
+     debug_f ~section "Processed fill event for %s: %s %.8f @ %s"
+       fill.symbol
+       (match fill.side with `Buy -> "BUY" | `Sell -> "SELL")
+       (float_of_string (Primitives.Qty.to_string fill.qty))
+       (Primitives.Price.to_string fill.price)
+  )
 
 (* Start the balance update processor *)
 let start_balance_update_processor () =
