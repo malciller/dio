@@ -12,15 +12,15 @@ let rgb_of_255 ~r ~g ~b = A.rgb ~r:(r*5/255) ~g:(g*5/255) ~b:(b*5/255)
 let style_primary_text    = A.fg (rgb_of_255 ~r:200 ~g:200 ~b:200) ++ A.bg (rgb_of_255 ~r:15 ~g:15 ~b:15)
 let style_buy_order_text  = A.fg (rgb_of_255 ~r:0 ~g:255 ~b:100) ++ A.st A.bold
 let style_sell_order_text = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100) ++ A.st A.bold
-let style_current_price_text= A.fg (rgb_of_255 ~r:100 ~g:200 ~b:255) ++ A.st A.bold ++ A.st A.underline
-let style_header_border   = A.fg (rgb_of_255 ~r:100 ~g:150 ~b:255) ++ A.st A.bold
+let style_current_price_text= A.fg (rgb_of_255 ~r:0 ~g:200 ~b:200) ++ A.st A.bold ++ A.st A.underline
+let style_header_border   = A.fg (rgb_of_255 ~r:0 ~g:150 ~b:150) ++ A.st A.bold
 let style_logs_accent_text= A.fg (rgb_of_255 ~r:255 ~g:200 ~b:100) ++ A.st A.bold
 
 (* New professional colors *)
 let style_profit_text     = A.fg (rgb_of_255 ~r:50 ~g:255 ~b:100) ++ A.st A.bold
 let style_loss_text       = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100) ++ A.st A.bold
 let style_neutral_text    = A.fg (rgb_of_255 ~r:200 ~g:200 ~b:200)
-let style_highlight_text  = A.fg (rgb_of_255 ~r:255 ~g:255 ~b:150) ++ A.st A.bold
+let style_highlight_text  = A.fg (rgb_of_255 ~r:255 ~g:200 ~b:100) ++ A.st A.bold
 let style_warning_text    = A.fg (rgb_of_255 ~r:255 ~g:150 ~b:50) ++ A.st A.bold
 let style_success_text    = A.fg (rgb_of_255 ~r:100 ~g:255 ~b:150) ++ A.st A.bold
 

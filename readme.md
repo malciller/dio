@@ -99,25 +99,7 @@ Detects and executes multi-leg arbitrage opportunities across different trading 
 
 ## Architecture
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   CLI Dashboard │    │     Engine      │    │     Router      │
-│                 │    │                 │    │                 │
-│ • Real-time UI  │◄──►│ • Orchestration │◄──►│ • Order Mgmt    │
-│ • Price Display │    │ • Buffer Mgmt   │    │ • Kraken API    │
-│ • Order Status  │    │ • Strategy Exec │    │ • REST/WS       │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-                    ┌─────────────────┐
-                    │      Feed       │
-                    │                 │
-                    │ • Market Data   │
-                    │ • WebSocket     │
-                    │ • Price Updates │
-                    └─────────────────┘
-```
+![Dio Dashboard](image.png)
 
 ### Core Components
 
