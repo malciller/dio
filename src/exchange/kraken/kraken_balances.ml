@@ -112,12 +112,13 @@ let handle_balance_update data =
     let is_trade_related =
       let category = try Some (item |> member "category" |> to_string) with _ -> None in
       let wallet_type = try Some (item |> member "wallet_type" |> to_string) with _ -> None in
-      let wallet_id = try Some (item |> member "wallet_id" |> to_string) with _ -> None in
-      let is_internal_transfer = match subtype_opt with
-        | Some subtype -> List.mem subtype ["stakingfromspot"; "spotfromstaking"; "stakingtospot"; "spottostaking"]
+      let is_internal_transfer = event_type = "transfer" || (
+        event_type = "earn" && match subtype_opt with
+        | Some subtype -> List.mem subtype ["deposit"; "withdrawal"]
         | None -> false
+      )
       in
-      let is_staking_trade = event_type = "trade" && category = Some "trade" && (wallet_type = Some "earn" || wallet_id = Some "bonded") in
+      let is_staking_trade = event_type = "trade" && category = Some "trade" && wallet_type = Some "earn" in
       is_internal_transfer || event_type = "trade" || is_staking_trade
     in
 
@@ -127,11 +128,11 @@ let handle_balance_update data =
     | Some amount ->
         let old_balance = Hashtbl.find_opt balances asset |> Option.value ~default:0.0 in
         let new_total_balance = old_balance +. amount in
-        Hashtbl.replace balances asset new_total_balance;
 
         if is_trade_related then
-          debug_f ~section "Skipping tx generation for trade-related event on %s, balance updated to %.8f" asset new_total_balance
-        else
+          debug_f ~section "Skipping balance update for trade-related event on %s, waiting for fill." asset
+        else (
+          Hashtbl.replace balances asset new_total_balance;
           let tx_type =
             match event_type with
             | "earn" | "staking" -> if amount > 0.0 then Primitives.Staking_Reward else Primitives.Withdrawal
@@ -163,6 +164,7 @@ let handle_balance_update data =
               tx
           in
           Transaction_history.add_transaction final_tx
+        )
   )
 
 let handle_balances_message msg =
@@ -256,9 +258,14 @@ let handle_fill_event fill =
     with Not_found -> (fill.symbol, None)
   in
 
+  (* Update base asset balance *)
+  let old_base_balance = Hashtbl.find_opt balances base_asset |> Option.value ~default:0.0 in
+  let new_base_balance = old_base_balance +. base_tx.amount in
+  Hashtbl.replace balances base_asset new_base_balance;
+
   let updated_base_tx = { base_tx with
     asset = base_asset;
-    balance_after = (Hashtbl.find_opt balances base_asset |> Option.value ~default:0.0)
+    balance_after = new_base_balance;
   } in
   let%lwt _ = Transaction_history.add_transaction updated_base_tx in
 
@@ -271,6 +278,11 @@ let handle_fill_event fill =
         | `Buy -> -.quote_amount
         | `Sell -> quote_amount
       in
+
+      (* Update quote asset balance *)
+      let old_quote_balance = Hashtbl.find_opt balances quote_asset |> Option.value ~default:0.0 in
+      let new_quote_balance = old_quote_balance +. quote_tx_amount in
+      Hashtbl.replace balances quote_asset new_quote_balance;
 
       let quote_tx = {
         Primitives.id = Primitives.Id.gen ();
@@ -285,7 +297,7 @@ let handle_fill_event fill =
         };
         cost_basis = None;
         total_cost = None;
-        balance_after = (Hashtbl.find_opt balances quote_asset |> Option.value ~default:0.0);
+        balance_after = new_quote_balance;
       } in
       let%lwt _ = Transaction_history.add_transaction quote_tx in
       Lwt.return_unit
