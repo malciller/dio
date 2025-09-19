@@ -13,11 +13,6 @@
   - Execution Engine: Sequential order execution with fill monitoring and balance updates
   - Risk Management: Concurrent execution limits, balance validation, and trade size optimization
 
-  PERFORMANCE OPTIMIZATIONS:
-  - Cached graph representation updated incrementally from orderbook changes
-  - Fast O(n³) triangle detection for common 3-asset cycles
-  - Lazy evaluation of general cycles for larger graphs (>20 assets)
-  - Concurrent execution limiting to prevent over-leveraging
 *)
 
 open Lwt.Infix
@@ -93,6 +88,18 @@ and arbitrage_cycle = {
   trade_sizes: float list;  (* Trade sizes for each leg *)
   bottleneck_volume: float; (* Limiting volume in base asset *)
 }
+
+type single_pair_opportunity = {
+  symbol: string;
+  buy_price: Primitives.Price.t;
+  sell_price: Primitives.Price.t;
+  qty: Primitives.Qty.t;
+  profit_pct: float;
+}
+
+type trade_opportunity =
+  | Arbitrage_Cycle of arbitrage_cycle
+  | Single_Pair_Spread of single_pair_opportunity
 
 (*
   BELLMAN-FORD ALGORITHM FOR ARBITRAGE DETECTION
@@ -504,6 +511,74 @@ let apply_precision_constraints pair_symbol qty =
   | None ->
       max qty (get_min_order_size pair_symbol)
 
+(** Detect profitable single-pair spread opportunities.
+
+    Identifies pairs with a wide enough bid-ask spread to place maker orders on both
+    sides and capture a profit.
+
+    @param symbols List of trading pair symbols to check
+    @param profit_threshold_pct Minimum required profit percentage after fees
+    @return List of profitable single-pair opportunities
+*)
+let detect_single_pair_opportunities symbols profit_threshold_pct : single_pair_opportunity list Lwt.t =
+  let opportunities = ref [] in
+  Lwt_list.iter_s (fun symbol ->
+    match Kraken.Kraken_orderbook.get_orderbook symbol with
+    | None -> Lwt.return_unit
+    | Some orderbook ->
+        (match orderbook.bids, orderbook.asks with
+         | top_bid :: _, top_ask :: _ ->
+             let maker_fee = get_fee_rate symbol true in
+             let required_profit = (2.0 *. maker_fee) +. profit_threshold_pct in
+
+             (match Kraken.Kraken_incoming_data.get_precisions symbol with
+              | Some (price_precision, qty_precision) ->
+                  let price_increment = 10.0 ** (-. (float_of_int price_precision)) in
+                  let our_bid_price_float = top_bid.price +. price_increment in
+                  let our_ask_price_float = top_ask.price -. price_increment in
+
+                  if our_ask_price_float > our_bid_price_float then (
+                    let profit_pct = (our_ask_price_float -. our_bid_price_float) /. our_bid_price_float in
+
+                    if profit_pct > required_profit then (
+                      let base_asset, quote_asset = extract_assets symbol in
+                      let base_balance = get_asset_balance base_asset in
+                      let quote_balance = get_asset_balance quote_asset in
+                      
+                      let qty_from_quote = quote_balance /. our_bid_price_float in
+                      
+                      (* Simple risk management: use 10% of available capital for this trade *)
+                      let trade_qty_float = min (base_balance *. 0.1) (qty_from_quote *. 0.1) in
+                      let adjusted_qty_float = apply_precision_constraints symbol trade_qty_float in
+
+                      if adjusted_qty_float > (get_min_order_size symbol) then (
+                        let buy_price = Primitives.Price.of_string_exn ~scale:price_precision (Printf.sprintf "%.8f" our_bid_price_float) in
+                        let sell_price = Primitives.Price.of_string_exn ~scale:price_precision (Printf.sprintf "%.8f" our_ask_price_float) in
+                        let qty = Primitives.Qty.of_string_exn ~scale:qty_precision (Printf.sprintf "%.8f" adjusted_qty_float) in
+                        
+                        let opportunity = {
+                          symbol;
+                          buy_price;
+                          sell_price;
+                          qty;
+                          profit_pct;
+                        } in
+                        opportunities := opportunity :: !opportunities;
+                        debug_f ~section "Found single-pair opportunity for %s: buy @ %s, sell @ %s, qty %s (profit: %.4f%%)"
+                          symbol
+                          (Primitives.Price.to_string buy_price)
+                          (Primitives.Price.to_string sell_price)
+                          (Primitives.Qty.to_string qty)
+                          (profit_pct *. 100.0)
+                      ) else Lwt.return_unit
+                    ) else Lwt.return_unit
+                  ) else Lwt.return_unit
+              | None -> Lwt.return_unit)
+         | _, _ -> Lwt.return_unit)
+  ) symbols >>= fun () ->
+  info_f ~section "Detected %d profitable single-pair opportunities" (List.length !opportunities) >>= fun () ->
+  Lwt.return !opportunities
+
 (** Calculate optimal trade sizes for an arbitrage cycle considering all constraints.
 
     Determines the maximum executable volume for a cycle by finding the bottleneck
@@ -873,6 +948,46 @@ let execute_arbitrage_cycle cycle graph cmd_buffer exec_buffer =
   ) >>= fun () ->
   Lwt.return success
 
+let execute_single_pair_opportunity opportunity cmd_buffer _exec_buffer =
+  let { symbol; buy_price; sell_price; qty; _ } = opportunity in
+  
+  let buy_client_id = Printf.sprintf "sps_%s_buy_%d" symbol (Random.int 1000000) in
+  let sell_client_id = Printf.sprintf "sps_%s_sell_%d" symbol (Random.int 1000000) in
+  
+  let buy_order = Core.Add {
+    dst = "kraken";
+    client_id = buy_client_id;
+    symbol;
+    side = Core.Buy;
+    price = buy_price;
+    qty;
+    tif = Core.GTC;
+    tags = [`Manual];
+  } in
+
+  let sell_order = Core.Add {
+    dst = "kraken";
+    client_id = sell_client_id;
+    symbol;
+    side = Core.Sell;
+    price = sell_price;
+    qty;
+    tif = Core.GTC;
+    tags = [`Manual];
+  } in
+
+  info_f ~section "Executing single-pair opportunity for %s: BUY %.8f @ %s, SELL %.8f @ %s"
+    symbol
+    (Primitives.Qty.to_string qty |> float_of_string) (Primitives.Price.to_string buy_price)
+    (Primitives.Qty.to_string qty |> float_of_string) (Primitives.Price.to_string sell_price) >>= fun () ->
+
+  Ringbuffer.push cmd_buffer buy_order >>= fun () ->
+  Ringbuffer.push cmd_buffer sell_order >>= fun () ->
+  
+  (* For now, we don't wait for fills but assume execution starts.
+     A more robust implementation would monitor fills and manage partial fills/inventory. *)
+  Lwt.return_true
+
 let cancel_pending_orders cycle_exec cmd_buffer =
   Lwt_list.iter_s (fun order_state ->
     if order_state.status = "pending" then (
@@ -936,47 +1051,86 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
     let graph = get_cached_graph () in
 
     detect_arbitrage_cycles graph runtime_cfg.profit_threshold_pct >>= fun cycles ->
+    detect_single_pair_opportunities active_symbols runtime_cfg.profit_threshold_pct >>= fun spread_opportunities ->
+
+    let all_opportunities =
+      (List.map (fun c -> Arbitrage_Cycle c) cycles) @
+      (List.map (fun s -> Single_Pair_Spread s) spread_opportunities)
+    in
+    
+    let sorted_opportunities = List.sort (fun a b ->
+      let profit_a = match a with | Arbitrage_Cycle c -> c.profit_pct | Single_Pair_Spread s -> s.profit_pct in
+      let profit_b = match b with | Arbitrage_Cycle c -> c.profit_pct | Single_Pair_Spread s -> s.profit_pct in
+      compare profit_b profit_a
+    ) all_opportunities in
 
     (if !active_cycles < !max_concurrent_cycles then (
-      let sorted_cycles = List.sort (fun a b -> compare b.profit_pct a.profit_pct) cycles in
-      Lwt_list.iter_s (fun cycle ->
-        let validated_cycle = calculate_trade_sizes cycle graph in
+      Lwt_list.iter_s (fun opportunity ->
+        match opportunity with
+        | Arbitrage_Cycle cycle ->
+          let validated_cycle = calculate_trade_sizes cycle graph in
 
-        if validate_cycle validated_cycle graph then (
-          Lwt_mutex.with_lock cycles_mutex (fun () ->
-            if !active_cycles < !max_concurrent_cycles then (
-              incr active_cycles;
-              Lwt.return_true
-            ) else (
-              Lwt.return_false
-            )
-          ) >>= fun can_execute ->
-
-          if can_execute then (
-            info_f ~section "Executing arbitrage cycle (%d/%d active): %s (profit: %.4f%%, volume: %.8f)"
-              !active_cycles !max_concurrent_cycles
-              (String.concat " -> " validated_cycle.path)
-              (validated_cycle.profit_pct *. 100.0)
-              validated_cycle.bottleneck_volume >>= fun () ->
- 
-             (* Execute cycle asynchronously to avoid blocking arbitrage detection *)
-             Lwt.async (fun () ->
-              execute_arbitrage_cycle validated_cycle graph cmd_buffer exec_buffer >>= fun _success ->
-              Lwt_mutex.with_lock cycles_mutex (fun () ->
-                decr active_cycles;
-                Lwt.return_unit
+          if validate_cycle validated_cycle graph then (
+            Lwt_mutex.with_lock cycles_mutex (fun () ->
+              if !active_cycles < !max_concurrent_cycles then (
+                incr active_cycles;
+                Lwt.return_true
+              ) else (
+                Lwt.return_false
               )
-            );
-            Lwt.return_unit
+            ) >>= fun can_execute ->
+
+            if can_execute then (
+              info_f ~section "Executing arbitrage cycle (%d/%d active): %s (profit: %.4f%%, volume: %.8f)"
+                !active_cycles !max_concurrent_cycles
+                (String.concat " -> " validated_cycle.path)
+                (validated_cycle.profit_pct *. 100.0)
+                validated_cycle.bottleneck_volume >>= fun () ->
+ 
+               (* Execute cycle asynchronously to avoid blocking arbitrage detection *)
+               Lwt.async (fun () ->
+                execute_arbitrage_cycle validated_cycle graph cmd_buffer exec_buffer >>= fun _success ->
+                Lwt_mutex.with_lock cycles_mutex (fun () ->
+                  decr active_cycles;
+                  Lwt.return_unit
+                )
+              );
+              Lwt.return_unit
+            ) else (
+              Lwt.return_unit
+            )
           ) else (
+            debug_f ~section "Cycle validation failed or max concurrent reached: %s"
+              (String.concat " -> " validated_cycle.path) >>= fun () ->
             Lwt.return_unit
           )
-        ) else (
-          debug_f ~section "Cycle validation failed or max concurrent reached: %s"
-            (String.concat " -> " validated_cycle.path) >>= fun () ->
-          Lwt.return_unit
-        )
-      ) sorted_cycles
+        | Single_Pair_Spread opp ->
+            Lwt_mutex.with_lock cycles_mutex (fun () ->
+              if !active_cycles < !max_concurrent_cycles then (
+                incr active_cycles;
+                Lwt.return_true
+              ) else (
+                Lwt.return_false
+              )
+            ) >>= fun can_execute ->
+
+            if can_execute then (
+              info_f ~section "Executing single-pair opportunity (%d/%d active): %s (profit: %.4f%%)"
+                !active_cycles !max_concurrent_cycles
+                opp.symbol (opp.profit_pct *. 100.0) >>= fun () ->
+
+              Lwt.async (fun () ->
+                execute_single_pair_opportunity opp cmd_buffer exec_buffer >>= fun _success ->
+                Lwt_mutex.with_lock cycles_mutex (fun () ->
+                  decr active_cycles;
+                  Lwt.return_unit
+                )
+              );
+              Lwt.return_unit
+            ) else (
+              debug_f ~section "Max concurrent cycles reached, skipping single-pair opportunity for %s" opp.symbol
+            )
+      ) sorted_opportunities
     ) else (
       debug_f ~section "Max concurrent cycles reached (%d), skipping detection" !active_cycles >>= fun () ->
       Lwt.return_unit

@@ -2,42 +2,42 @@
   "assets": [
     {
       "symbol": "BTC/USD",
-      "qty": "0.001475",
-      "grid_interval": "1.0",
+      "qty": "0.00075",
+      "grid_interval": "0.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "ETH/USD",
-      "qty": "0.0085", 
-      "grid_interval": "2.5",
+      "qty": "0.0025", 
+      "grid_interval": "0.75",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "SOL/USD",
-      "qty": "0.2",
-      "grid_interval": "2.5",
+      "qty": "0.046",
+      "grid_interval": "0.75",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "ADA/USD",
-      "qty": "40.0",
-      "grid_interval": "2.5",
+      "qty": "13.0",
+      "grid_interval": "0.75",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },    
     {
       "symbol": "TRX/USD",
-      "qty": "120.0",
-      "grid_interval": "2.5",
+      "qty": "35.0",
+      "grid_interval": "0.75",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "USDG/USD",
-      "qty": "200.0",
+      "qty": "100.0",
       "min_usd_balance": "600.0",
       "strategy": "Orderbook"
     },
