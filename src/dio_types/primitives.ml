@@ -135,3 +135,34 @@ let format_float_precision (value : float) (precision : int) : string =
     Printf.sprintf "%.*f" precision value
   with _ ->
     string_of_float value
+
+(* Transaction types for balance tracking *)
+type transaction_type =
+  | Trade of { order_id : string; side : [`Buy | `Sell]; price : Price.t; qty : Qty.t }
+  | Deposit
+  | Withdrawal
+  | Staking_Reward
+  | Fee
+  | Adjustment
+  | Unknown
+[@@deriving yojson]
+
+(* Transaction record for cost basis tracking *)
+type transaction = {
+  id : string;
+  asset : string;
+  amount : float; (* positive for credits, negative for debits *)
+  timestamp : timestamp;
+  transaction_type : transaction_type;
+  cost_basis : float option; (* USD cost per unit for buys, None for other types *)
+  total_cost : float option; (* total USD cost for the transaction *)
+  balance_after : float; (* balance after this transaction *)
+} [@@deriving yojson]
+
+(* Cost basis tracking for assets *)
+type cost_basis_info = {
+  total_units : float;
+  total_cost_basis : float; (* total USD cost of all units *)
+  average_cost_per_unit : float; (* total_cost_basis / total_units *)
+  last_updated : timestamp;
+} [@@deriving yojson]

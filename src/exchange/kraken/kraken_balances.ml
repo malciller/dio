@@ -9,14 +9,70 @@ let section = Section.make "kraken.balances"
 (* In-memory store for balances *)
 let balances : (string, float) Hashtbl.t = Hashtbl.create(16)
 
+(* Previous balance snapshots for change detection *)
+let previous_balances : (string, float) Hashtbl.t = Hashtbl.create(16)
+
 (* Condition to signal when the initial balance snapshot is received *)
 let balances_initialized = Lwt_condition.create ()
 
 (* Track whether balances have been initialized *)
 let balances_ready = ref false
 
+(* Detect balance change type *)
+let classify_balance_change asset old_balance new_balance =
+  let diff = new_balance -. old_balance in
+  debug_f ~section "Classifying balance change for %s: %.8f -> %.8f (diff: %.8f)"
+    asset old_balance new_balance diff >>= fun () ->
+  if abs_float diff < 0.000001 then
+    Lwt.return_none (* No significant change *)
+  else if diff > 0.0 then
+    (* Positive change - could be deposit, staking reward, or trade *)
+    if old_balance = 0.0 then
+      Lwt.return_some (`Deposit, diff) (* New asset *)
+    else
+      Lwt.return_some (`Credit, diff) (* Generic credit until we can classify better *)
+  else
+    (* Negative change - could be withdrawal, fee, or trade *)
+    Lwt.return_some (`Debit, diff)
+
+(* Process balance change and create transaction record *)
+let process_balance_change asset old_balance new_balance =
+  let%lwt classification = classify_balance_change asset old_balance new_balance in
+  match classification with
+  | Some (change_type, amount) ->
+      let tx_type = match change_type with
+        | `Deposit -> Primitives.Deposit
+        | `Credit -> Primitives.Staking_Reward (* Assume staking reward for now *)
+        | `Debit -> Primitives.Fee (* Assume fee for now *)
+      in
+      let tx = {
+        Primitives.id = Primitives.Id.gen ();
+        asset;
+        amount;
+        timestamp = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+        transaction_type = tx_type;
+        cost_basis = None; (* Will be updated if we can determine price *)
+        total_cost = None;
+        balance_after = new_balance;
+      } in
+      let%lwt _ = Transaction_history.add_transaction tx in
+      debug_f ~section "Balance change detected: %s %.8f (%s)"
+        asset amount
+        (match change_type with
+         | `Deposit -> "DEPOSIT"
+         | `Credit -> "CREDIT"
+         | `Debit -> "DEBIT")
+  | None ->
+      debug_f ~section "No significant balance change for %s" asset
+
 let handle_balance_snapshot data =
   let open Yojson.Safe.Util in
+  Hashtbl.clear previous_balances;
+  (* Copy current balances to previous before clearing *)
+  Hashtbl.iter (fun asset balance ->
+    Hashtbl.replace previous_balances asset balance
+  ) balances;
+
   Hashtbl.clear balances;
   data |> to_list |> Lwt_list.iter_s (fun item ->
     let asset = item |> member "asset" |> to_string in
@@ -33,8 +89,12 @@ let handle_balance_update data =
   data |> to_list |> Lwt_list.iter_s (fun item ->
     let asset = item |> member "asset" |> to_string in
     let new_balance = item |> member "balance" |> to_float in
+    let old_balance = Hashtbl.find_opt balances asset |> Option.value ~default:0.0 in
+
+    (* Process balance change before updating *)
+    process_balance_change asset old_balance new_balance >>= fun () ->
     Hashtbl.replace balances asset new_balance;
-    debug_f ~section "Balance update: %s -> %f" asset new_balance
+    debug_f ~section "Balance update: %s -> %f (was %f)" asset new_balance old_balance
   )
 
 let handle_balances_message msg =
@@ -102,12 +162,37 @@ let initialize_ws_balances_feed (cfg : Config.engine_config) (token : string) =
     connect_and_listen ()
   )
 
-let is_balances_initialized () : bool =
-  !balances_ready
+(* Handle fill events from trading *)
+let handle_fill_event fill =
+  let tx = Transaction_history.transaction_from_fill fill in
+  (* Update balance_after with current balance *)
+  let updated_tx = { tx with
+    balance_after = Hashtbl.find_opt balances fill.symbol |> Option.value ~default:0.0
+  } in
+  let%lwt _ = Transaction_history.add_transaction updated_tx in
+  debug_f ~section "Processed fill event for %s: %s %.8f @ %s"
+    fill.symbol
+    (match fill.side with `Buy -> "BUY" | `Sell -> "SELL")
+    (float_of_string (Primitives.Qty.to_string fill.qty))
+    (Primitives.Price.to_string fill.price)
 
-let get_account_balance () : (string, float) Hashtbl.t Lwt.t =
-  if is_balances_initialized () then (
-    (* WebSocket is already initialized, return balances immediately *)
+(* Initialize transaction history from current balances *)
+let initialize_transaction_history () =
+  if !balances_ready then
+    let balance_list = Hashtbl.to_seq balances |> List.of_seq in
+    Lwt_list.iter_s (fun (asset, balance) ->
+      if balance > 0.000001 then
+        Transaction_history.initialize_from_balance asset balance >>= fun () ->
+        info_f ~section "Initialized transaction history for %s with balance %.8f" asset balance
+      else
+        Lwt.return_unit
+    ) balance_list >>= fun () ->
+    info_f ~section "Initialized transaction history for all assets"
+  else
+    warning_f ~section "Cannot initialize transaction history - balances not ready"
+
+let wait_for_balances () =
+  if !balances_ready then (
     Lwt.return (Hashtbl.copy balances)
   ) else (
     let timeout = 30.0 in (* 30 second timeout *)

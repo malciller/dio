@@ -316,7 +316,7 @@ let compare_assets a b =
   compare (get_priority a) (get_priority b)
 
 let get_balance_info () : balance_info list Lwt.t =
-  Kraken.Kraken_balances.get_account_balance () >>= fun balances ->
+  Kraken.Kraken_balances.wait_for_balances () >>= fun balances ->
   let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
   let on_sell_orders : (string, Kraken.Kraken_common_types.order list) Hashtbl.t = Hashtbl.create 16 in
   let get_base_asset s =
@@ -352,25 +352,46 @@ let get_balance_info () : balance_info list Lwt.t =
         if total_balance < 0.000001 then acc else
         let sell_orders_for_asset = Option.value ~default:[] (Hashtbl.find_opt on_sell_orders asset) in
         let on_orders_balance = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. o.qty) 0.0 sell_orders_for_asset in
-        
-        let unrealized_value_on_orders = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. (o.qty *. o.limit_price)) 0.0 sell_orders_for_asset in
+
+        (* Use transaction history for better cost basis calculation *)
+        let accumulated_cost_opt = Transaction_history.get_accumulated_cost asset (total_balance -. on_orders_balance) in
+        let unrealized_pnl_opt = Transaction_history.get_unrealized_pnl asset (total_balance -. on_orders_balance) price_usd in
+
         let accumulated_balance = total_balance -. on_orders_balance in
-        
-        let highest_sell_price = List.fold_left (fun max_p (o:Kraken.Kraken_common_types.order) -> max max_p o.limit_price) 0.0 sell_orders_for_asset in
-        let unrealized_value_accumulated =
-          if highest_sell_price > 0.0 then
-            accumulated_balance *. highest_sell_price
-          else
-            accumulated_balance *. price_usd (* Fallback to current market value if no sell orders *)
+
+        (* Calculate accumulated value using cost basis if available, otherwise fallback to current price *)
+        let accumulated_value_usd =
+          match accumulated_cost_opt with
+          | Some cost -> cost
+          | None ->
+              if asset = "USD" then 0.0
+              else accumulated_balance *. price_usd
         in
-        
+
+        (* Calculate unrealized value using P&L if available, otherwise fallback to old method *)
+        let unrealized_value_usd =
+          match unrealized_pnl_opt with
+          | Some pnl -> pnl
+          | None ->
+              (* Fallback to old calculation method *)
+              let unrealized_value_on_orders = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. (o.qty *. o.limit_price)) 0.0 sell_orders_for_asset in
+              let highest_sell_price = List.fold_left (fun max_p (o:Kraken.Kraken_common_types.order) -> max max_p o.limit_price) 0.0 sell_orders_for_asset in
+              let unrealized_value_accumulated =
+                if highest_sell_price > 0.0 then
+                  accumulated_balance *. highest_sell_price
+                else
+                  accumulated_balance *. price_usd
+              in
+              unrealized_value_on_orders +. unrealized_value_accumulated
+        in
+
         let info = {
           asset;
           total_balance;
           total_value_usd = total_balance *. price_usd;
           accumulated_balance;
-          accumulated_value_usd = (if asset = "USD" then 0.0 else accumulated_balance *. price_usd);
-          unrealized_value_usd = unrealized_value_on_orders +. unrealized_value_accumulated;
+          accumulated_value_usd;
+          unrealized_value_usd;
         } in
         info :: acc
   ) balances (Lwt.return [])
@@ -741,6 +762,23 @@ let start ~on_quit:(on_quit: unit -> unit Lwt.t) () : Notty_lwt.Term.t =
     get_balance_info () >>= fun balances ->
     let new_frame = !state.frame + 1 in
     state := { !state with frame = new_frame; balances };
+
+    (* Initialize transaction history on first tick if balances are available *)
+    (if new_frame = 1 && balances <> [] then
+      Kraken.Kraken_balances.initialize_transaction_history ()
+    else
+      Lwt.return_unit
+    ) >>= fun () ->
+
+    (* Periodic balance reconciliation (every 60 seconds / 60 frames) *)
+    (if new_frame mod 60 = 0 then
+      Lwt_list.iter_s (fun balance_info ->
+        Transaction_history.reconcile_balance balance_info.asset balance_info.total_balance
+      ) balances
+    else
+      Lwt.return_unit
+    ) >>= fun () ->
+
     Notty_lwt.Term.image term_instance (render !state) >>= fun () ->
     Lwt.pause () >>= fun () ->
     let sleep_time = 1.0 in

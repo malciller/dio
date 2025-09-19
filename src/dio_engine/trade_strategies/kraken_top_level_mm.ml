@@ -65,7 +65,7 @@ module State = struct
 
   (** Fetch and update the USD balance from Kraken. *)
   let refresh_usd_balance () =
-    K.Kraken_balances.get_account_balance () >>= fun balances ->
+    K.Kraken_balances.wait_for_balances () >>= fun balances ->
     let z_usd_balance = Hashtbl.find_opt balances "ZUSD" |> Option.value ~default:0.0 in
     let usd_balance_val = Hashtbl.find_opt balances "USD" |> Option.value ~default:0.0 in
     let new_balance = z_usd_balance +. usd_balance_val in
@@ -315,20 +315,30 @@ module State = struct
               let order_side_str = match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown" in
               info_f ~section "Found original order %s: symbol=%s side=%s price=%.8f"
                 order_id order.order_symbol order_side_str order.limit_price >>= fun () ->
-              
+
+              (* Record the fill in transaction history *)
+              let fill_event = {
+                Event.src = "kraken";
+                symbol = order.order_symbol;
+                order_id;
+                side = (match order.side with Some Buy -> `Buy | Some Sell -> `Sell | None -> `Buy); (* fallback *)
+                qty = qty;
+                price = price;
+                ts = Unix.time () |> Int64.of_float;
+              } in
+              K.Kraken_balances.handle_fill_event fill_event >>= fun () ->
+
               (* Sync orders first to get the latest state *)
               sync_open_orders () >>= fun () ->
-              
+
               (* Check if the order still exists after sync - if not, it was completely filled *)
               if not (Hashtbl.mem open_orders order_id) then (
                 info_f ~section "Order %s completely filled" order_id >>= fun () ->
 
                 (* Only create new orders if it was a buy order that was filled *)
                 if order.side = Some Core.Buy then (
-                  info_f ~section "Buy order %s filled, creating new orders for %s" order_id symbol >>= fun () ->
                   create_initial_order runtime_cfg symbol cmd_buffer
                 ) else (
-                  info_f ~section "Sell order %s filled, no new orders needed" order_id >>= fun () ->
                   Lwt.return_unit
                 )
               ) else (
@@ -367,11 +377,9 @@ module State = struct
                 
                 (* Only create new orders if it was a buy order that was cancelled/rejected *)
                 if side = Some Core.Buy then (
-                  info_f ~section "Buy order %s cancelled/rejected, creating new orders for %s" order_id symbol >>= fun () ->
                   sync_open_orders () >>= fun () ->
                   create_initial_order runtime_cfg symbol cmd_buffer
                 ) else (
-                  info_f ~section "Sell order %s cancelled/rejected, no new orders needed" order_id >>= fun () ->
                   Lwt.return_unit
                 )
             | _ ->
@@ -395,10 +403,8 @@ module State = struct
 
                 (* Only create new orders if it was a buy order that was filled *)
                 if order.side = Some Core.Buy then (
-                  info_f ~section "Buy order %s fully filled, creating new orders for %s" order_id order.order_symbol >>= fun () ->
                   create_initial_order runtime_cfg order.order_symbol cmd_buffer
                 ) else (
-                  info_f ~section "Sell order %s fully filled, no new orders needed" order_id >>= fun () ->
                   Lwt.return_unit
                 )
             | _ ->
