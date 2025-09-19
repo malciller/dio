@@ -24,7 +24,10 @@ let setup_logging () =
       (* Dashboard mode *)
       make
         ~output:(fun section level messages ->
-          if List.length messages > 0 then
+          if Section.name section = "dashboard" then
+            (* Prevent recursion from dashboard logging *)
+            Lwt.return_unit
+          else if List.length messages > 0 then
             let first_message_string = List.hd messages in
             let timestamp = 
               let tm = Unix.localtime (Unix.time ()) in
