@@ -6,6 +6,10 @@ module Stats = Stats
 module M = State.SMap
 module StringSet = Set.Make(String)
 
+let is_stablecoin asset =
+  let stablecoins = ["USD"; "USDT"; "USDC"; "USDG"; "USDR"] in
+  List.mem asset stablecoins
+
 (* ─── Enhanced Color Palette & Styles ───────────────────────────────────────── *)
 (* Professional dark theme with neon accents *)
 let rgb_of_255 ~r ~g ~b = A.rgb ~r:(r*5/255) ~g:(g*5/255) ~b:(b*5/255)
@@ -316,6 +320,7 @@ let compare_assets a b =
   compare (get_priority a) (get_priority b)
 
 let get_balance_info () : balance_info list Lwt.t =
+
   Kraken.Kraken_balances.wait_for_balances () >>= fun balances ->
   let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
   let on_sell_orders : (string, Kraken.Kraken_common_types.order list) Hashtbl.t = Hashtbl.create 16 in
@@ -355,7 +360,6 @@ let get_balance_info () : balance_info list Lwt.t =
 
         (* Use transaction history for better cost basis calculation *)
         let accumulated_cost_opt = Transaction_history.get_accumulated_cost asset (total_balance -. on_orders_balance) in
-        let unrealized_pnl_opt = Transaction_history.get_unrealized_pnl asset (total_balance -. on_orders_balance) price_usd in
 
         let accumulated_balance = total_balance -. on_orders_balance in
 
@@ -368,21 +372,17 @@ let get_balance_info () : balance_info list Lwt.t =
               else accumulated_balance *. price_usd
         in
 
-        (* Calculate unrealized value using P&L if available, otherwise fallback to old method *)
+        (* Calculate unrealized value based on pending sell orders *)
         let unrealized_value_usd =
-          match unrealized_pnl_opt with
-          | Some pnl -> pnl
-          | None ->
-              (* Fallback to old calculation method *)
-              let unrealized_value_on_orders = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. (o.qty *. o.limit_price)) 0.0 sell_orders_for_asset in
-              let highest_sell_price = List.fold_left (fun max_p (o:Kraken.Kraken_common_types.order) -> max max_p o.limit_price) 0.0 sell_orders_for_asset in
-              let unrealized_value_accumulated =
-                if highest_sell_price > 0.0 then
-                  accumulated_balance *. highest_sell_price
-                else
-                  accumulated_balance *. price_usd
-              in
-              unrealized_value_on_orders +. unrealized_value_accumulated
+          let unrealized_value_on_orders = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. (o.qty *. o.limit_price)) 0.0 sell_orders_for_asset in
+          let highest_sell_price = List.fold_left (fun max_p (o:Kraken.Kraken_common_types.order) -> max max_p o.limit_price) 0.0 sell_orders_for_asset in
+          let unrealized_value_accumulated =
+            if highest_sell_price > 0.0 then
+              accumulated_balance *. highest_sell_price
+            else
+              accumulated_balance *. price_usd
+          in
+          unrealized_value_on_orders +. unrealized_value_accumulated
         in
 
         let info = {
@@ -402,7 +402,7 @@ let get_balance_info () : balance_info list Lwt.t =
 
 let render_balances_section (balances: balance_info list) term_width =
   let open I in
-  let content_width = term_width - 4 in
+  let content_width = term_width - 2 in
   if balances = [] then I.empty
   else
     let horiz_border_char_str_for_balances = "\u{2500}" in
@@ -423,15 +423,15 @@ let render_balances_section (balances: balance_info list) term_width =
     let available_for_columns = content_width - num_borders in
     let min_for_columns = min_asset + min_total + min_value + min_accum + min_unreal in
     let extra_space = max 0 (available_for_columns - min_for_columns) in
-    let num_expandable = 4 in  (* total, value, accum, unreal *)
+    let num_expandable = 5 in  (* asset, total, value, accum, unreal *)
     let extra_per = extra_space / num_expandable in
     let extra_rem = extra_space mod num_expandable in
 
-    let asset_w = min_asset in
-    let total_w = min_total + extra_per + (if 1 <= extra_rem then 1 else 0) in
-    let value_w = min_value + extra_per + (if 2 <= extra_rem then 1 else 0) in
-    let accum_w = min_accum + extra_per + (if 3 <= extra_rem then 1 else 0) in
-    let unreal_w = min_unreal + extra_per + (if 4 <= extra_rem then 1 else 0) in
+    let asset_w = min_asset + extra_per + (if 1 <= extra_rem then 1 else 0) in
+    let total_w = min_total + extra_per + (if 2 <= extra_rem then 1 else 0) in
+    let value_w = min_value + extra_per + (if 3 <= extra_rem then 1 else 0) in
+    let accum_w = min_accum + extra_per + (if 4 <= extra_rem then 1 else 0) in
+    let unreal_w = min_unreal + extra_per + (if 5 <= extra_rem then 1 else 0) in
 
     (* Ensure minimums if screen too small *)
     let asset_w = max min_asset asset_w in
@@ -442,7 +442,7 @@ let render_balances_section (balances: balance_info list) term_width =
 
     (* Header *)
     let header = I.hcat [
-      I.string style_header_border "┃ ";
+      I.string style_header_border "┃";
       I.string (style_highlight_text ++ A.st A.bold) (Printf.sprintf "%-*s" asset_w "Asset");
       I.string style_header_border "│";
       I.string style_primary_text (Printf.sprintf "%*s" total_w "Total");
@@ -452,7 +452,7 @@ let render_balances_section (balances: balance_info list) term_width =
       I.string style_primary_text (Printf.sprintf "%*s" accum_w "Accumulated Value");
       I.string style_header_border "│";
       I.string style_primary_text (Printf.sprintf "%*s" unreal_w "Unrealized Value");
-      I.string style_header_border " ┃";
+      I.string style_header_border "┃";
     ] in
 
     let rows = List.map (fun info ->
@@ -481,7 +481,7 @@ let render_balances_section (balances: balance_info list) term_width =
             I.string display_style (Printf.sprintf "%*s" unreal_w dollar_str)
       in
       I.hcat [
-        I.string style_header_border "┃ ";
+        I.string style_header_border "┃";
         I.string style_asset_name (Printf.sprintf "%-*s" asset_w info.asset);
         I.string style_header_border "│";
         I.string style_primary_text (Printf.sprintf "%*s" total_w (Printf.sprintf "%.8f %s" info.total_balance info.asset));
@@ -491,7 +491,7 @@ let render_balances_section (balances: balance_info list) term_width =
         I.string style_success_text (Printf.sprintf "%*s" accum_w (Printf.sprintf "$%.2f" info.accumulated_value_usd));
         I.string style_header_border "│";
         unrealized_display;
-        I.string style_header_border " ┃";
+        I.string style_header_border "┃";
       ]
     ) balances in
 
@@ -524,7 +524,7 @@ let render_balances_section (balances: balance_info list) term_width =
     in
     let total_row =
       I.hcat [
-        I.string style_header_border "┃ ";
+        I.string style_header_border "┃";
         I.string (style_highlight_text ++ A.st A.bold) (Printf.sprintf "%-*s" asset_w "TOTAL");
         I.string style_header_border "│";
         I.string style_neutral_text (Printf.sprintf "%*s" total_w "");
@@ -534,7 +534,7 @@ let render_balances_section (balances: balance_info list) term_width =
         I.string (style_success_text ++ A.st A.bold) (Printf.sprintf "%*s" accum_w (Printf.sprintf "$%.2f" total_accumulated_value));
         I.string style_header_border "│";
         total_unrealized_display;
-        I.string style_header_border " ┃";
+        I.string style_header_border "┃";
       ] in
 
     let sep = I.string style_header_border (
@@ -773,7 +773,7 @@ let start ~on_quit:(on_quit: unit -> unit Lwt.t) () : Notty_lwt.Term.t =
     (* Periodic balance reconciliation (every 60 seconds / 60 frames) *)
     (if new_frame mod 60 = 0 then
       Lwt_list.iter_s (fun balance_info ->
-        Transaction_history.reconcile_balance balance_info.asset balance_info.total_balance
+        Dio_types.Transaction_history.reconcile_balance balance_info.asset balance_info.total_balance
       ) balances
     else
       Lwt.return_unit

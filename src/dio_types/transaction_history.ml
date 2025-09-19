@@ -10,6 +10,10 @@ let section = Lwt_log_core.Section.make "transaction_history"
 let transaction_history : (string, transaction list) Hashtbl.t = Hashtbl.create 64
 let cost_basis_cache : (string, cost_basis_info) Hashtbl.t = Hashtbl.create 64
 
+let is_stablecoin asset =
+  let stablecoins = ["USD"; "USDT"; "USDC"; "USDG"; "USDR"] in
+  List.mem asset stablecoins
+
 (* Get transactions for an asset *)
 let get_transactions asset =
   Hashtbl.find_opt transaction_history asset |> Option.value ~default:[]
@@ -37,7 +41,7 @@ let calculate_cost_basis asset =
     | Deposit | Staking_Reward ->
         (* For deposits/rewards, we need to estimate value at time of transaction *)
         (* This is a simplified approach - in production you'd want historical prices *)
-        (units +. tx.amount, cost +. (abs_float tx.amount *. Option.value tx.cost_basis ~default:0.0))
+        (units +. tx.amount, cost +. (abs_float tx.amount *. Option.value tx.cost_basis ~default:(if is_stablecoin asset then 1.0 else 0.0)))
     | _ -> (units, cost)
   ) (0.0, 0.0) buy_transactions in
 

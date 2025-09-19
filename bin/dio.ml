@@ -75,7 +75,8 @@ let setup_logging () =
   default := default_logger;
 
   (* Specific rules for log levels and sections. Amended to the rules above.*) 
-   (* Lwt_log.add_rule "notification.discord" Info;  *)
+   (* Lwt_log.add_rule "kraken.balances" Info;  *)
+   (* Lwt_log.add_rule "transaction_history" Info;  *)
   
   
   ()
