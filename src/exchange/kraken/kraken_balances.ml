@@ -104,41 +104,65 @@ let handle_balance_update data =
     debug_f ~section "Full balance update item: %s" (Yojson.Safe.to_string item) >>= fun () ->
 
     let asset = item |> member "asset" |> to_string in
-    let new_balance = item |> member "balance" |> to_float in
-    let old_balance = Hashtbl.find_opt balances asset |> Option.value ~default:0.0 in
     let event_type = item |> member "type" |> to_string in
     let subtype_opt = try Some (item |> member "subtype" |> to_string) with _ -> None in
-    let category = item |> member "category" |> to_string in
-    let wallet_type = item |> member "wallet_type" |> to_string in
-    let wallet_id = item |> member "wallet_id" |> to_string in
 
-    let is_trade = event_type = "trade" in
-    let is_staking = event_type = "staking" in
-    let is_earn = event_type = "earn" in
-    let is_staking_trade = is_trade && category = "trade" && (wallet_type = "earn" || wallet_id = "bonded") in
-    let is_internal_transfer = match subtype_opt with
-      | Some subtype -> List.mem subtype ["stakingfromspot"; "spotfromstaking"; "stakingtospot"; "spottostaking"]
-      | None -> false
+    (* Trade-related events are handled via the fill feed, so we skip tx generation here
+       but MUST still update the balance correctly using the amount field. *)
+    let is_trade_related =
+      let category = try Some (item |> member "category" |> to_string) with _ -> None in
+      let wallet_type = try Some (item |> member "wallet_type" |> to_string) with _ -> None in
+      let wallet_id = try Some (item |> member "wallet_id" |> to_string) with _ -> None in
+      let is_internal_transfer = match subtype_opt with
+        | Some subtype -> List.mem subtype ["stakingfromspot"; "spotfromstaking"; "stakingtospot"; "spottostaking"]
+        | None -> false
+      in
+      let is_staking_trade = event_type = "trade" && category = Some "trade" && (wallet_type = Some "earn" || wallet_id = Some "bonded") in
+      is_internal_transfer || event_type = "trade" || is_staking_trade
     in
 
-    if is_earn then (
-      let amount = item |> member "amount" |> to_float in
-      let updated_balance = old_balance +. amount in
-      Hashtbl.replace balances asset updated_balance;
-      process_balance_change asset old_balance updated_balance >>= fun () ->
-      debug_f ~section "Balance update (via earn amount): %s -> %f (was %f)" asset updated_balance old_balance
-    ) else if is_internal_transfer || is_trade || is_staking || is_staking_trade then (
-      let skip_reason = if is_trade then "trade" else if is_staking then "staking" else if is_staking_trade then "staking trade" else "internal transfer" in
-      debug_f ~section "Skipping %s for %s: %s %s (wallet: %s/%s)" 
-        skip_reason asset event_type (Option.value ~default:"" subtype_opt) wallet_type wallet_id >>= fun () ->
-      Hashtbl.replace balances asset new_balance;
-      Lwt.return_unit
-    ) else (
-      (* Process balance change before updating *)
-      process_balance_change asset old_balance new_balance >>= fun () ->
-      Hashtbl.replace balances asset new_balance;
-      debug_f ~section "Balance update: %s -> %f (was %f)" asset new_balance old_balance
-    )
+    match item |> member "amount" |> to_float_option with
+    | None ->
+        warning_f ~section "Balance update for %s has no 'amount' field. Cannot process update: %s" asset (Yojson.Safe.to_string item)
+    | Some amount ->
+        let old_balance = Hashtbl.find_opt balances asset |> Option.value ~default:0.0 in
+        let new_total_balance = old_balance +. amount in
+        Hashtbl.replace balances asset new_total_balance;
+
+        if is_trade_related then
+          debug_f ~section "Skipping tx generation for trade-related event on %s, balance updated to %.8f" asset new_total_balance
+        else
+          let tx_type =
+            match event_type with
+            | "earn" | "staking" -> if amount > 0.0 then Primitives.Staking_Reward else Primitives.Withdrawal
+            | "deposit" -> Primitives.Deposit
+            | "withdrawal" -> Primitives.Withdrawal
+            | _ -> if amount > 0.0 then Primitives.Deposit else Primitives.Fee (* Fallback for unknown types *)
+          in
+          let tx = {
+            Primitives.id = Primitives.Id.gen ();
+            asset;
+            amount;
+            timestamp = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+            transaction_type = tx_type;
+            cost_basis = None;
+            total_cost = None;
+            balance_after = new_total_balance;
+          } in
+
+          let final_tx =
+            if tx_type = Primitives.Staking_Reward || tx_type = Primitives.Deposit then
+              let pair = asset ^ "/USD" in
+              match Hashtbl.find_opt Dio_types.State.global_state.prices pair with
+              | Some pi ->
+                  let p = pi.price in
+                  let price_float = Float.of_string (Primitives.Price.to_string p) in
+                  { tx with cost_basis = Some price_float; total_cost = Some (price_float *. amount) }
+              | None -> tx
+            else
+              tx
+          in
+          Transaction_history.add_transaction final_tx
   )
 
 let handle_balances_message msg =
@@ -221,23 +245,57 @@ let initialize_ws_balances_feed (cfg : Config.engine_config) (token : string) =
 
 (* Handle fill events from trading *)
 let handle_fill_event fill =
-  let tx = Transaction_history.transaction_from_fill fill in
-  (* Update balance_after with current balance of the base asset (e.g., SOL for SOL/USD) *)
-  let base_asset =
+  let base_tx = Transaction_history.transaction_from_fill fill in
+
+  let base_asset, quote_asset_opt =
     try
       let idx = String.index fill.symbol '/' in
-      String.sub fill.symbol 0 idx
-    with Not_found -> fill.symbol
+      let base = String.sub fill.symbol 0 idx in
+      let quote = String.sub fill.symbol (idx + 1) (String.length fill.symbol - idx - 1) in
+      (base, Some quote)
+    with Not_found -> (fill.symbol, None)
   in
-  let updated_tx = { tx with
-    balance_after = Hashtbl.find_opt balances base_asset |> Option.value ~default:0.0
+
+  let updated_base_tx = { base_tx with
+    asset = base_asset;
+    balance_after = (Hashtbl.find_opt balances base_asset |> Option.value ~default:0.0)
   } in
-  let%lwt _ = Transaction_history.add_transaction updated_tx in
-  debug_f ~section "Processed fill event for %s: %s %.8f @ %s"
-    fill.symbol
-    (match fill.side with `Buy -> "BUY" | `Sell -> "SELL")
-    (float_of_string (Primitives.Qty.to_string fill.qty))
-    (Primitives.Price.to_string fill.price)
+  let%lwt _ = Transaction_history.add_transaction updated_base_tx in
+
+  (match quote_asset_opt with
+  | Some quote_asset ->
+      let qty_float = float_of_string (Primitives.Qty.to_string fill.qty) in
+      let price_float = float_of_string (Primitives.Price.to_string fill.price) in
+      let quote_amount = qty_float *. price_float in
+      let quote_tx_amount = match fill.side with
+        | `Buy -> -.quote_amount
+        | `Sell -> quote_amount
+      in
+
+      let quote_tx = {
+        Primitives.id = Primitives.Id.gen ();
+        asset = quote_asset;
+        amount = quote_tx_amount;
+        timestamp = fill.ts;
+        transaction_type = Primitives.Trade {
+          order_id = fill.order_id;
+          side = fill.side;
+          price = fill.price;
+          qty = fill.qty;
+        };
+        cost_basis = None;
+        total_cost = None;
+        balance_after = (Hashtbl.find_opt balances quote_asset |> Option.value ~default:0.0);
+      } in
+      let%lwt _ = Transaction_history.add_transaction quote_tx in
+      Lwt.return_unit
+  | None -> Lwt.return_unit
+  ) >>= fun () ->
+   debug_f ~section "Processed fill event for %s: %s %.8f @ %s"
+     fill.symbol
+     (match fill.side with `Buy -> "BUY" | `Sell -> "SELL")
+     (float_of_string (Primitives.Qty.to_string fill.qty))
+     (Primitives.Price.to_string fill.price)
 
 (* Initialize transaction history from current balances *)
 let initialize_transaction_history () =

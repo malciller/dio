@@ -196,9 +196,21 @@ let reconcile_balance asset current_balance =
         (Printf.sprintf "Created positive adjustment for %s: %.8f" asset discrepancy)
     ) else (
       Lwt_log_core.warning ~section
-        (Printf.sprintf "Negative discrepancy detected for %s: current=%.8f expected=%.8f discrepancy=%.8f (skipping adjustment)"
+        (Printf.sprintf "Negative discrepancy detected for %s: current=%.8f expected=%.8f discrepancy=%.8f (adding negative adjustment)"
            asset current_balance expected_balance discrepancy) >>= fun () ->
-      Lwt.return_unit
+      let adjustment_tx = {
+        id = Id.gen ();
+        asset;
+        amount = discrepancy;
+        timestamp = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+        transaction_type = Adjustment;
+        cost_basis = None;
+        total_cost = None;
+        balance_after = current_balance;
+      } in
+      add_transaction adjustment_tx >>= fun () ->
+      Lwt_log_core.info ~section
+        (Printf.sprintf "Created negative adjustment for %s: %.8f" asset discrepancy)
     )
   ) else (
     Lwt_log_core.debug ~section
