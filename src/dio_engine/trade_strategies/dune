@@ -5,6 +5,7 @@
  (libraries
   dio.dio_types
   dio.state
+  dio.engine
   lwt
   yojson
   cohttp-lwt-unix

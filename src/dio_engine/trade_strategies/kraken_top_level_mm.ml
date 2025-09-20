@@ -45,6 +45,7 @@
 open Lwt.Infix
 open Dio_types
 open Lwt_log_core
+open Engine
 module K = Kraken
 
 let section = Lwt_log_core.Section.make "engine.strategy.kraken.orderbook"
