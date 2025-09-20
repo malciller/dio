@@ -76,7 +76,7 @@ Edit `_config.json` (example):
 ## Notification
 
 ### Discord
-![Balances](balances.img)
+![Balances](balances.png)
 
 ![Buy Alert](buy.png)
 
