@@ -8,6 +8,16 @@ open Dio_types.Core
 let get_current_time () =
   Ptime.to_rfc3339 (Ptime_clock.now ())
 
+let get_formatted_server_time () =
+  let tm = Unix.localtime (Unix.gettimeofday ()) in
+  let year = tm.Unix.tm_year + 1900 in
+  let month = tm.Unix.tm_mon + 1 in
+  let day = tm.Unix.tm_mday in
+  let hour = tm.Unix.tm_hour in
+  let min = tm.Unix.tm_min in
+  let sec = tm.Unix.tm_sec in
+  Printf.sprintf "%02d/%02d/%04d %02d:%02d:%02d" day month year hour min sec
+
 type fill_notification_payload = {
   side: side;
   asset_name: string;
@@ -48,13 +58,12 @@ let make_order_embed (payload: fill_notification_payload) =
             ("url", `String "https://diophantsolutions.com")
           ]);
          ("title", `String (Printf.sprintf "%s %s" (String.uppercase_ascii side_str) payload.asset_name));
-         ("description", `String "Order filled successfully");
          ("color", `Int color);
          ("fields", `List [
             `Assoc [("name", `String "Quantity"); ("value", `String payload.qty_str); ("inline", `Bool true)];
             `Assoc [("name", `String "Value"); ("value", `String payload.value_str); ("inline", `Bool true)]
           ]);
-         ("timestamp", `String (Ptime.to_rfc3339 (Ptime_clock.now ())))
+         ("footer", `Assoc [("text", `String (get_formatted_server_time ()))])
        ]
      ]);
     ("components", `List [
@@ -94,7 +103,7 @@ let make_balance_embed (payload: balance_notification_payload) =
            ("title", `String "Exchange Balance");
            ("description", `String "No significant balances found");
            ("color", `Int 0x3498DB);
-           ("timestamp", `String (Ptime.to_rfc3339 (Ptime_clock.now ())))
+           ("footer", `Assoc [("text", `String (get_formatted_server_time ()))])
          ]
        ])
     ]
@@ -117,10 +126,9 @@ let make_balance_embed (payload: balance_notification_payload) =
               ("url", `String "https://diophantsolutions.com")
             ]);
            ("title", `String "Exchange Balance");
-           ("description", `String "Current portfolio balances across all assets");
            ("color", `Int 0x3498DB);  (* blue *)
            ("fields", `List fields);
-           ("timestamp", `String (Ptime.to_rfc3339 (Ptime_clock.now ())))
+           ("footer", `Assoc [("text", `String (get_formatted_server_time ()))])
          ]
        ])
     ]
