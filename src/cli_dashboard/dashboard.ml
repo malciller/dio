@@ -651,8 +651,11 @@ let get_balance_info () : balance_info list Lwt.t =
         (* Debug EURR liquid balance tracking *)
         let _ =
           if asset = "EURR" then
-            Printf.printf "EURR balance breakdown: spot=%.8f, earn=%.8f, liquid=%.8f\n"
-              spot_balance earn_balance liquid_balance
+            Lwt.ignore_result (
+              Lwt_log_core.info ~section:(Lwt_log_core.Section.make "dashboard")
+                (Printf.sprintf "EURR balance breakdown: spot=%.8f, earn=%.8f, liquid=%.8f"
+                  spot_balance earn_balance liquid_balance)
+            )
           else
             ()
         in
@@ -673,13 +676,21 @@ let get_balance_info () : balance_info list Lwt.t =
         (* Debug EURR orders if negative accumulated value detected *)
         let accumulated_balance =
           if asset = "EURR" && raw_accumulated_balance < 0.0 then
-            let _ = Printf.printf "EURR negative accumulated value detected! total_balance=%.8f, qty_on_sell_orders=%.8f, raw_accumulated_balance=%.8f\n"
-                total_balance qty_on_sell_orders raw_accumulated_balance in
+            let _ =
+              Lwt.ignore_result (
+                Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "dashboard")
+                  (Printf.sprintf "EURR negative accumulated value detected! total_balance=%.8f, qty_on_sell_orders=%.8f, raw_accumulated_balance=%.8f"
+                    total_balance qty_on_sell_orders raw_accumulated_balance)
+              )
+            in
             List.iter (fun (o:Kraken.Kraken_common_types.order) ->
-              Printf.printf "EURR sell order: id=%s, symbol=%s, status=%s, qty=%.8f, price=%.8f\n"
-                o.order_id o.order_symbol
-                (match o.status with Core.Open -> "Open" | Core.Filled -> "Filled" | Core.Canceled -> "Canceled" | Core.Rejected -> "Rejected")
-                o.qty o.limit_price
+              Lwt.ignore_result (
+                Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "dashboard")
+                  (Printf.sprintf "EURR sell order: id=%s, symbol=%s, status=%s, qty=%.8f, price=%.8f"
+                    o.order_id o.order_symbol
+                    (match o.status with Core.Open -> "Open" | Core.Filled -> "Filled" | Core.Canceled -> "Canceled" | Core.Rejected -> "Rejected")
+                    o.qty o.limit_price)  
+              )
             ) open_sell_orders;
             (* For now, clamp negative values to 0 to prevent display issues *)
             0.0
