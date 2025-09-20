@@ -60,7 +60,7 @@ Edit `_config.json` (example):
 
 - GRID: Maintains buy/sell ladders around price with configurable spacing and size.
 - MM: Quotes at top-of-book using fixed sizes.
-- ARB: **Strategy runs automatically, does not require a config** Finds triangle/longer cycles and single-pair spreads; sizes by liquidity and balances, runs for all assets active with other strategies.
+- ARB: **Strategy runs automatically, does not require a config.** Finds triangle/longer cycles and single-pair spreads; sizes by liquidity and balances, runs for all assets active with other strategies.
 
 ## Architecture
 
