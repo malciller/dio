@@ -75,11 +75,11 @@ Edit `_config.json` (example):
 
 ## Notification
 
-### Discord
+### Balance Updates
 ![Balances](balances.png)
 
+### Order Execution Alerts
 ![Buy Alert](buy.png)
-
 ![Sell Alert](sell.png)
 
 ## Development
