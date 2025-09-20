@@ -479,9 +479,9 @@ let render_balances_section (balances: balance_info list) term_width =
       I.string style_header_border "┃";
       I.string (style_highlight_text ++ A.st A.bold) (Printf.sprintf "%-*s" asset_w "Asset");
       I.string style_header_border "│";
-      I.string style_primary_text (Printf.sprintf "%*s" total_w "Total");
+      I.string style_primary_text (Printf.sprintf "%*s" total_w "Balance");
       I.string style_header_border "│";
-      I.string style_primary_text (Printf.sprintf "%*s" value_w "Value");
+      I.string style_primary_text (Printf.sprintf "%*s" value_w "Current Value");
       I.string style_header_border "│";
       I.string style_primary_text (Printf.sprintf "%*s" accum_w "Accumulated Value");
       I.string style_header_border "│";
