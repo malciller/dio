@@ -70,8 +70,15 @@ Edit `_config.json` (example):
 - Dashboard: CLI for prices, orders, and logs.
 
 ## Dashboard
+- Interactive Terminal Dashboard 
+  - B - Balance Widget
+  - A - Asset Widget: Compact/Expanded
+  - L - Log Widget
+####  Compact Asset View
+![Dio Dashboard](.github/readme/dashboard_collapsed.png) 
 
-![Dio Dashboard](.github/readme/image.png) 
+#### Expanded Asset View
+![Dio Dashboard](.github/readme/dashboard_expanded.png)
 ## Notification
 
 ### Balance Updates
