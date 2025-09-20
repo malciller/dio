@@ -16,7 +16,7 @@ let get_formatted_server_time () =
   let hour = tm.Unix.tm_hour in
   let min = tm.Unix.tm_min in
   let sec = tm.Unix.tm_sec in
-  Printf.sprintf "%02d/%02d/%04d %02d:%02d:%02d" day month year hour min sec
+  Printf.sprintf "%02d/%02d/%04d %02d:%02d:%02d" month day year hour min sec
 
 type fill_notification_payload = {
   side: side;

@@ -73,9 +73,14 @@ Edit `_config.json` (example):
 
 ![Dio Dashboard](image.png) 
 
-- Real-time ladders and orders
-- Status and execution tracking
-- Logs and simple metrics
+## Notification
+
+### Discord
+![Balances](balances.img)
+
+![Buy Alert](buy.png)
+
+![Sell Alert](sell.png)
 
 ## Development
 
