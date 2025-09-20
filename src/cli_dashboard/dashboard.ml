@@ -60,27 +60,46 @@ let style_header_info_text = style_primary_text
 let style_keybinding_bracket = style_header_border
 let style_keybinding_text = style_primary_text
 
-(** Unicode visual symbols for dashboard elements *)
-let spr_power_pellet  = I.string style_logs_accent_text "*"  (* Star - log highlights *)
-let spr_buy_order     = I.string style_buy_order_text "\u{25B2}"    (* ▲ Up Triangle - buy orders *)
-let spr_sell_order    = I.string style_sell_order_text "\u{25BC}"   (* ▼ Down Triangle - sell orders *)
+(** Enhanced Unicode visual symbols for modern dashboard elements *)
+let spr_power_pellet  = I.string style_logs_accent_text "●"  (* Bullet - log highlights *)
+let spr_buy_order     = I.string style_buy_order_text "▲"    (* Up Triangle - buy orders *)
+let spr_sell_order    = I.string style_sell_order_text "▼"   (* Down Triangle - sell orders *)
 let spr_price_now frame =
-  let blink = (frame / 10) mod 2 = 0 in
+  let blink = (frame / 8) mod 2 = 0 in
   let style = if blink then
     style_current_price_text ++ A.st A.bold ++ A.st A.underline
   else
     style_current_price_text ++ A.st A.bold in
-  I.string style "⦿" (* Circled Bullet - blinking current price indicator *)
-let spr_profit        = I.string style_profit_text "+"      (* Profit indicator *)
-let spr_loss          = I.string style_loss_text "-"        (* Loss indicator *)
-let spr_neutral       = I.string style_neutral_text "."     (* Neutral indicator *)
-let spr_active        = I.string style_active_indicator "[A]" (* Active status *)
-let spr_inactive      = I.string style_inactive_indicator "[I]" (* Inactive status *)
-let spr_warning       = I.string style_warning_text "[W]"     (* Warning status *)
-let spr_error         = I.string style_error_indicator "[E]"  (* Error status *)
-let spr_grid          = I.string style_highlight_text "[G]"   (* Grid strategy *)
-let spr_orderbook     = I.string style_highlight_text "[M]"   (* Market Maker strategy *)
-let spr_arbitrage     = I.string style_highlight_text "[A]"    (* Arbitrage strategy *)
+  I.string style "●" (* Solid Bullet - current price indicator *)
+let spr_profit        = I.string style_profit_text "▲"      (* Profit indicator *)
+let spr_loss          = I.string style_loss_text "▼"        (* Loss indicator *)
+let spr_neutral       = I.string style_neutral_text "─"     (* Neutral indicator *)
+let spr_active        = I.string style_active_indicator "●"  (* Active status *)
+let spr_inactive      = I.string style_inactive_indicator "○" (* Inactive status *)
+let spr_warning       = I.string style_warning_text "▲"     (* Warning status *)
+let spr_error         = I.string style_error_indicator "▼"  (* Error status *)
+let spr_grid          = I.string style_highlight_text "G"    (* Grid strategy - single letter *)
+let spr_orderbook     = I.string style_highlight_text "M"    (* Market Maker strategy *)
+let spr_arbitrage     = I.string style_highlight_text "A"    (* Arbitrage strategy *)
+    
+(** Additional modern visual elements *)
+let spr_bullet        = I.string style_primary_text "•"
+let spr_arrow_right   = I.string style_highlight_text "→"
+let spr_arrow_up      = I.string style_profit_text "↑"
+let spr_arrow_down    = I.string style_loss_text "↓"
+let spr_bar_full      = I.string style_success_text "█"
+let spr_bar_half      = I.string style_warning_text "▓"
+let spr_bar_empty     = I.string style_neutral_text "░"
+let spr_separator     = I.string style_header_border "│"
+let spr_divider       = I.string style_header_border "─"
+let spr_corner_tl     = I.string style_header_border "┌"
+let spr_corner_tr     = I.string style_header_border "┐"
+let spr_corner_bl     = I.string style_header_border "└"
+let spr_corner_br     = I.string style_header_border "┘"
+let spr_tee_down      = I.string style_header_border "┬"
+let spr_tee_up        = I.string style_header_border "┴"
+let spr_tee_right     = I.string style_header_border "├"
+let spr_tee_left      = I.string style_header_border "┤"
 
 
 (* ─── helpers ─────────────────────────────────────────────── *)
@@ -93,6 +112,56 @@ let get_term_dimensions () =
   match Notty_unix.winsize Unix.stdout with
   | Some (w, h) -> (h, w)
   | None -> (24, 80)
+
+(** Create a horizontal progress bar with visual segments *)
+let create_progress_bar ~width ~filled ~style_full ~style_empty =
+  let filled_chars = max 0 (min width (int_of_float (float_of_int width *. filled))) in
+  let empty_chars = width - filled_chars in
+  let filled_bar = String.concat "" (List.init filled_chars (fun _ -> "█")) in
+  let empty_bar = String.concat "" (List.init empty_chars (fun _ -> "░")) in
+  I.hcat [
+    I.string style_full filled_bar;
+    I.string style_empty empty_bar
+  ]
+
+(** Create a mini sparkline chart from price data *)
+let create_sparkline ~width ~height ~prices ~current_price =
+  if prices = [] then
+    I.string style_neutral_text (String.concat "" (List.init width (fun _ -> "─")))
+  else
+    let min_price = List.fold_left min (List.hd prices) prices in
+    let max_price = List.fold_left max (List.hd prices) prices in
+    let price_range = if max_price = min_price then 1.0 else max_price -. min_price in
+    let normalize_price p = (p -. min_price) /. price_range in
+
+    let current_idx = if List.length prices > 0 then
+      let current_norm = normalize_price current_price in
+      max 0 (min (width - 1) (int_of_float (current_norm *. float_of_int (width - 1))))
+    else 0 in
+
+    let spark_chars = List.mapi (fun i p ->
+      let norm = normalize_price p in
+      let pos = int_of_float (norm *. float_of_int (height - 1)) in
+      let char = if i = current_idx then "●" else
+                 if pos = height - 1 then "▀" else
+                 if pos = 0 then "▄" else "─" in
+      if i = current_idx then I.string style_current_price_text char
+      else I.string style_neutral_text char
+    ) prices in
+
+    I.hcat spark_chars
+
+(** Create a compact status indicator with icon and text *)
+let create_status_indicator ~icon ~text ~style =
+  I.hcat [icon; I.string style " "; I.string style text]
+
+(** Format percentage change with appropriate styling *)
+let format_percentage_change pct =
+  let style = if pct > 0.0 then style_profit_text
+              else if pct < 0.0 then style_loss_text
+              else style_neutral_text in
+  let sign = if pct > 0.0 then "+" else "" in
+  I.string style (Printf.sprintf "%s%.2f%%" sign pct)
 
 (** Render ASCII price ladder visualization showing order distribution around current price *)
 let price_ladder ~ladder_width current_price buy_orders sell_orders frame =
@@ -191,145 +260,160 @@ let rec intersperse sep = function
   | [x] -> [x]
   | x :: xs -> x :: sep :: intersperse sep xs
 
-(** Render a single asset row with price ladder, order book, and strategy info *)
+(** Enhanced modern asset row with compact, information-dense display *)
 let row_of_asset asset frame state =
-  let open I in
   let _, term_width = state.term_dimensions in
   let current_price_opt = Stats.get_price asset in
   let all_buy_orders_for_symbol, all_sell_orders_for_symbol =
     match Hashtbl.find_opt state.order_data asset with
     | Some (buy_orders, sell_orders) -> (buy_orders, sell_orders)
-    | None -> ([], [])  (* Fallback if no cached data *)
+    | None -> ([], [])
   in
+
   let strategy_indicator = get_strategy_indicator asset in
-  let closest_buy_for_info = match current_price_opt with
-    | Some current_price_val ->
-        let current = Float.of_string (Primitives.Price.to_string current_price_val) in
-        List.fold_left (fun acc (price, _) ->
-          if price <= current then
-            match acc with
-            | None -> Some price
-            | Some p -> Some (max p price)
-          else acc
-        ) None all_buy_orders_for_symbol
-    | None -> None
-  in
-  let closest_sell_for_info = match current_price_opt with
-    | Some current_price_val ->
-        let current = Float.of_string (Primitives.Price.to_string current_price_val) in
-        List.fold_left (fun acc (price, _) ->
-          if price >= current then
-            match acc with
-            | None -> Some price
-            | Some p -> Some (min p price)
-          else acc
-        ) None all_sell_orders_for_symbol
-    | None -> None
-  in
-  let format_opt_price asset opt_price =
-    match opt_price with
-    | Some price -> format_price asset price
-    | None -> "-.--"
-  in
-  let buy_perc_str =
-    match current_price_opt, closest_buy_for_info with
-    | Some cp_prim, Some buy_p_float ->
-        let current_f = Float.of_string (Primitives.Price.to_string cp_prim) in
-        if current_f > 0.0 then (
-           (* Calculate diff of buy relative to current price *)
-          let diff = ((buy_p_float -. current_f) /. current_f) *. 100.0 in
-          let style = if diff >= 0.0 then style_profit_text else style_loss_text in
-          I.hcat [I.string style (Printf.sprintf "%+.2f%%" diff)]
-        ) else I.string style_neutral_text " --"
-    | _ -> I.string style_neutral_text " --"
-  in
-  let sell_perc_str =
-    match current_price_opt, closest_sell_for_info with
-    | Some cp_prim, Some sell_p_float ->
-        let current_f = Float.of_string (Primitives.Price.to_string cp_prim) in
-        if current_f > 0.0 then (
-          let diff = ((sell_p_float -. current_f) /. current_f) *. 100.0 in
-          let style = if diff >= 0.0 then style_profit_text else style_loss_text in
-          I.hcat [I.string style (Printf.sprintf "%+.2f%%" diff)]
-        ) else I.string style_neutral_text " --"
-    | _ -> I.string style_neutral_text " --"
-  in
-  let buy_price_str = format_opt_price asset closest_buy_for_info in
-  let sell_price_str = format_opt_price asset closest_sell_for_info in
-  let asset_label_img = I.string style_asset_name (Printf.sprintf "%-7s" asset) in
-  let strategy_img = I.string style_logs_accent_text (Printf.sprintf "[%s]" strategy_indicator) in
-  let buy_price_img = I.hcat [I.string style_buy_order_text buy_price_str; buy_perc_str] in
-  let curr_price_img = I.string (style_current_price_text ++ A.st A.bold) (match current_price_opt with
-    | Some p -> format_price asset (Float.of_string (Primitives.Price.to_string p))
-    | None -> "-.--")
-  in
-  let sell_price_img = I.hcat [I.string style_sell_order_text sell_price_str; sell_perc_str] in
-  let sell_count_img = I.string style_logs_accent_text (Printf.sprintf "◎%2d" (List.length all_sell_orders_for_symbol)) in
-  let info_pane_items = [
-    asset_label_img;
-    I.string style_header_border " ";
-    strategy_img;
-    I.string style_header_border " │ ";
-    I.string style_buy_order_text "B:"; buy_price_img;
-    I.string style_header_border " │ ";
-    I.string style_current_price_text "P:"; curr_price_img;
-    I.string style_header_border " │ ";
-    I.string style_sell_order_text "S:"; sell_price_img;
-  ] in
-  let combined_info_text = I.hcat info_pane_items in
-  let content_width_for_panes = term_width - 4 in
-  let info_pane_line = hcat [
-    I.string style_header_border "┃ ";
-    combined_info_text;
-    void (content_width_for_panes - I.width combined_info_text) 1;
-    I.string style_header_border " ┃";
-  ] in
-  let ladder_buy_orders_for_ladder_display, ladder_sell_orders_for_ladder_display =
+  let order_count = List.length all_buy_orders_for_symbol + List.length all_sell_orders_for_symbol in
+
+  (* Calculate price statistics *)
+  let current_price, price_change_pct, price_trend =
     match current_price_opt with
     | Some cp_val ->
         let current_f = Float.of_string (Primitives.Price.to_string cp_val) in
-        let closest_buy_list =
-          all_buy_orders_for_symbol
-          |> List.filter (fun (p, _) -> p <= current_f)
-          |> List.sort (fun (p1, _) (p2, _) -> compare p2 p1)
-          |> (fun l -> match l with [] -> [] | h :: _ -> [h])
-        in
-        let closest_sell_list =
-          all_sell_orders_for_symbol
-          |> List.filter (fun (p, _) -> p >= current_f)
-          |> List.sort (fun (p1, _) (p2, _) -> compare p1 p2)
-          |> (fun l -> match l with [] -> [] | h :: _ -> [h])
-        in
-        (closest_buy_list, closest_sell_list)
-    | None -> ([], [])
+        let all_prices = List.map fst all_buy_orders_for_symbol @ List.map fst all_sell_orders_for_symbol in
+        let avg_price = if all_prices = [] then current_f else
+          List.fold_left (+.) 0.0 all_prices /. float_of_int (List.length all_prices) in
+        let change = if avg_price > 0.0 then ((current_f -. avg_price) /. avg_price) *. 100.0 else 0.0 in
+        (current_f, change, if change > 0.1 then spr_arrow_up else if change < -0.1 then spr_arrow_down else spr_neutral)
+    | None -> (0.0, 0.0, spr_neutral)
   in
-  let ladder_img_content =
-    match current_price_opt with
-    | Some current_price_val ->
-        let orders_count_img_for_ladder_line = sell_count_img in
-        let separator_for_ladder_line = I.string style_header_border " │ " in
-        let width_for_ladder_visual =
-          max 10 (content_width_for_panes - (I.width orders_count_img_for_ladder_line + I.width separator_for_ladder_line))
-        in
-        let actual_ladder_visualization = price_ladder
-          ~ladder_width:width_for_ladder_visual
-          (Float.of_string (Primitives.Price.to_string current_price_val))
-          ladder_buy_orders_for_ladder_display
-          ladder_sell_orders_for_ladder_display
-          frame
-        in
-        I.hcat [orders_count_img_for_ladder_line; separator_for_ladder_line; actual_ladder_visualization]
-    | None ->
-        let no_data_img = I.string style_sell_order_text "No price data" in
-        I.hsnap ~align:`Left content_width_for_panes no_data_img
-  in
-  let ladder_pane_line = hcat [
-    I.string style_header_border "┃ ";
-    ladder_img_content;
-    void (content_width_for_panes - I.width ladder_img_content) 1;
-    I.string style_header_border " ┃";
+
+  (* Compact header with asset info and strategy *)
+  let asset_header = I.hcat [
+    I.string style_asset_name (Printf.sprintf "%-6s" asset);
+    spr_separator;
+    I.string style_highlight_text strategy_indicator;
+    spr_separator;
+    create_status_indicator ~icon:spr_active ~text:(string_of_int order_count) ~style:style_logs_accent_text;
+    spr_separator;
+    price_trend;
+    format_percentage_change price_change_pct;
   ] in
-  I.vcat [info_pane_line; ladder_pane_line]
+
+  (* Enhanced price display with current price and order book summary *)
+  let price_display = match current_price_opt with
+    | Some cp_val ->
+        let current_f = Float.of_string (Primitives.Price.to_string cp_val) in
+        let buy_summary = if all_buy_orders_for_symbol <> [] then
+          let total_buy_qty = List.fold_left (fun acc (_, qty) -> acc +. qty) 0.0 all_buy_orders_for_symbol in
+          let avg_buy_price = List.fold_left (fun acc (p, _) -> acc +. p) 0.0 all_buy_orders_for_symbol /. float_of_int (List.length all_buy_orders_for_symbol) in
+          I.hcat [
+            spr_buy_order;
+            I.string style_buy_order_text (Printf.sprintf "%.4f" avg_buy_price);
+            I.string style_neutral_text (Printf.sprintf "(%.2f)" total_buy_qty)
+          ]
+        else
+          I.string style_neutral_text "No bids"
+        in
+
+        let sell_summary = if all_sell_orders_for_symbol <> [] then
+          let total_sell_qty = List.fold_left (fun acc (_, qty) -> acc +. qty) 0.0 all_sell_orders_for_symbol in
+          let avg_sell_price = List.fold_left (fun acc (p, _) -> acc +. p) 0.0 all_sell_orders_for_symbol /. float_of_int (List.length all_sell_orders_for_symbol) in
+          I.hcat [
+            spr_sell_order;
+            I.string style_sell_order_text (Printf.sprintf "%.4f" avg_sell_price);
+            I.string style_neutral_text (Printf.sprintf "(%.2f)" total_sell_qty)
+          ]
+        else
+          I.string style_neutral_text "No asks"
+        in
+
+        let current_price_img = I.string (style_current_price_text ++ A.st A.bold)
+          (format_price asset current_f) in
+
+        I.vcat [
+          I.hcat [spr_bullet; I.string style_neutral_text " Price: "; current_price_img];
+          I.hcat [spr_bullet; I.string style_neutral_text " Bids:  "; buy_summary];
+          I.hcat [spr_bullet; I.string style_neutral_text " Asks:  "; sell_summary]
+        ]
+    | None ->
+        I.string style_warning_text "No price data available"
+  in
+
+  (* Create a compact order book visualization *)
+  let order_book_viz = match current_price_opt with
+    | Some _ ->
+        let buy_levels = List.length all_buy_orders_for_symbol in
+        let sell_levels = List.length all_sell_orders_for_symbol in
+        let total_levels = max 1 (buy_levels + sell_levels) in
+
+        (* Create a compact horizontal bar showing order distribution *)
+        let bar_width = min 20 (term_width / 4) in
+        let buy_ratio = if total_levels > 0 then float_of_int buy_levels /. float_of_int total_levels else 0.5 in
+        let progress_bar = create_progress_bar
+          ~width:bar_width
+          ~filled:buy_ratio
+          ~style_full:style_buy_order_text
+          ~style_empty:style_sell_order_text in
+
+        I.hcat [
+          spr_bullet;
+          I.string style_neutral_text " Orderbook: ";
+          progress_bar;
+          I.string style_neutral_text (Printf.sprintf " %d/%d" buy_levels sell_levels)
+        ]
+    | None ->
+        I.string style_neutral_text ""
+  in
+
+  (* Create mini sparkline if we have price data *)
+  let sparkline = match current_price_opt with
+    | Some _ ->
+        let recent_prices = List.map fst (all_buy_orders_for_symbol @ all_sell_orders_for_symbol) in
+        let spark_width = min 15 (term_width / 5) in
+        let sparkline_img = create_sparkline
+          ~width:spark_width
+          ~height:3
+          ~prices:(if recent_prices = [] then [current_price] else recent_prices)
+          ~current_price in
+        I.hcat [spr_bullet; I.string style_neutral_text " Trend: "; sparkline_img]
+    | None ->
+        I.string style_neutral_text ""
+  in
+
+  (* Combine all elements into a compact, modern layout *)
+  let content_width = term_width - 4 in
+  let left_section = I.vcat [
+    asset_header;
+    price_display;
+    order_book_viz;
+    sparkline
+  ] in
+
+  let right_section = match current_price_opt with
+    | Some _ ->
+        let ladder_width = min 25 (content_width - I.width left_section - 4) in
+        if ladder_width > 10 then
+          price_ladder
+            ~ladder_width
+            current_price
+            all_buy_orders_for_symbol
+            all_sell_orders_for_symbol
+            frame
+        else I.empty
+    | None -> I.empty
+  in
+
+  let combined_content = if I.width right_section > 0 then
+    I.hcat [left_section; spr_separator; right_section]
+  else
+    left_section in
+
+  (* Create modern border styling *)
+  I.hcat [
+    spr_corner_tl;
+    combined_content;
+    I.void (content_width - I.width combined_content) 1;
+    spr_corner_tr
+  ]
 
 (** Get all assets currently being traded or configured for strategies *)
 let get_all_active_assets () =
@@ -460,7 +544,6 @@ let get_balance_info () : balance_info list Lwt.t =
 
 (** Render tabular portfolio balances with current values and performance metrics *)
 let render_balances_section (balances: balance_info list) term_width =
-  let open I in
   let content_width = term_width - 2 in
   if balances = [] then I.empty
   else
@@ -618,7 +701,7 @@ let render_balances_section (balances: balance_info list) term_width =
     let top_border = I.string style_header_border ("┏" ^ (create_horizontal_fill (term_width - 2) horiz_border_char_str_for_balances) ^ "┓") in
     let bottom_border = I.string style_header_border ("┗" ^ (create_horizontal_fill (term_width - 2) horiz_border_char_str_for_balances) ^ "┛") in
 
-    vcat ([top_border; header; sep] @ intersperse sep rows @ [sep; total_row; bottom_border])
+    I.vcat ([top_border; header; sep] @ intersperse sep rows @ [sep; total_row; bottom_border])
 
 (** Main dashboard rendering function - composes all UI sections into final display *)
 let render state =
@@ -663,37 +746,8 @@ let render state =
     I.string style_neutral_text (" " ^ status_text)
   ] in
 
-  let get_strategy_assets strategy_type =
-    List.filter (fun asset ->
-      match State.get_global_strategy_assignment asset with
-      | Some strat when strat = strategy_type -> true
-      | _ -> false
-    ) state.active_assets
-  in
 
-  let grid_assets = get_strategy_assets State.Grid in
-  let orderbook_assets = get_strategy_assets State.Orderbook in
 
-  let format_asset_list assets =
-    let get_base_asset s =
-      try String.sub s 0 (String.index s '/')
-      with Not_found -> s
-    in
-    let formatted_list = List.map get_base_asset assets in
-    String.concat "," formatted_list
-  in
-
-  let grid_str = if grid_assets <> [] then
-    Printf.sprintf "GRID[%s]" (format_asset_list grid_assets)
-  else "" in
-  let orderbook_str = if orderbook_assets <> [] then
-    Printf.sprintf "MM[%s]" (format_asset_list orderbook_assets)
-  else "" in
-  let arbitrage_str = if grid_assets <> [] || orderbook_assets <> [] then
-    "ARB[all]"
-  else "" in
-
-  let active_parts = List.filter (fun s -> s <> "") [grid_str; orderbook_str; arbitrage_str] in
 
   let header_components = [left_label; runtime_img; key_bindings_img] in
   let separator = I.string style_header_border " │ " in
@@ -701,7 +755,7 @@ let render state =
   let inner_width = term_width - 2 in
   let content_w = I.width header_content in
   let fill_w = max 0 (inner_width - content_w) in
-  let new_header = hcat [
+  let new_header = I.hcat [
     I.string style_header_border "┏";
     header_content;
     I.string style_header_border (create_horizontal_fill fill_w horiz_border_char_str);
@@ -737,10 +791,8 @@ let render state =
 
   let new_asset_rows_height = height asset_rows_section_with_boxing in
 
-  let strategy_status_height = if active_parts <> [] then 1 (* strategy status line *) + 1 (* void after strategy status *) else 0 in
   let other_height = 1 (* header *) + 1 (* void after header *) +
                    (if state.show_balances && state.balances <> [] then balances_section_height + 1 (* void after balances *) else  0) +
-                   strategy_status_height +
                    1 (* void before assets *) + new_asset_rows_height + 1 (* void after assets *) in
 let logs_height =
   if state.show_logs then
@@ -748,8 +800,8 @@ let logs_height =
   else 0
 in
 
-let logs_section_image = 
-  if not state.show_logs || logs_height <= 0 then void 0 0
+let logs_section_image =
+  if not state.show_logs || logs_height <= 0 then I.void 0 0
   else
     let logs_header_text = I.hcat [
       I.string (style_logs_accent_text ++ A.st A.bold) "System Logs ";
@@ -757,8 +809,8 @@ let logs_section_image =
       I.string style_success_text (string_of_int (List.length state.cached_logs));
       I.string style_neutral_text " entries)"
     ] in
-    let logs_header_img = 
-      hcat [
+    let logs_header_img =
+      I.hcat [
         I.string style_header_border "┏━"; logs_header_text;
         I.string style_header_border (create_horizontal_fill (term_width - (width logs_header_text) - 3) horiz_border_char_str);
         I.string style_header_border "┓"
@@ -782,13 +834,13 @@ let logs_section_image =
               wrap_text rest (line :: acc)
           in
           let wrapped_lines = wrap_text msg [] |> List.rev in
-          vcat (List.map (fun line -> I.string style_primary_text line) wrapped_lines)
+          I.vcat (List.map (fun line -> I.string style_primary_text line) wrapped_lines)
         else
-          hcat [spr_power_pellet; I.string style_primary_text " "; msg_img; void (content_width - (width msg_img) - (width spr_power_pellet) - 1) 1]
+          I.hcat [spr_power_pellet; I.string style_primary_text " "; msg_img; I.void (content_width - (width msg_img) - (width spr_power_pellet) - 1) 1]
       ) (take num_log_lines_to_take state.cached_logs)
     in
-    let logs_body_content = vcat log_messages in
-    let logs_full_content = vcat [logs_header_img; logs_body_content] in
+    let logs_body_content = I.vcat log_messages in
+    let logs_full_content = I.vcat [logs_header_img; logs_body_content] in
     let cropped_logs_content = 
       if height logs_full_content > logs_height then 
         vsnap ~align:`Top logs_height logs_full_content 
@@ -796,34 +848,19 @@ let logs_section_image =
         logs_full_content 
     in
     if width cropped_logs_content < content_width then
-      hcat [cropped_logs_content; void (content_width - width cropped_logs_content) (height cropped_logs_content)]
+      I.hcat [cropped_logs_content; I.void (content_width - width cropped_logs_content) (height cropped_logs_content)]
     else
       cropped_logs_content
 in
-vcat [
+I.vcat [
   new_header;
-  void term_width 1;
+  I.void term_width 1;
   balances_section_image;
-  (if state.show_balances && state.balances <> [] then void term_width 1 else I.empty);
-  (if active_parts <> [] then
-    let live_trade_title = I.hcat [
-      I.string (style_highlight_text ++ A.st A.bold) "Active Strategies: ";
-      I.string style_highlight_text (String.concat " • " active_parts)
-    ] in
-    let title_width = I.width live_trade_title in
-    let title_padding = max 0 (term_width - title_width - 4) in
-    I.hcat [
-      I.string style_header_border "┃ ";
-      live_trade_title;
-      void title_padding 1;
-      I.string style_header_border " ┃"
-    ]
-  else I.empty);
-  (if active_parts <> [] then void term_width 1 else I.empty);
+  (if state.show_balances && state.balances <> [] then I.void term_width 1 else I.empty);
   asset_rows_section_with_boxing;
-  void term_width 1;
+  I.void term_width 1;
   logs_section_image;
-  void term_width 1
+  I.void term_width 1
 ]
 
 (** Main dashboard application entry point - initializes terminal and starts event loops *)
