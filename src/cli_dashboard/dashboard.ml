@@ -164,6 +164,28 @@ let format_percentage_change pct =
   in
   I.string style (Printf.sprintf "%.2f%%" pct)
 
+(** Format quantity with intelligent trailing zero trimming *)
+let format_quantity qty =
+  let qty_str = Printf.sprintf "%.8f" qty in
+  (* Trim trailing zeros after decimal point *)
+  let trimmed = if String.contains qty_str '.' then
+    let rec trim_zeros s =
+      let len = String.length s in
+      if len > 0 && s.[len-1] = '0' then
+        let new_s = String.sub s 0 (len-1) in
+        if String.contains new_s '.' then trim_zeros new_s else new_s
+      else s
+    in
+    trim_zeros qty_str
+  else
+    qty_str
+  in
+  (* Ensure we don't trim the decimal point if there are no decimal digits *)
+  if String.ends_with ~suffix:"." trimmed then
+    String.sub trimmed 0 (String.length trimmed - 1)
+  else
+    trimmed
+
 (** Render ASCII price ladder visualization showing order distribution around current price *)
 let price_ladder ~ladder_width current_price buy_orders sell_orders frame =
   let ladder = Array.make ladder_width (I.string A.empty " ") in
@@ -236,6 +258,7 @@ type dashboard_state = {
   frame: int;                       (** Animation frame counter for blinking effects *)
   balances: balance_info list;      (** Current portfolio balances *)
   show_balances: bool;              (** Whether to display balances panel *)
+  show_assets: bool;                (** Whether to display assets section *)
   active_assets: string list;       (** Cached list of actively traded assets *)
   order_data: (string, (float * float) list * (float * float) list) Hashtbl.t;
                                   (** Cached order book data: asset -> (buy_orders, sell_orders) *)
@@ -249,6 +272,7 @@ let initial_state = {
   frame = 0;
   balances = [];
   show_balances = true;
+  show_assets = true;
   active_assets = [];
   order_data = Hashtbl.create 16;
   term_dimensions = (24, 80);  (* Default dimensions *)
@@ -260,6 +284,125 @@ let rec intersperse sep = function
   | [] -> []
   | [x] -> [x]
   | x :: xs -> x :: sep :: intersperse sep xs
+
+(** Compact asset row for two-column layout - much more condensed *)
+let compact_row_of_asset asset _frame state =
+  let _, term_width = state.term_dimensions in
+  let current_price_opt = Stats.get_price asset in
+  let all_buy_orders_for_symbol, all_sell_orders_for_symbol =
+    match Hashtbl.find_opt state.order_data asset with
+    | Some (buy_orders, sell_orders) -> (buy_orders, sell_orders)
+    | None -> ([], [])
+  in
+
+  let strategy_indicator = get_strategy_indicator asset in
+  let order_count = List.length all_buy_orders_for_symbol + List.length all_sell_orders_for_symbol in
+
+  (* Compact single-line display *)
+  let content_width = term_width - 2 in  (* Account for borders *)
+
+  match current_price_opt with
+  | Some cp_val ->
+      let current_f = Float.of_string (Primitives.Price.to_string cp_val) in
+
+      let current_price_img = I.string (style_current_price_text ++ A.st A.bold)
+        (format_price asset current_f) in
+      let asset_name = Printf.sprintf "%-6s" asset in
+      let _price_str = Printf.sprintf "$%.2f" current_f in
+      let orders_str = string_of_int order_count in
+      let strat_str = strategy_indicator in
+
+      (* Get the best pending buy and sell prices with distance indicators *)
+      let pending_buy_price = if all_buy_orders_for_symbol <> [] then
+        let best_bid = List.fold_left (fun acc (p, _) ->
+          match acc with None -> Some p | Some best -> Some (max best p)
+        ) None all_buy_orders_for_symbol in
+        match best_bid with
+        | Some price ->
+            let distance = current_f -. price in
+            let distance_pct = if current_f <> 0.0 then (distance /. current_f) *. 100.0 else 0.0 in
+            let (distance_str, distance_style) = if abs_float distance_pct < 0.01 then
+              (Printf.sprintf "(0%%)", style_neutral_text)
+            else if distance_pct > 0.0 then
+              (Printf.sprintf "(-%.2f%%)" distance_pct, style_loss_text)  (* Red for positive distance - need to go down to execute buy *)
+            else
+              (Printf.sprintf "(+%.2f%%)" (-.distance_pct), style_profit_text) in  (* Green for negative distance - need to go up to execute buy *)
+            I.hcat [
+              I.string style_buy_order_text (format_price asset price);
+              I.string distance_style distance_str
+            ]
+        | None -> I.string style_neutral_text "--"
+      else
+        I.string style_neutral_text "--"
+      in
+
+      let closest_sell_price = if all_sell_orders_for_symbol <> [] then
+        let best_ask = List.fold_left (fun acc (p, _) ->
+          match acc with None -> Some p | Some best -> Some (min best p)
+        ) None all_sell_orders_for_symbol in
+        match best_ask with
+        | Some price ->
+            let distance = price -. current_f in
+            let distance_pct = if current_f <> 0.0 then (distance /. current_f) *. 100.0 else 0.0 in
+            let (distance_str, distance_style) = if abs_float distance_pct < 0.01 then
+              (Printf.sprintf "(0%%)", style_neutral_text)
+            else if distance_pct < 0.0 then
+              (Printf.sprintf "(-%.2f%%)" (-.distance_pct), style_loss_text)  (* Red for negative distance - need to go down to execute sell *)
+            else
+              (Printf.sprintf "(+%.2f%%)" distance_pct, style_profit_text) in  (* Green for positive distance - need to go up to execute sell *)
+            I.hcat [
+              I.string style_sell_order_text (format_price asset price);
+              I.string distance_style distance_str
+            ]
+        | None -> I.string style_neutral_text "--"
+      else
+        I.string style_neutral_text "--"
+      in
+
+      let available_content_width = content_width - 4 in  (* Reserve space for separators *)
+
+      (* Dynamic spacing based on available width *)
+      let spacing = if available_content_width > 80 then " │ " else " │" in
+      let slash_spacing = if available_content_width > 80 then " / " else " /" in
+
+      let combined_content = I.hcat [
+        I.string style_asset_name asset_name;
+        I.string style_neutral_text spacing;
+        pending_buy_price;
+        I.string style_neutral_text slash_spacing;
+        current_price_img;
+        I.string style_neutral_text slash_spacing;
+        closest_sell_price;
+        I.string style_neutral_text spacing;
+        I.string style_logs_accent_text orders_str;
+        I.string style_neutral_text spacing;
+        I.string style_highlight_text strat_str
+      ] in
+      I.hcat [
+        I.string style_header_border "┃";
+        combined_content;
+        I.void (content_width - I.width combined_content) 1;
+        I.string style_header_border "┃"
+      ]
+  | None ->
+      let available_content_width = content_width - 4 in  (* Reserve space for separators *)
+      let spacing = if available_content_width > 80 then " │ " else " │" in
+
+      let no_data_content = I.hcat [
+        I.string style_warning_text (Printf.sprintf "%-6s" asset);
+        I.string style_neutral_text spacing;
+        I.string style_warning_text "--/--";
+        I.string style_neutral_text spacing;
+        I.string style_warning_text "0";
+        I.string style_neutral_text spacing;
+        I.string style_warning_text "--"
+      ] in
+      I.hcat [
+        I.string style_header_border "┃";
+        no_data_content;
+        I.void (content_width - I.width no_data_content) 1;
+        I.string style_header_border "┃"
+      ]
 
 (** Enhanced modern asset row with compact, information-dense display *)
 let row_of_asset asset frame state =
@@ -274,7 +417,7 @@ let row_of_asset asset frame state =
   let strategy_indicator = get_strategy_indicator asset in
   let order_count = List.length all_buy_orders_for_symbol + List.length all_sell_orders_for_symbol in
 
-  (* Calculate price statistics and market volatility *)
+  (* Calculate price statistics and distance to furthest order *)
   let current_price, volatility_pct, price_trend =
     match current_price_opt with
     | Some cp_val ->
@@ -306,24 +449,34 @@ let row_of_asset asset frame state =
         let current_f = Float.of_string (Primitives.Price.to_string cp_val) in
         let buy_summary = if all_buy_orders_for_symbol <> [] then
           let total_buy_qty = List.fold_left (fun acc (_, qty) -> acc +. qty) 0.0 all_buy_orders_for_symbol in
-          let avg_buy_price = List.fold_left (fun acc (p, _) -> acc +. p) 0.0 all_buy_orders_for_symbol /. float_of_int (List.length all_buy_orders_for_symbol) in
-          I.hcat [
-            spr_buy_order;
-            I.string style_buy_order_text (Printf.sprintf "%.4f" avg_buy_price);
-            I.string style_neutral_text (Printf.sprintf "(%.2f)" total_buy_qty)
-          ]
+          let best_bid = List.fold_left (fun acc (p, _) ->
+            match acc with None -> Some p | Some best -> Some (max best p)
+          ) None all_buy_orders_for_symbol in
+          match best_bid with
+          | Some bid_price ->
+              I.hcat [
+                spr_buy_order;
+                I.string style_buy_order_text (Printf.sprintf "%.4f" bid_price);
+                I.string style_neutral_text (Printf.sprintf "(%s)" (format_quantity total_buy_qty))
+              ]
+          | None -> I.string style_neutral_text "No bids"
         else
           I.string style_neutral_text "No bids"
         in
 
         let sell_summary = if all_sell_orders_for_symbol <> [] then
           let total_sell_qty = List.fold_left (fun acc (_, qty) -> acc +. qty) 0.0 all_sell_orders_for_symbol in
-          let avg_sell_price = List.fold_left (fun acc (p, _) -> acc +. p) 0.0 all_sell_orders_for_symbol /. float_of_int (List.length all_sell_orders_for_symbol) in
-          I.hcat [
-            spr_sell_order;
-            I.string style_sell_order_text (Printf.sprintf "%.4f" avg_sell_price);
-            I.string style_neutral_text (Printf.sprintf "(%.2f)" total_sell_qty)
-          ]
+          let best_ask = List.fold_left (fun acc (p, _) ->
+            match acc with None -> Some p | Some best -> Some (min best p)
+          ) None all_sell_orders_for_symbol in
+          match best_ask with
+          | Some ask_price ->
+              I.hcat [
+                spr_sell_order;
+                I.string style_sell_order_text (Printf.sprintf "%.4f" ask_price);
+                I.string style_neutral_text (Printf.sprintf "(%s)" (format_quantity total_sell_qty))
+              ]
+          | None -> I.string style_neutral_text "No asks"
         else
           I.string style_neutral_text "No asks"
         in
@@ -382,7 +535,7 @@ let row_of_asset asset frame state =
   in
 
   (* Combine all elements into a compact, modern layout *)
-  let content_width = term_width - 4 in
+  let content_width = term_width - 2 in
   let left_section = I.vcat [
     asset_header;
     price_display;
@@ -411,10 +564,10 @@ let row_of_asset asset frame state =
 
   (* Create modern border styling *)
   I.hcat [
-    spr_corner_tl;
+    I.string style_header_border "┃";
     combined_content;
     I.void (content_width - I.width combined_content) 1;
-    spr_corner_tr
+    I.string style_header_border "┃"
   ]
 
 (** Get all assets currently being traded or configured for strategies *)
@@ -633,7 +786,7 @@ let render_balances_section (balances: balance_info list) term_width =
         I.string style_header_border "┃";
         I.string style_asset_name (Printf.sprintf "%-*s" asset_w info.asset);
         I.string style_header_border "│";
-        I.string style_primary_text (Printf.sprintf "%*s" total_w (Printf.sprintf "%.8f %s" info.total_balance info.asset));
+        I.string style_primary_text (Printf.sprintf "%*s" total_w (Printf.sprintf "%s %s" (format_quantity info.total_balance) info.asset));
         I.string style_header_border "│";
         I.string value_style (Printf.sprintf "%*s" value_w (Printf.sprintf "$%.2f" info.total_value_usd));
         I.string style_header_border "│";
@@ -717,6 +870,7 @@ let render state =
   in
 
   let asset_rows = List.map (fun asset -> row_of_asset asset state.frame state) state.active_assets in
+  let compact_asset_rows = List.map (fun asset -> compact_row_of_asset asset state.frame state) state.active_assets in
   let total_assets = List.length asset_rows in
 
   let dio_label_text = " Dio " in
@@ -729,11 +883,14 @@ let render state =
   let key_text_style = style_keybinding_text in
   let text_style = style_header_info_text in
   let key_bindings_img = I.hcat [
-      I.string key_bracket_style "["; I.string key_text_style "L"; I.string key_bracket_style "]";
-      I.string text_style "ogs ";
+      I.string key_bracket_style "["; I.string key_text_style "B"; I.string key_bracket_style "]";
+      I.string text_style "alance ";
       I.string key_bracket_style "│";
-      I.string key_bracket_style " ["; I.string key_text_style "B"; I.string key_bracket_style "]";
-      I.string text_style "alances ";
+      I.string key_bracket_style " ["; I.string key_text_style "A"; I.string key_bracket_style "]";
+      I.string text_style "sset ";
+      I.string key_bracket_style "│";
+      I.string key_bracket_style " ["; I.string key_text_style "L"; I.string key_bracket_style "]";
+      I.string text_style "og ";
       I.string key_bracket_style "│";
       I.string key_bracket_style " ["; I.string key_text_style "Q"; I.string key_bracket_style "]";
       I.string text_style "uit";
@@ -775,12 +932,23 @@ let render state =
     | [] -> I.empty
     | _ -> I.string style_header_border (Printf.sprintf "\u{2517}%s\u{251B}" (create_horizontal_fill (term_width - 2) horiz_border_char_str))
   in
-  let asset_rows_section_with_boxing = 
-    match asset_rows with
-    | [] -> I.empty
-    | _ -> 
-        let interspersed_rows = intersperse inter_asset_box_line asset_rows in
-        I.vcat ([top_asset_box_line] @ interspersed_rows @ [bottom_asset_box_line])
+  let asset_rows_section_with_boxing =
+    if not state.show_assets then
+      I.empty
+    else
+      match asset_rows with
+      | [] -> I.empty
+      | _ ->
+          (* Use compact layout when both balances and assets are shown *)
+          let should_use_compact = state.show_balances && state.balances <> [] in
+          if should_use_compact then
+            (* Use compact asset rows for single-column layout when both sections are shown *)
+            let interspersed_rows = intersperse inter_asset_box_line compact_asset_rows in
+            I.vcat ([top_asset_box_line] @ interspersed_rows @ [bottom_asset_box_line])
+          else
+            (* Use single-column layout when only assets are shown or balances are hidden *)
+            let interspersed_rows = intersperse inter_asset_box_line asset_rows in
+            I.vcat ([top_asset_box_line] @ interspersed_rows @ [bottom_asset_box_line])
   in
 
   let balances_section_image =
@@ -795,7 +963,7 @@ let render state =
 
   let other_height = 1 (* header *) + 1 (* void after header *) +
                    (if state.show_balances && state.balances <> [] then balances_section_height + 1 (* void after balances *) else  0) +
-                   1 (* void before assets *) + new_asset_rows_height + 1 (* void after assets *) in
+                   (if state.show_assets then 1 (* void before assets *) + new_asset_rows_height + 1 (* void after assets *) else 0) in
 let logs_height =
   if state.show_logs then
     max 0 (term_height - other_height)
@@ -859,8 +1027,8 @@ I.vcat [
   I.void term_width 1;
   balances_section_image;
   (if state.show_balances && state.balances <> [] then I.void term_width 1 else I.empty);
-  asset_rows_section_with_boxing;
-  I.void term_width 1;
+  (if state.show_assets then asset_rows_section_with_boxing else I.empty);
+  (if state.show_assets then I.void term_width 1 else I.empty);
   logs_section_image;
   I.void term_width 1
 ]
@@ -877,6 +1045,9 @@ let start ~on_quit:(on_quit: unit -> unit Lwt.t) () : Notty_lwt.Term.t =
         on_quit ()
     | `Key (`ASCII 'b', []) | `Key (`ASCII 'B', []) ->
         state := { !state with show_balances = not !state.show_balances };
+        Lwt.return_unit
+    | `Key (`ASCII 'a', []) | `Key (`ASCII 'A', []) ->
+        state := { !state with show_assets = not !state.show_assets };
         Lwt.return_unit
     | _ -> Lwt.return_unit
   in
