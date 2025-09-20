@@ -18,6 +18,8 @@ module Stats = Stats
 module M = State.SMap
 module StringSet = Set.Make(String)
 
+
+
 let is_stablecoin asset =
   let stablecoins = ["USD"; "USDT"; "USDC"; "USDG"; "USDR"] in
   List.mem asset stablecoins
@@ -673,6 +675,22 @@ let get_balance_info () : balance_info list Lwt.t =
         (* Accumulated balance is total balance less assets held in open sell orders *)
         let raw_accumulated_balance = total_balance -. qty_on_sell_orders in
 
+        (* Debug EURR balance calculations *)
+        let _ = if asset = "EURR" then
+          let order_details = List.map (fun (o:Kraken.Kraken_common_types.order) ->
+            Printf.sprintf "ID:%s qty:%.8f price:%.4f status:%s" o.order_id o.qty o.limit_price
+              (match o.status with Core.Open -> "Open" | Core.Filled -> "Filled" | Core.Canceled -> "Canceled" | Core.Rejected -> "Rejected")) open_sell_orders in
+          Lwt.ignore_result (
+            Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "dashboard")
+              (Printf.sprintf "EURR DEBUG: balance=%.8f, qty_on_sell=%.8f, raw_accum=%.8f, price=%.4f"
+                total_balance qty_on_sell_orders raw_accumulated_balance price_usd)
+          );
+          Lwt.ignore_result (
+            Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "dashboard")
+              (Printf.sprintf "EURR orders: %s" (String.concat ", " order_details))
+          )
+        in
+
         (* Debug EURR orders if negative accumulated value detected *)
         let accumulated_balance =
           if asset = "EURR" && raw_accumulated_balance < 0.0 then
@@ -689,7 +707,7 @@ let get_balance_info () : balance_info list Lwt.t =
                   (Printf.sprintf "EURR sell order: id=%s, symbol=%s, status=%s, qty=%.8f, price=%.8f"
                     o.order_id o.order_symbol
                     (match o.status with Core.Open -> "Open" | Core.Filled -> "Filled" | Core.Canceled -> "Canceled" | Core.Rejected -> "Rejected")
-                    o.qty o.limit_price)  
+                    o.qty o.limit_price)
               )
             ) open_sell_orders;
             (* For now, clamp negative values to 0 to prevent display issues *)
@@ -715,7 +733,18 @@ let get_balance_info () : balance_info list Lwt.t =
               (* Use current market price for assets without pending sell orders *)
               pnl_accumulated_balance *. price_usd
           in
-          unrealized_value_on_orders +. unrealized_value_accumulated
+          let total_unrealized = unrealized_value_on_orders +. unrealized_value_accumulated in
+
+          (* Debug unrealized value calculation *)
+          let _ = if asset = "EURR" then
+            Lwt.ignore_result (
+              Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "dashboard")
+                (Printf.sprintf "EURR UNREALIZED DEBUG: orders_val=%.8f, accum_val=%.8f, total=%.8f, highest_price=%.4f, accum_balance=%.8f"
+                  unrealized_value_on_orders unrealized_value_accumulated total_unrealized highest_sell_price pnl_accumulated_balance)
+            )
+          in
+
+          total_unrealized
         in
 
         let info = {

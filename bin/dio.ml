@@ -91,7 +91,7 @@ let setup_logging () =
   default := default_logger;
 
   (** Additional section-specific log level rules can be added here *)
-  (* Example: Lwt_log.add_rule "kraken.balances" Info; *)
+  (*Lwt_log.add_rule "dashboard" Debug; *)
 
   
   ()
