@@ -39,19 +39,19 @@
       "symbol": "USDG/USD",
       "qty": "100.0",
       "min_usd_balance": "600.0",
-      "strategy": "Orderbook"
+      "strategy": "MM"
     },
     {
       "symbol": "EURR/USD",
       "qty": "10.0",
       "min_usd_balance": "600.0",
-      "strategy": "Orderbook"
+      "strategy": "MM"
     },
     {
       "symbol": "USDR/USD",
       "qty": "10.0",
       "min_usd_balance": "4000.0",
-      "strategy": "Orderbook"
+      "strategy": "MM"
     }
   ],
   "queues_cap": 1000,

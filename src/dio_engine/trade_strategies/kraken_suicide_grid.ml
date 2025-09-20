@@ -387,7 +387,7 @@ module State = struct
     let grid_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
       match asset.strategy with
       | Config.Grid -> Some asset.symbol
-      | Config.Orderbook -> None
+      | Config.MM -> None
     ) runtime_cfg.assets in
 
     List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) grid_symbols;
@@ -591,7 +591,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   let grid_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
     match asset.strategy with
     | Config.Grid -> Some asset.symbol
-    | Config.Orderbook -> None
+    | Config.MM -> None
   ) runtime_cfg.assets in
 
   info_f ~section

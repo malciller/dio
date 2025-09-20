@@ -37,12 +37,12 @@ Edit `_config.json` (example):
       "qty": "0.001",  // Base asset amount per trade
       "grid_interval": "1.0",  // Distance between buy and sell orders (profit spread)
       "sell_mult": "0.999", // Base asset amount sold multiplier (qty * sell_mult = sell order qty)
-      "strategy": "Grid"  // Strategy Name (Grid/Orderbook)
+      "strategy": "Grid"  // Strategy Name (Grid/MM)
     },
     { "symbol": "USDT/USD",  // Pair to Trade
       "qty": "100.0",  // Base asset amount per trade
       "min_usd_balance": "500.0",  // Minimum USD balance for this pair and strategy to run
-      "strategy": "Orderbook"  // Strategy Name (Grid/Orderbook)
+      "strategy": "MM"  // Strategy Name (Grid/MM)
      }
   ],
   "queues_cap": 1000,  // Maximum queue size allocated
@@ -58,9 +58,9 @@ Edit `_config.json` (example):
 
 ## Strategies
 
-- Grid: Maintains buy/sell ladders around price with configurable spacing and size.
-- Orderbook: Quotes at top-of-book using fixed sizes.
-- Arbitrage: **Strategy runs automatically, does not require a config** Finds triangle/longer cycles and single-pair spreads; sizes by liquidity and balances, runs for all assets active with other strategies.
+- GRID: Maintains buy/sell ladders around price with configurable spacing and size.
+- MM: Quotes at top-of-book using fixed sizes.
+- ARB: **Strategy runs automatically, does not require a config** Finds triangle/longer cycles and single-pair spreads; sizes by liquidity and balances, runs for all assets active with other strategies.
 
 ## Architecture
 

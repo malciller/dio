@@ -119,12 +119,12 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
         let grid_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
           match asset.strategy with
           | Config.Grid -> Some asset.symbol
-          | Config.Orderbook -> None
+          | Config.MM -> None
         ) runtime_cfg.assets in
 
         let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
           match asset.strategy with
-          | Config.Orderbook -> Some asset.symbol
+          | Config.MM -> Some asset.symbol
           | Config.Grid -> None
         ) runtime_cfg.assets in
 
@@ -137,7 +137,7 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
         List.iter (fun (asset: Config.asset_cfg) ->
           let strategy = match asset.strategy with
             | Config.Grid -> State.Grid
-            | Config.Orderbook -> State.Orderbook
+            | Config.MM -> State.Orderbook
           in
           State.update_global_strategy_assignment asset.symbol strategy
         ) runtime_cfg.assets;

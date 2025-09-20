@@ -12,7 +12,7 @@ open Lwt_log_core
 open Engine
 module K = Kraken
 
-let section = Lwt_log_core.Section.make "engine.strategy.kraken.orderbook"
+let section = Lwt_log_core.Section.make "engine.strategy.kraken.MM"
 
 (*
   Strategy State Management
@@ -287,7 +287,7 @@ module State = struct
   let initialize_orders (runtime_cfg : Config.runtime_cfg) =
     let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
       match asset.strategy with
-      | Config.Orderbook -> Some asset.symbol
+      | Config.MM -> Some asset.symbol
       | _ -> None
     ) runtime_cfg.assets in
     let exchange_orders = K.Kraken_incoming_data.get_all_open_orders () in
@@ -324,7 +324,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
 
   let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
     match asset.strategy with
-    | Config.Orderbook -> Some asset.symbol
+    | Config.MM -> Some asset.symbol
     | _ -> None
   ) runtime_cfg.assets in
 

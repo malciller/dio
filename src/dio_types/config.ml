@@ -10,15 +10,15 @@ let format_error_message fmt = Printf.sprintf fmt
 (** Trading strategy types available for assets *)
 type strategy_type =
   | Grid      (** Grid trading: buys/sells at fixed price intervals with profit-taking multipliers *)
-  | Orderbook (** Orderbook-based: maintains positions based on orderbook depth and min USD balance *)
+  | MM (** Orderbook-based: maintains positions based on orderbook depth and min USD balance *)
 
 let strategy_type_to_yojson = function
   | Grid -> `String "Grid"
-  | Orderbook -> `String "Orderbook"
+  | MM -> `String "MM"
 
 let strategy_type_of_yojson = function
   | `String "Grid" -> Ok Grid
-  | `String "Orderbook" -> Ok Orderbook
+  | `String "MM" -> Ok MM
   | _ -> Error "Invalid strategy type"
 
 let strategy_type_of_yojson_exn json =
@@ -88,19 +88,19 @@ let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
 
       if asset.min_usd_balance <> None then
         errors := (format_error_message "Asset '%s' (Grid): min_usd_balance is not applicable." asset.symbol) :: !errors
-  | Orderbook ->
+  | MM ->
       (match asset.min_usd_balance with
       | Some min_usd_balance ->
           if not (Fixed.is_non_negative min_usd_balance) then
-            errors := (format_error_message "Asset '%s' (Orderbook): min_usd_balance must be non-negative." asset.symbol) :: !errors
+            errors := (format_error_message "Asset '%s' (MM): min_usd_balance must be non-negative." asset.symbol) :: !errors
       | None ->
-          errors := (format_error_message "Asset '%s' (Orderbook): min_usd_balance is required." asset.symbol) :: !errors);
+          errors := (format_error_message "Asset '%s' (MM): min_usd_balance is required." asset.symbol) :: !errors);
 
       if asset.grid_interval <> None then
-        errors := (format_error_message "Asset '%s' (Orderbook): grid_interval is not applicable." asset.symbol) :: !errors;
+        errors := (format_error_message "Asset '%s' (MM): grid_interval is not applicable." asset.symbol) :: !errors;
       
       if asset.sell_mult <> None then
-        errors := (format_error_message "Asset '%s' (Orderbook): sell_mult is not applicable." asset.symbol) :: !errors
+        errors := (format_error_message "Asset '%s' (MM): sell_mult is not applicable." asset.symbol) :: !errors
   );
 
   if !errors = [] then
