@@ -33,11 +33,20 @@ Edit `_config.json` (example):
 ```json
 {
   "assets": [
-    { "symbol": "BTC/USD",  "qty": "0.001", "grid_interval": "1.0", "sell_mult": "0.999", "strategy": "Grid" },
-    { "symbol": "USDT/USD", "qty": "100.0", "min_usd_balance": "500.0", "strategy": "Orderbook" }
+    { "symbol": "BTC/USD",  // Pair to Trade
+      "qty": "0.001",  // Base asset amount per trade
+      "grid_interval": "1.0",  // Distance between buy and sell orders (profit spread)
+      "sell_mult": "0.999", // Base asset amount sold multiplier (qty * sell_mult = sell order qty)
+      "strategy": "Grid"  // Strategy Name
+    },
+    { "symbol": "USDT/USD",  // Pair to Trade
+      "qty": "100.0",  // Base asset amount per trade
+      "min_usd_balance": "500.0",  // Minimum USD balance for this pair and strategy to run
+      "strategy": "Orderbook"  // Strategy Name
+     }
   ],
-  "queues_cap": 1000,
-  "profit_threshold_pct": 0.0010
+  "queues_cap": 1000,  // Maximum queue size allocated
+  "profit_threshold_pct": 0.0010  // Arbitrage strategy profit threshold (percentage)
 }
 ```
 
