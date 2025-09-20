@@ -74,6 +74,7 @@ let spr_price_now frame =
 let spr_profit        = I.string style_profit_text "▲"      (* Profit indicator *)
 let spr_loss          = I.string style_loss_text "▼"        (* Loss indicator *)
 let spr_neutral       = I.string style_neutral_text "─"     (* Neutral indicator *)
+let spr_success_text  = I.string style_success_text "●"    (* Success/Low volatility indicator *)
 let spr_active        = I.string style_active_indicator "●"  (* Active status *)
 let spr_inactive      = I.string style_inactive_indicator "○" (* Inactive status *)
 let spr_warning       = I.string style_warning_text "▲"     (* Warning status *)
@@ -157,11 +158,11 @@ let create_status_indicator ~icon ~text ~style =
 
 (** Format percentage change with appropriate styling *)
 let format_percentage_change pct =
-  let style = if pct > 0.0 then style_profit_text
-              else if pct < 0.0 then style_loss_text
-              else style_neutral_text in
-  let sign = if pct > 0.0 then "+" else "" in
-  I.string style (Printf.sprintf "%s%.2f%%" sign pct)
+  let style = if pct > 2.0 then style_warning_text  (* High volatility *)
+              else if pct > 1.0 then style_neutral_text  (* Medium volatility *)
+              else style_success_text  (* Low volatility *)
+  in
+  I.string style (Printf.sprintf "%.2f%%" pct)
 
 (** Render ASCII price ladder visualization showing order distribution around current price *)
 let price_ladder ~ladder_width current_price buy_orders sell_orders frame =
@@ -273,16 +274,17 @@ let row_of_asset asset frame state =
   let strategy_indicator = get_strategy_indicator asset in
   let order_count = List.length all_buy_orders_for_symbol + List.length all_sell_orders_for_symbol in
 
-  (* Calculate price statistics *)
-  let current_price, price_change_pct, price_trend =
+  (* Calculate price statistics and market volatility *)
+  let current_price, volatility_pct, price_trend =
     match current_price_opt with
     | Some cp_val ->
         let current_f = Float.of_string (Primitives.Price.to_string cp_val) in
         let all_prices = List.map fst all_buy_orders_for_symbol @ List.map fst all_sell_orders_for_symbol in
-        let avg_price = if all_prices = [] then current_f else
-          List.fold_left (+.) 0.0 all_prices /. float_of_int (List.length all_prices) in
-        let change = if avg_price > 0.0 then ((current_f -. avg_price) /. avg_price) *. 100.0 else 0.0 in
-        (current_f, change, if change > 0.1 then spr_arrow_up else if change < -0.1 then spr_arrow_down else spr_neutral)
+        let volatility = if all_prices = [] then 0.0 else
+          let min_price = List.fold_left min (List.hd all_prices) all_prices in
+          let max_price = List.fold_left max (List.hd all_prices) all_prices in
+          (max_price -. min_price) /. current_f *. 100.0 in
+        (current_f, volatility, if volatility > 2.0 then spr_warning else if volatility > 1.0 then spr_neutral else spr_success_text)
     | None -> (0.0, 0.0, spr_neutral)
   in
 
@@ -295,7 +297,7 @@ let row_of_asset asset frame state =
     create_status_indicator ~icon:spr_active ~text:(string_of_int order_count) ~style:style_logs_accent_text;
     spr_separator;
     price_trend;
-    format_percentage_change price_change_pct;
+    format_percentage_change volatility_pct;
   ] in
 
   (* Enhanced price display with current price and order book summary *)
