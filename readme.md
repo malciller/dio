@@ -71,16 +71,16 @@ Edit `_config.json` (example):
 
 ## Dashboard
 
-![Dio Dashboard](image.png) 
+![Dio Dashboard](.github/readme/image.png) 
 
 ## Notification
 
 ### Balance Updates
-![Balances](balances.png)
+![Balances](.github/readme/balances.png)
 
 ### Order Execution Alerts
-![Buy Alert](buy.png)
-![Sell Alert](sell.png)
+![Buy Alert](.github/readme/buy.png)
+![Sell Alert](.github/readme/sell.png)
 
 ## Development
 
