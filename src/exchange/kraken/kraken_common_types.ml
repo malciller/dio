@@ -1,12 +1,17 @@
-(* src/exchange/kraken/kraken_common_types.ml *)
+(** Kraken Exchange WebSocket API Types and Utilities
+
+    This module defines OCaml types for Kraken's WebSocket API v2, including
+    subscription parameters, response messages, and order management structures.
+    Provides nonce generation and request signing for authenticated operations.
+*)
 
 open Dio_types
-open Lwt_log_core 
-open Lwt.Infix 
+open Lwt_log_core
+open Lwt.Infix
 
-let section = Section.make "kraken_nonce" 
+let section = Section.make "kraken_nonce"
 
-(* Channel-specific subscription parameters *)
+(** Channel subscription parameters for Kraken WebSocket feeds *)
 type channel_params =
   | Ticker of {
       symbol: string list;
@@ -30,14 +35,14 @@ type channel_params =
     }
 [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Unified subscription message *)
+(** WebSocket subscription request message structure *)
 type subscribe_message = {
   method_: string; [@key "method"]
   params: channel_params; [@key "params"]
   req_id: int option; [@key "req_id"] [@yojson.option]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Ticker Data Response *)
+(** Market ticker data containing price and volume information *)
 type ticker_data = {
   ask: float; [@key "ask"]
   bid: float; [@key "bid"]
@@ -53,13 +58,14 @@ type ticker_data = {
   vwap: float; [@key "vwap"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
+(** WebSocket message containing ticker data updates *)
 type ticker_response = {
   channel: string; [@key "channel"]
   type_: string; [@key "type"]
   data: ticker_data list; [@key "data"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Status Update *)
+(** Connection status information from Kraken WebSocket *)
 type status_data = {
   version: string; [@key "version"]
   system: string; [@key "system"]
@@ -70,13 +76,14 @@ type status_data = {
     | _ -> Error "status_data.connection_id: expected int or string")]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
+(** WebSocket message containing connection status updates *)
 type status_response = {
   channel: string; [@key "channel"]
   type_: string; [@key "type"]
   data: status_data list; [@key "data"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Subscription Acknowledgment *)
+(** Response to subscription requests indicating success/failure *)
 type subscription_response = {
   method_: string; [@key "method"]
   req_id: int option; [@key "req_id"] [@yojson.option]
@@ -87,12 +94,12 @@ type subscription_response = {
   time_out: string; [@key "time_out"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Heartbeat *)
+(** WebSocket heartbeat message to maintain connection *)
 type heartbeat_response = {
   channel: string; [@key "channel"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Instrument Asset Data *)
+(** Trading asset information including precision and status *)
 type asset_data = {
   id: string; [@key "id"]
   precision: int; [@key "precision"]
@@ -100,7 +107,7 @@ type asset_data = {
   status: string; [@key "status"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Instrument Pair Data *)
+(** Trading pair information with fee structure and precision settings *)
 type pair_data = {
   symbol: string; [@key "symbol"]
   base: string; [@key "base"]
@@ -113,25 +120,26 @@ type pair_data = {
   fee_volume_currency: string option; [@key "fee_volume_currency"] [@yojson.optional] [@default None]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Instrument Channel Data Container *)
+(** Container for instrument channel data including assets and trading pairs *)
 type instrument_data = {
   assets: asset_data list; [@key "assets"]
   pairs: pair_data list; [@key "pairs"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Instrument Channel Response *)
+(** WebSocket message containing instrument data (assets and pairs) *)
 type instrument_response = {
   channel: string; [@key "channel"]
   type_: string; [@key "type"]
   data: instrument_data; (* Note: data is an object here, not list *)
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Execution Report *)
+(** Fee information for executed trades *)
 type fee = {
   asset: string; [@key "asset"]
   qty: float; [@key "qty"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
+(** Contingent order parameters for conditional execution *)
 type contingent = {
   order_type: string option; [@key "order_type"] [@yojson.option]
   trigger_price: float option; [@key "trigger_price"] [@yojson.option]
@@ -140,6 +148,7 @@ type contingent = {
   limit_price_type: string option; [@key "limit_price_type"] [@yojson.option]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
+(** Detailed report of order execution events *)
 type execution_report = {
   order_id: string; [@key "order_id"]
   exec_type: string; [@key "exec_type"]
@@ -155,13 +164,14 @@ type execution_report = {
   contingent: Yojson.Safe.t option; [@key "contingent"] [@yojson.option]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
+(** WebSocket message containing execution report updates *)
 type executions_response = {
   channel: string; [@key "channel"]
   type_: string; [@key "type"]
   data: execution_report list; [@key "data"]
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Kraken WS v2 API messages *)
+(** Parameters for placing new orders via Kraken WebSocket API v2 *)
 type add_order_params = {
   order_type: string;
   side: string;
@@ -173,6 +183,7 @@ type add_order_params = {
   cl_ord_id: string;
 } [@@deriving yojson]
 
+(** Complete add order request message for WebSocket API *)
 type add_order_request = {
   method_: string; [@key "method"]
   params: add_order_params;
@@ -180,7 +191,7 @@ type add_order_request = {
   req_id: int option; [@yojson.option]
 } [@@deriving yojson]
 
-(* Amend Order *) 
+(** Parameters for amending existing orders via WebSocket API *)
 type amend_order_params = {
   order_id: string;     
   order_qty: float;     
@@ -188,6 +199,7 @@ type amend_order_params = {
   post_only: bool;       
 } [@@deriving yojson]
 
+(** Complete amend order request message for WebSocket API *)
 type amend_order_request = {
   method_: string; [@key "method"]
   params: amend_order_params;
@@ -195,7 +207,7 @@ type amend_order_request = {
   req_id: int option; [@yojson.option]
 } [@@deriving yojson]
 
-(* Connection state *)
+(** WebSocket connection state with request tracking and command queue *)
 type state = {
   conn: Websocket_lwt_unix.conn;
   mutable next_req_id: int;
@@ -205,6 +217,7 @@ type state = {
   cmd_cond: unit Lwt_condition.t;
 }
 
+(** Internal representation of order state for tracking *)
 type order = {
   order_id : string;
   client_id : string option; 
@@ -212,15 +225,17 @@ type order = {
   side : Core.side option;
   status : Core.order_state;
   limit_price : float;
-  qty: float; 
+  qty: float;
 }
 
-(* Global, mutable reference for the last used nonce. *)
+(** Global mutable reference tracking the last used nonce for request authentication *)
 let last_nonce =
   ref (Unix.gettimeofday () *. 1_000_000_000.0 |> Int64.of_float)
 
+(** Mutex to synchronize nonce generation across concurrent requests *)
 let nonce_mutex = Lwt_mutex.create ()
 
+(** Generate monotonically increasing nonce for Kraken API authentication *)
 let nonce () =
   Lwt_mutex.with_lock nonce_mutex (fun () ->
     let current_nanos = Unix.gettimeofday () *. 1_000_000_000.0 |> Int64.of_float in
@@ -232,14 +247,15 @@ let nonce () =
     Lwt.return (Int64.to_string !last_nonce)
   )
 
-(* signing function *)
+(** Generate HMAC-SHA512 signature for Kraken API authentication using secret key *)
 let sign ~secret ~path ~body ~nonce =
   let payload = nonce ^ body in 
   let sha256_hash_raw = Digestif.SHA256.digest_string payload |> Digestif.SHA256.to_raw_string in
   let message_bytes = Bytes.cat (Bytes.of_string path) (Bytes.of_string sha256_hash_raw) in
   let decoded_secret = Base64.decode_exn secret in
   let hmac_hash_raw = Digestif.SHA512.hmac_bytes ~key:decoded_secret message_bytes |> Digestif.SHA512.to_raw_string in
-  Base64.encode_string hmac_hash_raw 
+  Base64.encode_string hmac_hash_raw
 
+(** Extract a field from a JSON object by path/key *)
 let parse_json_field json (path : string) =
   Yojson.Safe.Util.member path json

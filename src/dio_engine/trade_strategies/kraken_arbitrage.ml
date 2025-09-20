@@ -1,18 +1,10 @@
 (* src/dio_engine/trade_strategies/kraken_arbitrage.ml *)
 
 (*
-  ARCHITECTURAL OVERVIEW
+  Kraken Arbitrage Strategy
 
-  This module implements a high-frequency arbitrage system for Kraken exchange.
-  The system uses graph-based algorithms to detect and exploit price inefficiencies across
-  multiple trading pairs simultaneously.
-
-  KEY COMPONENTS:
-  - Exchange Graph: Directed graph where nodes are assets and edges are exchange rates with fees
-  - Arbitrage Detection: Fast triangle detection + general cycle detection via Bellman-Ford
-  - Execution Engine: Sequential order execution with fill monitoring and balance updates
-  - Risk Management: Concurrent execution limits, balance validation, and trade size optimization
-
+  High-frequency arbitrage system using graph algorithms to detect and exploit
+  triangular arbitrage opportunities across multiple trading pairs.
 *)
 
 open Lwt.Infix
@@ -22,14 +14,6 @@ open Lwt_log_core
 
 let section = Section.make "engine.strategy.kraken.arbitrage"
 
-(*
-  GRAPH REPRESENTATION
-
-  The arbitrage detection uses a directed graph where:
-  - Nodes represent trading assets (e.g., "ZUSD", "XXBT", "XETH")
-  - Edges represent exchange rates between assets with fee and capacity information
-  - Each edge is bidirectional but asymmetric due to different bid/ask spreads
-*)
 
 type exchange_edge = {
   from_asset: string;
@@ -101,18 +85,6 @@ type trade_opportunity =
   | Arbitrage_Cycle of arbitrage_cycle
   | Single_Pair_Spread of single_pair_opportunity
 
-(*
-  BELLMAN-FORD ALGORITHM FOR ARBITRAGE DETECTION
-
-  Uses negative log weights to detect profitable cycles in the exchange graph.
-  The algorithm works by:
-  1. Initializing all distances to 0 (representing 1.0 exchange rate)
-  2. Relaxing all edges |V|-1 times to find shortest paths
-  3. Checking for negative cycles in the Nth iteration
-  4. Extracting profitable arbitrage cycles from predecessor chains
-
-  Time complexity: O(|V| * |E|) where V = assets, E = trading pairs
-*)
 
 type bf_state = {
   distances: (string, float) Hashtbl.t;
@@ -240,15 +212,7 @@ let update_symbol_edges symbol =
           warning_f ~section "No bid/ask data for %s during update" symbol >>= fun () ->
           Lwt.return_unit
 
-(** Initialize the cached exchange rate graph from orderbook data.
-
-    Builds the initial directed graph representation of all trading pairs.
-    Each edge contains exchange rates, fees, and capacity information.
-    This cached graph enables fast arbitrage detection without repeated data fetching.
-
-    @param symbols List of trading pair symbols to include in the graph
-    @return Unit promise when initialization completes
-*)
+(** Initialize exchange rate graph for arbitrage detection *)
 let initialize_cached_graph symbols =
   if !graph_initialized then Lwt.return_unit else
 
@@ -263,8 +227,6 @@ let initialize_cached_graph symbols =
   ) symbols >>= fun () ->
 
   graph_initialized := true;
-  info_f ~section "Initialized cached exchange graph with %d nodes, %d edges" 
-    (Hashtbl.length cached_graph) (Hashtbl.length edge_cache) >>= fun () ->
   Lwt.return_unit
 
 let update_changed_edges symbols =
@@ -276,8 +238,6 @@ let update_changed_edges symbols =
 
   let dirty_list = Hashtbl.fold (fun symbol _ acc -> symbol :: acc) dirty_symbols [] in
   if List.length dirty_list > 0 then
-    debug_f ~section "Updating %d dirty symbols: [%s]" 
-      (List.length dirty_list) (String.concat ", " dirty_list) >>= fun () ->
     Lwt_list.iter_s update_symbol_edges dirty_list >>= fun () ->
     Lwt.return_unit
   else
@@ -361,15 +321,7 @@ let profit_pct_of_path graph (path : string list) =
   let total_rate = loop 1.0 path in
   total_rate -. 1.0
 
-(** Fast detection of triangular arbitrage opportunities.
-
-    Optimized O(n³) algorithm for finding 3-asset arbitrage cycles.
-    Much faster than general Bellman-Ford for the common case of triangles.
-    Calculates profit percentage after fees and filters by minimum threshold.
-
-    @param graph Exchange rate graph with fee-adjusted edges
-    @return List of profitable 3-asset arbitrage cycles
-*)
+(** Detect triangular arbitrage opportunities *)
 let detect_triangle_arbitrage graph profit_threshold_pct : arbitrage_cycle list Lwt.t =
   let cycles = ref [] in
   let assets = Hashtbl.fold (fun asset _ acc -> asset :: acc) graph [] in
@@ -382,7 +334,6 @@ let detect_triangle_arbitrage graph profit_threshold_pct : arbitrage_cycle list 
     | hd :: tl -> List.fold_left (fun acc e -> if compare acc e <= 0 then acc else e) hd tl
   in
 
-  debug_f ~section "Running specialized triangle detection on %d assets" (List.length assets) >>= fun () ->
 
   List.iter (fun asset_a ->
     match Hashtbl.find_opt graph asset_a with
@@ -442,8 +393,6 @@ let detect_general_arbitrage_cycles graph profit_threshold_pct : arbitrage_cycle
     node.edges @ acc
   ) graph [] in
 
-  debug_f ~section "Running Bellman-Ford with %d assets and %d edges"
-    (List.length assets) (List.length all_edges) >>= fun () ->
 
   for _ = 1 to List.length assets - 1 do
     List.iter (fun edge -> ignore (relax_edge bf_state edge)) all_edges
@@ -478,29 +427,15 @@ let detect_general_arbitrage_cycles graph profit_threshold_pct : arbitrage_cycle
   info_f ~section "Detected %d profitable general arbitrage cycles" (List.length !cycles) >>= fun () ->
   Lwt.return !cycles
 
-(** Detect profitable arbitrage cycles using optimized algorithms.
-
-    Combines fast triangle detection with general cycle detection using Bellman-Ford.
-    For small graphs (< 20 assets), uses both methods for comprehensive coverage.
-    For larger graphs, prioritizes triangle detection for performance.
-
-    @param graph Current exchange rate graph with fee-adjusted edges
-    @return List of profitable arbitrage cycles, sorted by profitability
-*)
+(** Detect profitable arbitrage cycles across all assets *)
 let detect_arbitrage_cycles graph profit_threshold_pct : arbitrage_cycle list Lwt.t =
-  (* Use fast triangle detection for 3-leg cycles *)
   detect_triangle_arbitrage graph profit_threshold_pct >>= fun triangle_cycles ->
-
-  (* Skip general detection if we have many assets (performance) *)
   let asset_count = Hashtbl.length graph in
-  if asset_count > 20 then (
-    debug_f ~section "Skipping general cycle detection for %d assets (performance)" asset_count >>= fun () ->
+  if asset_count > 20 then
     Lwt.return triangle_cycles
-  ) else (
-    (* Use Bellman-Ford for longer cycles *)
+  else
     detect_general_arbitrage_cycles graph profit_threshold_pct >>= fun general_cycles ->
     Lwt.return (triangle_cycles @ general_cycles)
-  )
 
 let apply_precision_constraints pair_symbol qty =
   match Kraken.Kraken_incoming_data.get_precisions pair_symbol with
@@ -511,15 +446,7 @@ let apply_precision_constraints pair_symbol qty =
   | None ->
       max qty (get_min_order_size pair_symbol)
 
-(** Detect profitable single-pair spread opportunities.
-
-    Identifies pairs with a wide enough bid-ask spread to place maker orders on both
-    sides and capture a profit.
-
-    @param symbols List of trading pair symbols to check
-    @param profit_threshold_pct Minimum required profit percentage after fees
-    @return List of profitable single-pair opportunities
-*)
+(** Detect profitable single-pair spread opportunities *)
 let detect_single_pair_opportunities symbols profit_threshold_pct : single_pair_opportunity list Lwt.t =
   let opportunities = ref [] in
   Lwt_list.iter_s (fun symbol ->
@@ -579,16 +506,7 @@ let detect_single_pair_opportunities symbols profit_threshold_pct : single_pair_
   info_f ~section "Detected %d profitable single-pair opportunities" (List.length !opportunities) >>= fun () ->
   Lwt.return !opportunities
 
-(** Calculate optimal trade sizes for an arbitrage cycle considering all constraints.
-
-    Determines the maximum executable volume for a cycle by finding the bottleneck
-    across orderbook liquidity, available balances, and minimum order size requirements.
-    Applies precision constraints and ensures all legs can be executed successfully.
-
-    @param cycle Arbitrage cycle with path but uncalculated trade sizes
-    @param graph Current exchange rate graph with capacity and fee information
-    @return Cycle with calculated trade sizes and bottleneck volume
-*)
+(** Calculate optimal trade sizes for arbitrage cycle *)
 let calculate_trade_sizes cycle graph =
   let path = cycle.path in
   if List.length path < 4 then cycle else
@@ -653,19 +571,7 @@ let calculate_trade_sizes cycle graph =
     trade_sizes;
     bottleneck_volume = trade_size }
 
-(** Validate arbitrage cycle for safe execution.
-
-    Ensures the cycle can be executed by checking:
-    - Sufficient starting asset balance
-    - All required trading pairs exist in the graph
-    - Trade sizes meet minimum order requirements
-    - Orderbook capacity supports the trade volumes
-    - Precision constraints are satisfied
-
-    @param cycle Cycle to validate
-    @param graph Current exchange graph
-    @return true if cycle is safe to execute
-*)
+(** Validate arbitrage cycle for safe execution *)
 let validate_cycle cycle graph =
   if List.length cycle.path < 4 then false else  (* Need at least 3 edges + closing *)
   
@@ -889,29 +795,8 @@ let execute_cycle_leg cycle_exec leg_index current_qty fill_ratio graph cmd_buff
         Lwt.return None
   )
 
-(*
-  EXECUTION ENGINE
 
-  Handles the sequential execution of arbitrage cycles with robust error handling:
-  - Submits orders for each leg and waits for confirmation before proceeding
-  - Monitors order fills with timeouts to prevent execution hangs
-  - Updates asset balances after each successful fill
-  - Handles partial fills by adjusting subsequent order sizes
-  - Maintains execution state and provides detailed logging
-*)
-
-(** Execute a complete arbitrage cycle by submitting sequential orders.
-
-    Submits orders for each leg of the arbitrage cycle, waiting for fills between legs.
-    Updates asset balances after each successful fill and handles partial fills gracefully.
-    Times out individual legs after 30 seconds to prevent hanging executions.
-
-    @param cycle Validated arbitrage cycle with calculated trade sizes
-    @param graph Current exchange rate graph for order pricing
-    @param cmd_buffer Command buffer for order submission
-    @param exec_buffer Execution buffer for monitoring order fills
-    @return true if cycle completed successfully, false on failure
-*)
+(** Execute complete arbitrage cycle with sequential orders *)
 let execute_arbitrage_cycle cycle graph cmd_buffer exec_buffer = 
   let cycle_ttl = 5.0 in (* 5 second timeout for the whole cycle *)
   let cycle_exec = {
@@ -922,10 +807,6 @@ let execute_arbitrage_cycle cycle graph cmd_buffer exec_buffer =
     start_time = Unix.time ();
   } in
 
-  info_f ~section "Starting cycle execution: %s (initial: %.8f)"
-    (String.concat " -> " cycle.path) cycle.bottleneck_volume >>= fun () ->
-
-  (* Execute legs sequentially *)
   let rec execute_legs leg_index current_qty fill_ratio =
     let elapsed = Unix.time () -. cycle_exec.start_time in
     if elapsed >= cycle_ttl then (
@@ -993,9 +874,6 @@ let execute_single_pair_opportunity opportunity cmd_buffer _exec_buffer =
 
   Ringbuffer.push cmd_buffer buy_order >>= fun () ->
   Ringbuffer.push cmd_buffer sell_order >>= fun () ->
-  
-  (* For now, we don't wait for fills but assume execution starts.
-     A more robust implementation would monitor fills and manage partial fills/inventory. *)
   Lwt.return_true
 
 let cancel_pending_orders cycle_exec cmd_buffer =
@@ -1022,37 +900,13 @@ let max_concurrent_cycles = ref 2
 let active_cycles = ref 0
 let cycles_mutex = Lwt_mutex.create ()
 
-(** Main entry point for the triangular arbitrage trading strategy.
-
-    This function implements a high-frequency arbitrage detection system that:
-    - Continuously monitors Kraken orderbook data for triangular arbitrage opportunities
-    - Uses optimized graph algorithms to detect profitable cycles
-    - Executes validated arbitrage cycles with proper risk management
-    - Maintains concurrent execution limits to prevent over-leveraging
-
-    @param runtime_cfg Runtime configuration containing active trading symbols
-    @param _core_cfg Unused core engine configuration (placeholder for future use)
-    @param tick_buffer Unused tick data buffer (placeholder for future enhancements)
-    @param cmd_buffer Command buffer for submitting orders to the trading engine
-    @param exec_buffer Execution buffer for receiving order fill confirmations
-    @return Never returns (infinite arbitrage detection loop)
-*)
+(** Start triangular arbitrage trading strategy *)
 let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
     ~tick_buffer:_ ~cmd_buffer ~exec_buffer =
 
-  info_f ~section "Starting triangular arbitrage strategy" >>= fun () ->
-
   init_default_balances ();
-  info_f ~section "Initialized asset balances for arbitrage trading" >>= fun () ->
-
   let active_symbols = List.map (fun (asset: Config.asset_cfg) -> asset.symbol) runtime_cfg.assets in
-
-  info_f ~section "Monitoring symbols for arbitrage: [%s]"
-    (String.concat ", " active_symbols) >>= fun () ->
-
   Kraken.Kraken_incoming_data.wait_for_instruments () >>= fun () ->
-  info_f ~section "Instrument data loaded, starting arbitrage detection" >>= fun () ->
-
   initialize_cached_graph active_symbols >>= fun () ->
 
   let rec arbitrage_loop () =
@@ -1091,14 +945,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
             ) >>= fun can_execute ->
 
             if can_execute then (
-              info_f ~section "Executing arbitrage cycle (%d/%d active): %s (profit: %.4f%%, volume: %.8f)"
-                !active_cycles !max_concurrent_cycles
-                (String.concat " -> " validated_cycle.path)
-                (validated_cycle.profit_pct *. 100.0)
-                validated_cycle.bottleneck_volume >>= fun () ->
- 
-               (* Execute cycle asynchronously to avoid blocking arbitrage detection *)
-               Lwt.async (fun () ->
+              Lwt.async (fun () ->
                 execute_arbitrage_cycle validated_cycle graph cmd_buffer exec_buffer >>= fun _success ->
                 Lwt_mutex.with_lock cycles_mutex (fun () ->
                   decr active_cycles;
@@ -1125,10 +972,6 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
             ) >>= fun can_execute ->
 
             if can_execute then (
-              info_f ~section "Executing single-pair opportunity (%d/%d active): %s (profit: %.4f%%)"
-                !active_cycles !max_concurrent_cycles
-                opp.symbol (opp.profit_pct *. 100.0) >>= fun () ->
-
               Lwt.async (fun () ->
                 execute_single_pair_opportunity opp cmd_buffer exec_buffer >>= fun _success ->
                 Lwt_mutex.with_lock cycles_mutex (fun () ->

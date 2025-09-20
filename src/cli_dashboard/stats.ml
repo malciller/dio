@@ -1,17 +1,22 @@
+(** Dashboard statistics and data aggregation utilities *)
+
 open Dio_types
 
+(** Global timestamp when the dashboard was started *)
 let start_ts = Unix.gettimeofday ()
 
+(** Maximum number of dashboard log entries to retain *)
 let max_dashboard_logs = 15
+
+(** Mutable reference to list of recent dashboard log messages *)
 let dashboard_logs = ref []
 
+(** Add a message to the dashboard logs, maintaining the maximum limit *)
 let add_dashboard_log (message : string) : unit =
-  (* Optimized log management with O(1) append and efficient trimming *)
   let current_logs = !dashboard_logs in
   let new_logs = message :: current_logs in
   dashboard_logs :=
     if List.length new_logs > max_dashboard_logs then
-      (* Efficient trimming: take only the most recent entries *)
       let rec take_first n lst =
         if n <= 0 then []
         else match lst with
@@ -22,8 +27,11 @@ let add_dashboard_log (message : string) : unit =
     else
       new_logs
 
+(** Get current market price for a trading symbol *)
 let get_price symbol = State.get_global_price symbol
 
+(** Get open buy and sell orders for a trading symbol
+    @return Tuple of (buy_orders, sell_orders) where each is a list of (price, qty) pairs *)
 let get_orders_for_symbol symbol =
   let orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
   let orders_list =

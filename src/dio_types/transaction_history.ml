@@ -1,4 +1,7 @@
-(* src/dio_types/transaction_history.ml *)
+(** Transaction history management for cost basis tracking and balance reconciliation.
+
+    This module maintains a chronological record of all asset transactions and calculates
+    cost basis information for tax and accounting purposes. *)
 
 open Lwt.Infix
 open Primitives
@@ -6,29 +9,30 @@ open Event
 
 let section = Lwt_log_core.Section.make "transaction_history"
 
-(* Transaction storage *)
+(** Global storage for transaction history and cost basis calculations. *)
 let transaction_history : (string, transaction list) Hashtbl.t = Hashtbl.create 64
 let cost_basis_cache : (string, cost_basis_info) Hashtbl.t = Hashtbl.create 64
 
+(** Check if asset is a stablecoin for cost basis estimation. *)
 let is_stablecoin asset =
   let stablecoins = ["USD"; "USDT"; "USDC"; "USDG"; "USDR"] in
   List.mem asset stablecoins
 
-(* Get transactions for an asset *)
+(** Retrieve all transactions for a specific asset. *)
 let get_transactions asset =
   Hashtbl.find_opt transaction_history asset |> Option.value ~default:[]
 
-(* Get cost basis for an asset *)
+(** Retrieve cost basis information for a specific asset. *)
 let get_cost_basis asset =
   Hashtbl.find_opt cost_basis_cache asset
 
-(* Calculate cost basis from transactions *)
+(** Calculate cost basis from transaction history using FIFO method. *)
 let calculate_cost_basis asset =
   let transactions = get_transactions asset in
   let buy_transactions = List.filter (fun tx ->
     match tx.transaction_type with
     | Trade { side = `Buy; _ } -> true
-    | Deposit | Staking_Reward -> true (* These add to our cost basis *)
+    | Deposit | Staking_Reward -> true
     | _ -> false
   ) transactions in
 
@@ -39,9 +43,8 @@ let calculate_cost_basis asset =
         let qty_float = float_of_string (Qty.to_string qty) in
         (units +. qty_float, cost +. (price_float *. qty_float))
     | Deposit | Staking_Reward ->
-        (* For deposits/rewards, we need to estimate value at time of transaction *)
-        (* This is a simplified approach - in production you'd want historical prices *)
-        (units +. tx.amount, cost +. (abs_float tx.amount *. Option.value tx.cost_basis ~default:(if is_stablecoin asset then 1.0 else 0.0)))
+        let cost_estimate = Option.value tx.cost_basis ~default:(if is_stablecoin asset then 1.0 else 0.0) in
+        (units +. tx.amount, cost +. (abs_float tx.amount *. cost_estimate))
     | _ -> (units, cost)
   ) (0.0, 0.0) buy_transactions in
 
@@ -55,16 +58,14 @@ let calculate_cost_basis asset =
   else
     None
 
-(* Add a transaction and update cost basis *)
+(** Add a new transaction to history and update cost basis calculations. *)
 let add_transaction tx =
   let asset = tx.asset in
 
-  (* Add to transaction history *)
   let current_txs = get_transactions asset in
   let updated_txs = tx :: current_txs in
   Hashtbl.replace transaction_history asset updated_txs;
 
-  (* Recalculate cost basis *)
   let new_cost_basis = calculate_cost_basis asset in
   (match new_cost_basis with
    | Some cb -> Hashtbl.replace cost_basis_cache asset cb
@@ -87,23 +88,20 @@ let add_transaction tx =
   >>= fun () ->
   Lwt.return_unit
 
-(* Get accumulated cost for current balance *)
+(** Calculate accumulated cost basis for current balance amount. *)
 let get_accumulated_cost asset current_balance =
   match get_cost_basis asset with
   | Some cb ->
       if current_balance >= cb.total_units then
-        (* All current balance comes from tracked transactions *)
         Some cb.total_cost_basis
       else
-        (* Only some of current balance comes from tracked transactions *)
         Some (cb.average_cost_per_unit *. current_balance)
   | None -> None
 
-(* Create transaction from fill event *)
+(** Convert a fill event into a transaction record. *)
 let transaction_from_fill fill =
   let order_id = fill.order_id in
   let asset =
-    (* Use base asset when symbol is a pair like "SOL/USD" *)
     try
       let idx = String.index fill.symbol '/' in
       String.sub fill.symbol 0 idx
@@ -112,8 +110,8 @@ let transaction_from_fill fill =
   let qty_float = float_of_string (Qty.to_string fill.qty) in
   let price_float = float_of_string (Price.to_string fill.price) in
   let amount = match fill.side with
-    | `Buy -> qty_float    (* Positive for buys *)
-    | `Sell -> -.qty_float (* Negative for sells *)
+    | `Buy -> qty_float
+    | `Sell -> -.qty_float
   in
   let tx_type = Trade {
     order_id;
@@ -132,10 +130,10 @@ let transaction_from_fill fill =
     transaction_type = tx_type;
     cost_basis;
     total_cost;
-    balance_after = 0.0; (* Will be updated when we know the balance *)
+    balance_after = 0.0;
   }
 
-(* Initialize from existing balance (for reconciliation) *)
+(** Initialize transaction history from existing balance for reconciliation. *)
 let initialize_from_balance asset initial_balance =
   if initial_balance > 0.0 then
     let tx = {
@@ -144,7 +142,7 @@ let initialize_from_balance asset initial_balance =
       amount = initial_balance;
       timestamp = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
       transaction_type = Adjustment;
-      cost_basis = None; (* Unknown cost basis for initial balance *)
+      cost_basis = None;
       total_cost = None;
       balance_after = initial_balance;
     } in
@@ -153,13 +151,13 @@ let initialize_from_balance asset initial_balance =
   else
     Lwt.return_unit
 
-(* Clear all transaction history *)
+(** Clear all transaction history and cost basis data. *)
 let clear_history () =
   Hashtbl.clear transaction_history;
   Hashtbl.clear cost_basis_cache;
   Lwt_log_core.info ~section "Cleared all transaction history"
 
-(* Get unrealized P&L for an asset *)
+(** Calculate unrealized profit/loss for an asset at current market price. *)
 let get_unrealized_pnl asset current_balance current_price_usd =
   match get_cost_basis asset with
   | Some cb ->
@@ -168,9 +166,7 @@ let get_unrealized_pnl asset current_balance current_price_usd =
       Some (current_value -. cost_basis_value)
   | None -> None
 
-
-
-(* Get balance summary for reconciliation *)
+(** Generate balance reconciliation summary for an asset. *)
 let get_balance_summary asset =
   let transactions = get_transactions asset in
   let buy_txs = List.filter (fun tx ->
@@ -193,7 +189,7 @@ let get_balance_summary asset =
 
   (total_bought, total_sold, net_position, List.length transactions)
 
-(* Validate transaction history integrity *)
+(** Validate transaction history integrity by checking balance consistency. *)
 let validate_history asset =
   let transactions = get_transactions asset in
   let rec validate_txs txs expected_balance =
@@ -217,7 +213,7 @@ let validate_history asset =
     |> ignore;
   is_valid
 
-(* Export transaction history for debugging *)
+(** Export transaction history for debugging and analysis. *)
 let export_history asset =
   let txs = get_transactions asset in
   List.map (fun tx ->
@@ -236,7 +232,7 @@ let export_history asset =
        | Unknown -> "UNKNOWN")
   ) txs
 
-(* Get balance reconciliation report *)
+(** Generate comprehensive balance reconciliation report for all assets. *)
 let get_reconciliation_report () =
   let assets = Hashtbl.fold (fun asset _ acc -> asset :: acc) transaction_history [] in
   List.map (fun asset ->

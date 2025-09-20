@@ -1,17 +1,33 @@
-(* src/exchange/kraken/kraken_outgoing_data.ml *)
+(**
+ * Kraken REST API client for outgoing order commands.
+ *
+ * This module handles the execution of trading commands (Add, Amend, Cancel) against
+ * Kraken's REST API endpoints. It manages authentication, request formatting,
+ * response parsing, and event notification for order lifecycle management.
+ *)
 
 open Lwt.Infix
 open Dio_types
-open Cohttp_lwt_unix 
+open Cohttp_lwt_unix
 
-
+(** Convert internal Price type to float for API transmission *)
 let float_of_price price =
   float_of_string (Primitives.Price.to_string price)
 
+(** Convert internal Qty type to float for API transmission *)
 let float_of_qty qty =
   float_of_string (Primitives.Qty.to_string qty)
 
-(* Order command processing via REST *)
+(**
+ * Execute order commands via Kraken REST API.
+ *
+ * Handles Add, Amend, and Cancel operations with proper error handling and
+ * precision formatting. Generates acknowledgment events for order state changes.
+ *
+ * @param cfg Engine configuration containing API credentials
+ * @param cmd Order command to execute
+ * @param on_event Callback for order acknowledgment events
+ *)
 let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_event : unit Lwt.t =
   let section = Lwt_log_core.Section.make "kraken_rest_exec" in 
   match cmd with
@@ -21,11 +37,12 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let api_host = "api.kraken.com" in 
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
       Kraken_common_types.nonce () >>= fun nonce -> 
+      (* Format price with symbol-specific precision, fallback to raw float if unavailable *)
       let price_str =
         let raw_price_float = float_of_price price in
-        match Kraken_incoming_data.get_precisions symbol with 
+        match Kraken_incoming_data.get_precisions symbol with
         | Some (price_prec, _qty_prec) -> Primitives.format_float_precision raw_price_float price_prec
-        | None -> 
+        | None ->
             Lwt_log_core.warning ~section (Printf.sprintf "No price precision found for %s in AddOrder, sending raw price." symbol) |> Lwt.ignore_result;
             string_of_float raw_price_float
       in
@@ -34,7 +51,8 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let side_str = match side with Core.Buy -> "buy" | Core.Sell -> "sell" in 
       let oflags = "post" in 
       let time_in_force_str = "gtc" in 
-      let truncated_client_id = 
+      (* Kraken limits client order ID to 18 characters *)
+      let truncated_client_id =
         if String.length client_id > 18 then String.sub client_id 0 18
         else client_id
       in
@@ -147,7 +165,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
           Lwt_log_core.error ~section (Printf.sprintf "REST AmendOrder failed for order_id %s: %s" order_id error_msgs) >>= fun () ->
           let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
           (* Check if this is an "Unknown order" error, which means the order was already filled/cancelled *)
-          let is_unknown_order = 
+          let is_unknown_order =
             let needle = "EOrder:Unknown order" in
             let needle_len = String.length needle in
             let haystack_len = String.length error_msgs in
@@ -225,6 +243,16 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         on_event ack
       )
 
+(**
+ * Process router command and push acknowledgment events to execution buffer.
+ *
+ * Wrapper function that executes order commands and routes resulting events
+ * through the execution buffer for downstream processing.
+ *
+ * @param cfg Engine configuration with API credentials
+ * @param cmd Order command to process
+ * @param exec_buffer Ringbuffer for event notifications
+ *)
 let handle_router_command (cfg : Config.engine_config) cmd exec_buffer : unit Lwt.t =
   let section = Lwt_log_core.Section.make "kraken_rest_exec" in 
   Lwt_log_core.debug ~section (Printf.sprintf "Handling router command via REST: %s" (Core.order_cmd_to_yojson cmd |> Yojson.Safe.to_string)) >>= fun () ->

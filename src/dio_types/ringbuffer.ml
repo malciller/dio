@@ -1,11 +1,19 @@
 
-(* src/types/ringbuffer.ml *)
+(** Thread-safe circular buffer implementation using Lwt for concurrency control.
+
+    Provides blocking push/pop operations with automatic capacity management.
+    Uses power-of-2 sizing for efficient indexing via bitwise AND masking. *)
 
 open Lwt.Infix
 
+let section = Lwt_log_core.Section.make "dio_types.ringbuffer"
 
-let section = Lwt_log_core.Section.make "dio_types.ringbuffer" 
-
+(** Ringbuffer type parameterized by element type 'a.
+    - buf: Underlying array storing optional values (None = empty slot)
+    - mask: Bitmask for efficient circular indexing (capacity - 1)
+    - head/tail: Producer/consumer indices
+    - mutex: Protects concurrent access
+    - not_full/not_empty: Condition variables for blocking operations *)
 type 'a t = {
   buf       : 'a option array;
   mask      : int;
@@ -16,10 +24,13 @@ type 'a t = {
   not_empty : unit Lwt_condition.t;
 }
 
+(** Rounds up to the nearest power of 2 for efficient circular indexing. *)
 let round_pow2 n =
   let rec aux p = if p >= n then p else aux (p * 2) in
   aux 1
 
+(** Creates a new ringbuffer with the specified minimum capacity.
+    Capacity will be rounded up to the nearest power of 2. *)
 let create cap =
   let cap = round_pow2 cap in
   {
@@ -32,11 +43,17 @@ let create cap =
     not_empty = Lwt_condition.create ();
   }
 
+(** Returns the current number of elements in the ringbuffer. *)
 let length q = q.head - q.tail
 
+(** Returns true if the ringbuffer is at maximum capacity. *)
 let is_full q  = length q = Array.length q.buf
+
+(** Returns true if the ringbuffer contains no elements. *)
 let is_empty q = q.head = q.tail
 
+(** Adds an element to the ringbuffer. Blocks if buffer is full.
+    Thread-safe and signals waiting consumers when data becomes available. *)
 let push q v =
   Lwt_mutex.with_lock q.mutex (fun () ->
     let rec wait_if_full () =
@@ -54,6 +71,8 @@ let push q v =
     Lwt.return_unit
   )
 
+(** Removes and returns the oldest element from the ringbuffer. Blocks if buffer is empty.
+    Thread-safe and signals waiting producers when space becomes available. *)
 let pop q =
   Lwt_mutex.with_lock q.mutex (fun () ->
     let rec wait_if_empty () =
@@ -67,9 +86,9 @@ let pop q =
     let idx = q.tail land q.mask in
     match q.buf.(idx) with
     | None ->
-        (* Should be unreachable due to the wait_if_empty logic *)
-        Lwt_log_core.error_f ~section "Ringbuffer.pop: Impossible state reached - encountered None at index %d while buffer expected to be non-empty." idx >>= fun () -> 
-        Lwt.fail (Failure "Ringbuffer.pop: Impossible state reached") 
+        (* This should never happen due to wait_if_empty logic above *)
+        Lwt_log_core.error_f ~section "Ringbuffer.pop: Impossible state reached - encountered None at index %d while buffer expected to be non-empty." idx >>= fun () ->
+        Lwt.fail (Failure "Ringbuffer.pop: Impossible state reached")
     | Some v ->
         q.buf.(idx) <- None;
         q.tail <- q.tail + 1;

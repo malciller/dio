@@ -1,36 +1,41 @@
-(* src/exchange/kraken/kraken_balances.ml *)
+(**
+ * Kraken Balances Module
+ *
+ * Manages real-time balance tracking via WebSocket feed and maintains transaction history.
+ * Handles balance snapshots, updates, and trade-related events while preventing race conditions.
+ *)
 
 open Lwt.Infix
 open Lwt_log_core
 open Dio_types
 
-(* Mutex to prevent race conditions during balance updates *)
+(** Mutex for balance state synchronization *)
 let balance_mutex = Lwt_mutex.create ()
 
-(* Ringbuffer for balance updates to prevent race conditions *)
+(** Ringbuffer for ordered balance update processing *)
 let balance_update_queue : (string * Yojson.Safe.t) Ringbuffer.t = Ringbuffer.create 1000
 
-(* Ringbuffer for fill events to prevent race conditions *)
+(** Ringbuffer for ordered fill event processing *)
 let fill_event_queue : Event.fill Ringbuffer.t = Ringbuffer.create 1000
 
 let section = Section.make "kraken.balances"
 
-(* In-memory store for balances *)
+(** Balance storage by wallet type *)
 let spot_balances : (string, float) Hashtbl.t = Hashtbl.create(16)
 let earn_balances : (string, float) Hashtbl.t = Hashtbl.create(16)
 let liquid_balances : (string, float) Hashtbl.t = Hashtbl.create(16)
-let balances : (string, float) Hashtbl.t = Hashtbl.create(16) (* Aggregated: spot + earn *)
+let balances : (string, float) Hashtbl.t = Hashtbl.create(16) (** Aggregated spot + earn balances *)
 
-(* Previous balance snapshots for change detection *)
+(** Previous balances for change detection *)
 let previous_balances : (string, float) Hashtbl.t = Hashtbl.create(16)
 
-(* Condition to signal when the initial balance snapshot is received *)
+(** Condition signaled when initial balance snapshot is received *)
 let balances_initialized = Lwt_condition.create ()
 
-(* Track whether balances have been initialized *)
+(** Flag indicating if balances have been initialized from WebSocket *)
 let balances_ready = ref false
 
-(* Detect balance change type *)
+(** Classify balance change type for transaction categorization *)
 let classify_balance_change asset old_balance new_balance =
   let diff = new_balance -. old_balance in
   debug_f ~section "Classifying balance change for %s: %.8f -> %.8f (diff: %.8f)"
@@ -47,7 +52,7 @@ let classify_balance_change asset old_balance new_balance =
     (* Negative change - could be withdrawal, fee, or trade *)
     Lwt.return_some (`Debit, diff)
 
-(* Process balance change and create transaction record *)
+(** Process balance change and create transaction record *)
 let process_balance_change asset old_balance new_balance =
   let%lwt classification = classify_balance_change asset old_balance new_balance in
   match classification with
@@ -91,10 +96,10 @@ let process_balance_change asset old_balance new_balance =
   | None ->
       debug_f ~section "No significant balance change for %s" asset
 
+(** Process initial balance snapshot from WebSocket feed *)
 let handle_balance_snapshot data =
   Lwt_mutex.with_lock balance_mutex (fun () ->
     let open Yojson.Safe.Util in
-    (* Clear all balance tables *)
     Hashtbl.clear previous_balances;
     Hashtbl.iter (fun asset balance -> Hashtbl.replace previous_balances asset balance) balances;
     Hashtbl.clear balances;
@@ -125,7 +130,6 @@ let handle_balance_snapshot data =
         Lwt.return_unit
       ) wallets >>= fun () ->
 
-      (* Update aggregated balance *)
       let spot = Hashtbl.find_opt spot_balances asset |> Option.value ~default:0.0 in
       let earn = Hashtbl.find_opt earn_balances asset |> Option.value ~default:0.0 in
       Hashtbl.replace balances asset (spot +. earn);
@@ -140,19 +144,18 @@ let handle_balance_snapshot data =
     info_f ~section "Processed balance snapshot. %d assets loaded." (Hashtbl.length balances)
   )
 
+(** Process incremental balance updates from WebSocket feed *)
 let handle_balance_update data =
   let open Yojson.Safe.Util in
   data |> to_list |> Lwt_list.iter_s (fun item ->
     debug_f ~section "Full balance update item: %s" (Yojson.Safe.to_string item) >>= fun () ->
 
     let asset = item |> member "asset" |> to_string in
-
-    (* Push balance update to ringbuffer for ordered processing *)
     Ringbuffer.push balance_update_queue (asset, item) >>= fun () ->
     debug_f ~section "Pushed balance update for %s to ringbuffer" asset
   )
 
-(* Process balance updates from the ringbuffer in order *)
+(** Process balance updates from ringbuffer in FIFO order *)
 let process_balance_update_from_queue () =
   Ringbuffer.pop balance_update_queue >>= fun (asset, item) ->
   Lwt_mutex.with_lock balance_mutex (fun () ->
@@ -162,8 +165,6 @@ let process_balance_update_from_queue () =
     let event_type = item |> member "type" |> to_string in
     let subtype_opt = try Some (item |> member "subtype" |> to_string) with _ -> None in
 
-    (* Trade-related events are handled via the fill feed, so we skip tx generation here
-       but MUST still update the balance correctly using the authoritative `balance` field. *)
     let is_trade_related =
       let category = try Some (item |> member "category" |> to_string) with _ -> None in
       let wallet_type = try Some (item |> member "wallet_type" |> to_string) with _ -> None in
@@ -185,7 +186,6 @@ let process_balance_update_from_queue () =
         let wallet_type = item |> member "wallet_type" |> to_string_option |> Option.value ~default:"" in
         let wallet_id = item |> member "wallet_id" |> to_string_option |> Option.value ~default:"" in
 
-        (* Update specific wallet balance *)
         (match wallet_type with
         | "spot" when wallet_id = "main" -> Hashtbl.replace spot_balances asset new_balance
         | "earn" ->
@@ -197,7 +197,6 @@ let process_balance_update_from_queue () =
         | _ -> ()
         );
 
-        (* Recalculate and update aggregated balance *)
         let spot = Hashtbl.find_opt spot_balances asset |> Option.value ~default:0.0 in
         let earn = Hashtbl.find_opt earn_balances asset |> Option.value ~default:0.0 in
         let new_total_balance = spot +. earn in
@@ -242,7 +241,7 @@ let process_balance_update_from_queue () =
           Transaction_history.add_transaction final_tx
   )
 
-(* Process fill events from the ringbuffer *)
+(** Process fill events from ringbuffer and create transaction records *)
 let process_fill_event_from_queue () =
   Ringbuffer.pop fill_event_queue >>= fun fill ->
   Lwt_mutex.with_lock balance_mutex (fun () ->
@@ -254,7 +253,7 @@ let process_fill_event_from_queue () =
     Lwt.return_unit
   )
 
-(* Start the balance update processor *)
+(** Start background processors for balance updates and fill events *)
 let start_balance_update_processor () =
   let rec balance_loop () =
     process_balance_update_from_queue () >>= fun () ->
@@ -267,6 +266,7 @@ let start_balance_update_processor () =
   Lwt.async balance_loop;
   Lwt.async fill_loop
 
+(** Route WebSocket messages to appropriate balance handlers *)
 let handle_balances_message msg =
   Lwt.catch (fun () ->
     let json = Yojson.Safe.from_string msg in
@@ -293,6 +293,7 @@ let handle_balances_message msg =
     Lwt.return_unit
   )
 
+(** Subscribe to Kraken balances WebSocket channel *)
 let subscribe_to_balances conn token =
   let sub_msg =
     `Assoc [
@@ -306,14 +307,15 @@ let subscribe_to_balances conn token =
   let frame = Websocket.Frame.create ~content:sub_msg () in
   Websocket_lwt_unix.write conn frame
 
+(** Listen for balance messages on WebSocket connection *)
 let rec listen_for_balances conn =
   Websocket_lwt_unix.read conn >>= fun frame ->
   let content = frame.content in
   handle_balances_message content >>= fun () ->
   listen_for_balances conn
 
+(** Initialize WebSocket connection for real-time balance updates *)
 let initialize_ws_balances_feed (cfg : Config.engine_config) (token : string) =
-  (* Start the balance update processor *)
   start_balance_update_processor ();
 
   Lwt.async (fun () ->
@@ -348,13 +350,12 @@ let initialize_ws_balances_feed (cfg : Config.engine_config) (token : string) =
     connect_and_listen ()
   )
 
-(* Handle fill events from trading *)
+(** Queue fill events for processing and transaction record creation *)
 let handle_fill_event fill =
-  (* Push fill event to ringbuffer for ordered processing *)
   Ringbuffer.push fill_event_queue fill >>= fun () ->
   debug_f ~section "Pushed fill event for %s to ringbuffer" fill.symbol
 
-(* Initialize transaction history from current balances *)
+(** Initialize transaction history with current balance state *)
 let initialize_transaction_history () =
   if !balances_ready then
     let balance_list = Hashtbl.to_seq balances |> List.of_seq in
@@ -369,11 +370,12 @@ let initialize_transaction_history () =
   else
     warning_f ~section "Cannot initialize transaction history - balances not ready"
 
+(** Wait for balance initialization with timeout, return current balance state *)
 let wait_for_balances () =
   if !balances_ready then (
     Lwt.return (Hashtbl.copy spot_balances, Hashtbl.copy earn_balances, Hashtbl.copy liquid_balances, Hashtbl.copy balances)
   ) else (
-    let timeout = 30.0 in (* 30 second timeout *)
+    let timeout = 30.0 in
     Lwt.pick [
       (Lwt_condition.wait balances_initialized >>= fun () ->
        info_f ~section "Balance WebSocket initialized, received initial snapshot" >>= fun () ->

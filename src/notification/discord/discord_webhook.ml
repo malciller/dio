@@ -1,3 +1,5 @@
+(** Discord webhook notification module for trading alerts and balance updates *)
+
 open Lwt.Infix
 open Cohttp
 open Cohttp_lwt_unix
@@ -5,9 +7,11 @@ open Lwt_log_core
 open Dio_types
 open Dio_types.Core
 
+(** Get current timestamp in RFC3339 format *)
 let get_current_time () =
   Ptime.to_rfc3339 (Ptime_clock.now ())
 
+(** Get formatted server time as MM/DD/YYYY HH:MM:SS *)
 let get_formatted_server_time () =
   let tm = Unix.localtime (Unix.gettimeofday ()) in
   let year = tm.Unix.tm_year + 1900 in
@@ -18,27 +22,31 @@ let get_formatted_server_time () =
   let sec = tm.Unix.tm_sec in
   Printf.sprintf "%02d/%02d/%04d %02d:%02d:%02d" month day year hour min sec
 
+(** Payload for fill (trade execution) notifications *)
 type fill_notification_payload = {
-  side: side;
-  asset_name: string;
-  qty_str: string;
-  value_str: string;
-  order_id: string;
-  symbol: string;
+  side: side;           (** Buy or Sell *)
+  asset_name: string;   (** Asset name (e.g., "BTC") *)
+  qty_str: string;      (** Quantity as formatted string *)
+  value_str: string;    (** Value as formatted string *)
+  order_id: string;     (** Exchange order identifier *)
+  symbol: string;       (** Trading pair symbol *)
 }
 
+(** Payload for balance update notifications *)
 type balance_notification_payload = {
-  balances: (string * float) list;
+  balances: (string * float) list;  (** List of (asset, balance) pairs *)
 }
 
+(** Union type for all notification types *)
 type notification_payload =
-  | Fill of fill_notification_payload
-  | Balance of balance_notification_payload
+  | Fill of fill_notification_payload      (** Trade execution notification *)
+  | Balance of balance_notification_payload (** Balance update notification *)
 
-let section = Section.make "notification.discord"
+let section = Section.make "notification.discord"  
 let message_queue : notification_payload Ringbuffer.t = Ringbuffer.create 100
-let logged_no_url = ref false
+let logged_no_url = ref false  (** Flag to prevent repeated warnings about missing webhook URL *)
 
+(** Create Discord embed JSON for trade execution notifications *)
 let make_order_embed (payload: fill_notification_payload) =
   let side_str = match payload.side with | Core.Buy -> "buy" | Core.Sell -> "sell" in
   let color =
@@ -81,6 +89,7 @@ let make_order_embed (payload: fill_notification_payload) =
      ])
   ]
 
+(** Create Discord embed JSON for balance update notifications *)
 let make_balance_embed (payload: balance_notification_payload) =
   (* Filter out zero or very small balances and exclude stock assets *)
   let excluded_assets = ["QQQ.EQ"; "SCHD.EQ"; "VTI.EQ"] in
@@ -133,16 +142,20 @@ let make_balance_embed (payload: balance_notification_payload) =
        ])
     ]
 
+(** Dispatch payload to appropriate embed constructor *)
 let make_message_json (payload: notification_payload) =
   match payload with
   | Fill fill_payload -> make_order_embed fill_payload
   | Balance balance_payload -> make_balance_embed balance_payload
 
+(** Queue a notification payload for sending *)
 let send_message (payload: notification_payload) =
   Ringbuffer.push message_queue payload
 
+(** Test hook to access message queue *)
 let get_message_queue_for_test () = message_queue
 
+(** Fetch current balances and send Discord notification *)
 let send_balance_notification (balance_fetcher: Config.engine_config -> (string, float) Hashtbl.t Lwt.t) (cfg: Config.engine_config) =
   match Sys.getenv_opt "DISCORD_WEBHOOK_URL" with
   | None ->
@@ -167,6 +180,7 @@ let send_balance_notification (balance_fetcher: Config.engine_config -> (string,
         error_f ~section "Failed to send balance notification: %s" (Printexc.to_string exn)
       )
 
+(** Schedule balance notifications every 15 minutes at quarter hours (XX:00, XX:15, XX:30, XX:45) *)
 let balance_scheduler (balance_fetcher: Config.engine_config -> (string, float) Hashtbl.t Lwt.t) (cfg: Config.engine_config) =
   (* Calculate seconds until next quarter hour (00, 15, 30, 45 minutes) *)
   let now = Unix.gettimeofday () in
@@ -208,6 +222,7 @@ let balance_scheduler (balance_fetcher: Config.engine_config -> (string, float) 
   in
   schedule_next ()
 
+(** Background worker that processes queued notifications and sends them to Discord *)
 let rec worker () =
   Ringbuffer.pop message_queue >>= fun payload ->
   (match Sys.getenv_opt "DISCORD_WEBHOOK_URL" with
@@ -243,6 +258,7 @@ let rec worker () =
       )) >>= fun () ->
   worker ()
 
+(** Initialize the Discord notification system with worker and balance scheduler threads *)
 let start (balance_fetcher: Config.engine_config -> (string, float) Hashtbl.t Lwt.t) (cfg: Config.engine_config) =
   Lwt.join [
     worker ();

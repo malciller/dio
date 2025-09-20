@@ -1,4 +1,10 @@
-(* src/exchange/kraken/kraken_incoming_data.ml *)
+(**
+ * Kraken WebSocket Feed Handler
+ *
+ * Manages WebSocket connections to Kraken's public and authenticated feeds,
+ * processing real-time market data, order executions, and instrument information.
+ * Handles message parsing, state synchronization, and event generation.
+ *)
 
 open Lwt.Infix
 open Websocket
@@ -11,23 +17,22 @@ open Discord_webhook
 
 let section = Lwt_log_core.Section.make "kraken_ws_feed"
 
-(* get orderbook symbols from config *)
+(** Extract orderbook symbols from runtime configuration for arbitrage trading. *)
 let get_orderbook_symbols (runtime_cfg : Config.runtime_cfg) : string list =
-  (* Return ALL symbols for arbitrage strategy - it needs orderbook data for all pairs *)
   List.map (fun (asset : Config.asset_cfg) -> asset.symbol) runtime_cfg.assets
 
+(** Synchronization promises for feed initialization. *)
 let executions_snapshot_processed, resolve_executions_snapshot_processed = Lwt.task ()
 let instruments_loaded, resolve_instruments_loaded = Lwt.task ()
 
 let wait_for_snapshot () = executions_snapshot_processed
 let wait_for_instruments () = instruments_loaded
 
-(* Storage for instrument precisions: symbol -> (price_precision, qty_precision) *)
+(** Instrument metadata storage: symbol -> (price_precision, qty_precision) *)
 let instrument_precisions : (string, (int * int)) Hashtbl.t = Hashtbl.create 16
 let instrument_data : (string, Kraken_common_types.pair_data) Hashtbl.t = Hashtbl.create 256
 
 let get_precisions symbol : (int * int) option = Hashtbl.find_opt instrument_precisions symbol
-
 let get_instrument symbol : Kraken_common_types.pair_data option = Hashtbl.find_opt instrument_data symbol
 
 let get_price_precision symbol : int option =
@@ -35,20 +40,25 @@ let get_price_precision symbol : int option =
   | Some (price_prec, _) -> Some price_prec
   | None -> None
 
+(** Convert float to Price primitive with specified precision. *)
 let float_to_price ~scale f =
   let s = Printf.sprintf "%.*f" scale f in
   Primitives.Price.of_string_exn ~scale s
 
+(** Convert float to Qty primitive with specified precision. *)
 let float_to_qty ~scale f =
   let s = Printf.sprintf "%.*f" scale f in
   Primitives.Qty.of_string_exn ~scale s
 
+(** Safe JSON value extraction with defaults. *)
 let safe_string json key default = JsonUtil.(member key json |> to_string_option |> Option.value ~default)
 let safe_float json key default = JsonUtil.(member key json |> to_float_option |> Option.value ~default)
 let debug_log msg = Lwt_log_core.debug ~section msg
 
+(** Global trading state reference. *)
 let state : State.t ref = ref State.initial
 
+(** Redact authentication tokens from JSON strings for secure logging. *)
 let redact_token_in_json_string (json_str : string) : string =
   try
     let json = Yojson.Safe.from_string json_str in
@@ -67,32 +77,34 @@ let redact_token_in_json_string (json_str : string) : string =
             (key, value)
         in
         `Assoc (List.map redactor assoc) |> Yojson.Safe.to_string
-    | _ -> json_str (* Not the expected structure, return original *)
+    | _ -> json_str
   with
-  | _ -> json_str (* Parsing failed, return original *)
+  | _ -> json_str
 
-(* Order Side Parsing *)
+(** Parse Kraken order side string to internal representation. *)
 let parse_order_side = function
   | "buy" -> Some Core.Buy
   | "sell" -> Some Core.Sell
   | _ -> None
 
-(* Order Tracking - Define Hashtables after 'order' type *)
+(** Order state tracking: confirmed open orders and pending submissions. *)
 let all_open_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
 let pending_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
 
+(** Format order information for logging. *)
 let format_order_log (order : Kraken_common_types.order) action =
   Printf.sprintf "[ORDER %s] ID: %s, Symbol: %s, Side: %s, Status: %s, Price: %.8f"
     action order.order_id order.order_symbol
     (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown")
-    (match order.status with 
+    (match order.status with
      | Core.Open -> "Open"
      | Core.Filled -> "Filled"
      | Core.Canceled -> "Canceled"
-     | Core.Rejected -> "Rejected" 
+     | Core.Rejected -> "Rejected"
     )
     order.limit_price
 
+(** Log all currently open orders for debugging. *)
 let log_open_orders () =
   let orders = Hashtbl.to_seq_values all_open_orders |> List.of_seq in
   debug_log (Printf.sprintf "Open orders (%d):" (List.length orders)) >>= fun () ->
@@ -100,37 +112,32 @@ let log_open_orders () =
     debug_log (format_order_log order "OPEN")
   ) orders
 
+(** Handle order cancellation events. *)
 let handle_order_cancellation order_id symbol =
-  (* Placeholder for potential cancellation logic specific to your application *)
   debug_log (Printf.sprintf "[ORDER CANCELLATION] Handling cancellation for %s %s" order_id symbol)
 
-(* Conversion Helpers *)
+(** Data conversion utilities for Kraken to internal format mapping. *)
+
+(** Convert Kraken RFC 3339 timestamp to microseconds since epoch. *)
 let kraken_ts_to_core_ts s =
-  (* Parse ISO 8601 / RFC 3339 timestamp manually since we don't have Ptime *)
   try
-    (* Format: "2023-01-01T12:34:56.789Z" *)
     let len = String.length s in
     if len < 20 then raise (Invalid_argument "Timestamp too short");
-    
-    (* Extract date parts *)
+
     let year = int_of_string (String.sub s 0 4) in
     let month = int_of_string (String.sub s 5 2) in
     let day = int_of_string (String.sub s 8 2) in
-    
-    (* Extract time parts *)
     let hour = int_of_string (String.sub s 11 2) in
     let minute = int_of_string (String.sub s 14 2) in
     let sec = int_of_string (String.sub s 17 2) in
-    
-    (* Extract milliseconds if present *)
-    let ms = 
+
+    let ms =
       if len > 20 && s.[19] = '.' then
         let ms_str = String.sub s 20 (min (len - 21) 3) in
         float_of_string ("0." ^ ms_str)
       else 0.0
     in
-    
-    (* Convert to Unix timestamp *)
+
     let tm = Unix.{ tm_year = year - 1900; tm_mon = month - 1; tm_mday = day;
                     tm_hour = hour; tm_min = minute; tm_sec = sec;
                     tm_wday = 0; tm_yday = 0; tm_isdst = false } in
@@ -140,14 +147,16 @@ let kraken_ts_to_core_ts s =
     Lwt_log_core.warning ~section (Printf.sprintf "Failed to parse timestamp: %s, using current time: %s" s (Printexc.to_string e)) |> ignore;
     Unix.gettimeofday () *. 1_000_000. |> Int64.of_float
 
+(** Map Kraken order side to internal representation. *)
 let kraken_side_to_core_side = function
   | Some "buy" -> Some Core.Buy
   | Some "sell" -> Some Core.Sell
   | _ -> None
 
-let kraken_status_to_core_state status : Core.order_state = 
+(** Convert Kraken order status strings to internal order states. *)
+let kraken_status_to_core_state status : Core.order_state =
   match status with
-  | "new" | "pending_new" | "amended" | "restated" | "status" | "partially_filled" -> Open 
+  | "new" | "pending_new" | "amended" | "restated" | "status" | "partially_filled" -> Open
   | "filled" -> Filled
   | "canceled" | "expired" -> Canceled
   | "rejected" -> Rejected
@@ -155,6 +164,7 @@ let kraken_status_to_core_state status : Core.order_state =
       Lwt_log_core.warning ~section (Printf.sprintf "Unhandled Kraken order status: %s, mapping to Rejected" status) |> ignore;
       Rejected
 
+(** Convert execution report to internal market event representation. *)
 let execution_report_to_market_event (report : Kraken_common_types.execution_report) : Core.market_event option =
   let order_id = report.order_id in
   let client_id = "kraken:" ^ order_id in
@@ -176,7 +186,7 @@ let execution_report_to_market_event (report : Kraken_common_types.execution_rep
   | _ ->
       Some (Core.Ack { order_id; client_id; state; ts })
 
-(* Connection Setup *)
+(** WebSocket connection establishment with DNS resolution and TLS setup. *)
 let connect (cfg : Config.engine_config) is_auth =
   let port = cfg.ws_port in
   let ctx = Lazy.force Conduit_lwt_unix.default_ctx in
@@ -193,7 +203,7 @@ let connect (cfg : Config.engine_config) is_auth =
         Websocket_lwt_unix.connect ~ctx endpoint uri
   | _ -> Lwt.fail_with (Printf.sprintf "Failed to resolve host: %s" connect_host)
 
-(* Custom Yojson converter for channel_params *)
+(** JSON serialization for Kraken WebSocket subscription parameters. *)
 let custom_channel_params_to_yojson = function
   | Kraken_common_types.Ticker { symbol; snapshot; event_trigger } ->
       `Assoc (
@@ -212,14 +222,14 @@ let custom_channel_params_to_yojson = function
   | Kraken_common_types.Book { symbol; depth; snapshot } ->
       `Assoc [("channel", `String "book"); ("symbol", `List (List.map (fun s -> `String s) symbol)); ("depth", `Int depth); ("snapshot", `Bool snapshot)]
 
-(* Custom Yojson converter for subscribe_message *)
+(** JSON serialization for complete subscription messages. *)
 let custom_subscribe_message_to_yojson (msg : Kraken_common_types.subscribe_message) : Json.t =
   `Assoc (
     [("method", `String msg.method_); ("params", custom_channel_params_to_yojson msg.params)] @
     (match msg.req_id with None -> [] | Some id -> [("req_id", `Int id)])
   )
 
-(* Subscription Messages *)
+(** Build WebSocket subscription messages for different channel types. *)
 let make_subscribe_message ?req_id (cfg : Config.engine_config) channel =
   let params = match channel with
     | `Ticker -> 
@@ -255,6 +265,7 @@ let make_subscribe_message ?req_id (cfg : Config.engine_config) channel =
   let content = custom_subscribe_message_to_yojson msg |> Json.to_string in
   Frame.create ~content ()
 
+(** Process incoming WebSocket frames from public feeds (ticker, book, instrument, status). *)
 let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
@@ -431,7 +442,7 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
       Lwt_log_core.warning ~section
         (Printf.sprintf "Received unhandled opcode: %s" (Frame.Opcode.to_string opcode))
 
-(* Helper function to process a single order item's state from executions channel *)
+(** Process individual order state updates from executions channel messages. *)
 let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engine_config) (context_msg_type : string) =
   (* context_msg_type is "snapshot" or "update", for logging context *)
   let order_id = safe_string order_json "order_id" "" in
@@ -603,6 +614,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
       else
         Lwt.return_unit 
 
+(** Process incoming WebSocket frames from authenticated feeds (executions, status). *)
 let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
   match frame.Websocket.Frame.opcode with
   | Frame.Opcode.Text ->
@@ -755,10 +767,10 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
            (Frame.Opcode.to_string frame.Websocket.Frame.opcode)) >>= fun () ->
       Lwt.return_unit
 
-(* Getter for open orders (used by Strategy) *)
+(** Provide read access to current open orders for strategy layer. *)
 let get_all_open_orders () : (string, Kraken_common_types.order) Hashtbl.t = all_open_orders
 
-(* Main Feed Functions *)
+(** Public market data feed: connects to ticker, instrument, and orderbook channels. *)
 let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
   let rec loop conn =
     Lwt.catch
@@ -798,6 +810,7 @@ let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
   
   loop conn
 
+(** Authenticated order execution feed: connects to private executions channel. *)
 let start_executions (cfg : Config.engine_config) ~on_execution =
   match cfg.auth_token with
   | None -> Lwt.fail_with "Authentication token required for executions feed"

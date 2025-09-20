@@ -1,15 +1,23 @@
-(* src/exchange/kraken/kraken_orderbook.ml *)
+(**
+ * Kraken Orderbook Management
+ *
+ * Handles real-time orderbook data from Kraken WebSocket API, including:
+ * - Parsing and validating orderbook snapshots and updates
+ * - Maintaining sorted, checksum-validated orderbook state
+ * - Thread-safe operations with per-symbol mutexes
+ * - Top-of-book change detection and logging
+ *)
 
 open Lwt.Infix
 module Json = Yojson.Safe
 module JsonUtil = Yojson.Safe.Util
 open Dio_types
-open Lwt_log_core 
+open Lwt_log_core
 
 let section = Section.make "kraken_orderbook"
 let subscription_depth = 25
 
-(* sequencing results: transforms a list of results into a result of a list *)
+(** Convert list of results to result of list, failing on first error *)
 let sequence_results (lst : ('a, 'e) result list) : ('a list, 'e) result =
   let folder acc res =
     match acc, res with
@@ -19,22 +27,24 @@ let sequence_results (lst : ('a, 'e) result list) : ('a list, 'e) result =
   in
   List.fold_left folder (Result.Ok []) lst |> Result.map List.rev
 
-(* Price level data structure *)
+(** Individual price level with both float and string representations *)
 type price_level = {
   price: float;
   qty: float;
-  price_str: string; 
-  qty_str: string;  
+  price_str: string;
+  qty_str: string;
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
+(** Complete orderbook state for a symbol *)
 type orderbook = {
   symbol: string;
-  bids: price_level list;
-  asks: price_level list;
-  checksum: int32;
+  bids: price_level list;  (** Sorted descending by price *)
+  asks: price_level list;  (** Sorted ascending by price *)
+  checksum: int32;         (** Kraken CRC32 checksum *)
   timestamp: string option;
 }
 
+(** Raw orderbook data from WebSocket messages *)
 type book_data = {
   asks: price_level list;
   bids: price_level list;
@@ -43,8 +53,8 @@ type book_data = {
   timestamp: string option;
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* JSON parsers for book_data to handle optional timestamp *)
-let book_data_of_yojson ?(get_precisions = fun _ -> None) json : (book_data, string) result = (* Returns Result.t directly *)
+(** Parse book_data from JSON with precision handling for price/quantity formatting *)
+let book_data_of_yojson ?(get_precisions = fun _ -> None) json : (book_data, string) result =
   let open Yojson.Safe.Util in
   try
     let symbol = json |> member "symbol" |> to_string in
@@ -101,25 +111,28 @@ let book_data_of_yojson ?(get_precisions = fun _ -> None) json : (book_data, str
   | Yojson.Safe.Util.Type_error (msg, _) -> Result.Error ("book_data: " ^ msg)
   | exn -> Result.Error ("book_data: " ^ Printexc.to_string exn)
 
+(** Parse book_data from JSON, raising exception on failure *)
 let book_data_of_yojson_exn ?(get_precisions = fun _ -> None) json : book_data Lwt.t =
-  match book_data_of_yojson ~get_precisions json with 
+  match book_data_of_yojson ~get_precisions json with
   | Result.Ok v -> Lwt.return v
   | Result.Error msg ->
     error_f ~section "Failed to parse book data: %s" msg >>= fun () ->
     Lwt.fail (Failure msg)
 
+(** WebSocket book message structure *)
 type book_response = {
   channel: string;
   type_: string; [@key "type"]
   data: book_data list;
 } [@@deriving yojson { strict = false }] [@@yojson.allow_extra_fields]
 
-(* Global orderbook storage *)
+(** Global storage for orderbook state by symbol *)
 let orderbooks : (string, orderbook) Hashtbl.t = Hashtbl.create 16
 
-(* Mutexes for per-symbol locking to prevent race conditions *)
+(** Per-symbol mutexes to prevent race conditions during updates *)
 let symbol_locks : (string, Lwt_mutex.t) Hashtbl.t = Hashtbl.create 16
 
+(** Get or create mutex for symbol-specific locking *)
 let get_lock symbol =
   match Hashtbl.find_opt symbol_locks symbol with
   | Some lock -> lock
@@ -128,10 +141,10 @@ let get_lock symbol =
       Hashtbl.add symbol_locks symbol lock;
       lock
 
-(* Store previous top-of-book for change detection *)
+(** Cache of previous top-of-book prices for change detection *)
 let previous_top_of_book : (string, (float * float)) Hashtbl.t = Hashtbl.create 16
 
-(* Log top-of-book changes *)
+(** Log top-of-book price changes with spread information *)
 let log_top_of_book_update (symbol: string) (sorted_bids: price_level list) (sorted_asks: price_level list) : unit Lwt.t =
   match sorted_bids, sorted_asks with
   | top_bid :: _, top_ask :: _ ->
@@ -157,7 +170,7 @@ let log_top_of_book_update (symbol: string) (sorted_bids: price_level list) (sor
   | _, [] ->
     warning_f ~section "No asks available for %s" symbol
 
-(* Take first n elements from list *)
+(** Take first n elements from list, or all elements if fewer than n *)
 let take n lst =
   let rec take_aux acc n = function
     | [] -> List.rev acc
@@ -166,7 +179,7 @@ let take n lst =
   in
   take_aux [] n lst
 
-(* CRC32 checksum calculation following Kraken specification *)
+(** Calculate CRC32 checksum per Kraken specification using top 10 levels *)
 let calculate_crc32_checksum (_symbol: string) (bids: price_level list) (asks: price_level list) : int32 =
   (* Take top 10 bids and asks *)
   let top_bids = take (min 10 (List.length bids)) bids in
@@ -236,16 +249,15 @@ let calculate_crc32_checksum (_symbol: string) (bids: price_level list) (asks: p
   
   crc32_string combined_string
 
-(* Sort price levels *)
+(** Sort bids in descending order (highest price first) *)
 let sort_bids (levels: price_level list) : price_level list =
-  (* Sort bids in descending order (highest price first) *)
   List.sort (fun a b -> Float.compare b.price a.price) levels
 
+(** Sort asks in ascending order (lowest price first) *)
 let sort_asks (levels: price_level list) : price_level list =
-  (* Sort asks in ascending order (lowest price first) *)
   List.sort (fun a b -> Float.compare a.price b.price) levels
 
-(* Update orderbook with new levels *)
+(** Apply price level updates to existing orderbook, handling additions/modifications/removals *)
 let update_orderbook_levels (current_levels: price_level list) (updates: price_level list) : price_level list =
   (* Create a map of current levels using price_str as key to avoid float precision issues *)
   let level_map = Hashtbl.create (List.length current_levels) in
@@ -266,7 +278,7 @@ let update_orderbook_levels (current_levels: price_level list) (updates: price_l
   (* Convert back to list *)
   Hashtbl.fold (fun _ level acc -> level :: acc) level_map []
 
-(* Validate checksum *)
+(** Validate orderbook checksum against calculated CRC32 *)
 let validate_checksum (book: book_data) : bool =
   let sorted_bids = sort_bids book.bids in
   let sorted_asks = sort_asks book.asks in
@@ -274,7 +286,7 @@ let validate_checksum (book: book_data) : bool =
   let result = Int32.equal calculated_checksum book.checksum in
   result
 
-(* Process book snapshot *)
+(** Process complete orderbook snapshot, replacing existing state *)
 let process_book_snapshot (book_data: book_data) : unit Lwt.t =
   let lock = get_lock book_data.symbol in
   Lwt_mutex.with_lock lock (fun () ->
@@ -310,6 +322,7 @@ let process_book_snapshot (book_data: book_data) : unit Lwt.t =
     )
   )
 
+(** Process batch of orderbook updates for a symbol *)
 let process_aggregated_updates (symbol : string) (updates : book_data list) : unit Lwt.t =
   let lock = get_lock symbol in
   Lwt_mutex.with_lock lock (fun () ->
@@ -361,7 +374,7 @@ let process_aggregated_updates (symbol : string) (updates : book_data list) : un
           )
     )
 
-(* Handle book message from WebSocket *)
+(** Process incoming WebSocket book message (snapshot or update) *)
 let handle_book_message ?(get_precisions = fun _ -> None) (json: Json.t) : unit Lwt.t =
   (* Parse the book response with custom parsing for data *)
   let open Yojson.Safe.Util in
@@ -408,7 +421,7 @@ let handle_book_message ?(get_precisions = fun _ -> None) (json: Json.t) : unit 
     Lwt.return_unit
   )
 
-(* Generate Book events from orderbook *)
+(** Generate market events from current orderbook state *)
 let generate_book_events (symbol: string) : Core.market_event list =
   match Hashtbl.find_opt orderbooks symbol with
   | None -> []
@@ -422,11 +435,11 @@ let generate_book_events (symbol: string) : Core.market_event list =
       [Core.Book { symbol; bid = bid_price; ask = ask_price; ts }]
     | _ -> []
 
-(* Get current orderbook *)
+(** Get complete orderbook for symbol *)
 let get_orderbook (symbol: string) : orderbook option =
   Hashtbl.find_opt orderbooks symbol
 
-(* Get best bid and ask *)
+(** Get best bid/ask prices as floats *)
 let get_best_bid_ask (symbol: string) : (float * float) option =
   match Hashtbl.find_opt orderbooks symbol with
   | None -> None
@@ -435,7 +448,7 @@ let get_best_bid_ask (symbol: string) : (float * float) option =
     | top_bid :: _, top_ask :: _ -> Some (top_bid.price, top_ask.price)
     | _ -> None
 
-(* Get detailed top-of-book information *)
+(** Get detailed top bid/ask price levels *)
 let get_top_of_book (symbol: string) : (price_level * price_level) option =
   match Hashtbl.find_opt orderbooks symbol with
   | None -> None
@@ -444,7 +457,7 @@ let get_top_of_book (symbol: string) : (price_level * price_level) option =
     | top_bid :: _, top_ask :: _ -> Some (top_bid, top_ask)
     | _ -> None
 
-(* Get top N levels *)
+(** Get top N bid/ask levels *)
 let get_top_levels (symbol: string) (n: int) : (price_level list * price_level list) option =
   match Hashtbl.find_opt orderbooks symbol with
   | None -> None
@@ -453,30 +466,31 @@ let get_top_levels (symbol: string) (n: int) : (price_level list * price_level l
     let top_asks = take (min n (List.length book.asks)) book.asks in
     Some (top_bids, top_asks)
 
-(* Clear orderbook data *)
+(** Remove orderbook data for symbol *)
 let clear_orderbook (symbol: string) : unit =
   Hashtbl.remove orderbooks symbol;
   Hashtbl.remove previous_top_of_book symbol
 
-(* Clear all orderbooks *)
+(** Remove all orderbook data *)
 let clear_all_orderbooks () : unit =
   Hashtbl.clear orderbooks;
   Hashtbl.clear previous_top_of_book
 
-(* Get all tracked symbols *)
+(** Get list of all tracked symbols *)
 let get_tracked_symbols () : string list =
   Hashtbl.fold (fun symbol _ acc -> symbol :: acc) orderbooks []
 
-(* Check if symbol has orderbook *)
+(** Check if orderbook exists for symbol *)
 let has_orderbook (symbol: string) : bool =
   Hashtbl.mem orderbooks symbol
 
-(* Get orderbook statistics *)
+(** Get orderbook level counts (bids, asks) *)
 let get_orderbook_stats (symbol: string) : (int * int) option =
   match Hashtbl.find_opt orderbooks symbol with
   | None -> None
   | Some book -> Some (List.length book.bids, List.length book.asks)
 
+(** Debug print orderbook state for symbol *)
 let debug_print_orderbook (symbol: string) : unit Lwt.t =
   match Hashtbl.find_opt orderbooks symbol with
   | None ->

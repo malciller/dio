@@ -1,9 +1,16 @@
-(* src/engine/supervisor.ml *)
-open Lwt.Infix 
-open Dio_types 
+(** Supervisor module for managing concurrent trading engine components.
+
+    Provides fault-tolerant supervision of long-running fibers with automatic
+    restart on failure, logging, and configurable delays. *)
+
+open Lwt.Infix
+open Dio_types
 
 
-(* restart a fiber on failure, with logging and delay *)
+(** Supervises a fiber with automatic restart on failure.
+
+    Logs component lifecycle events and implements exponential backoff
+    for failed components. Normal exits restart after 1s, failures after 5s. *)
 let supervise name fiber_fun =
   let section = Lwt_log_core.Section.make ("engine.supervisor." ^ name) in
   let rec loop () =
@@ -22,6 +29,23 @@ let supervise name fiber_fun =
   in
   loop ()
 
+(** Launches and supervises all core trading engine components.
+
+    Starts the feed, three trading strategies, router, and Discord webhook
+    under individual supervision. All components share access to tick,
+    execution, and command buffers for inter-component communication.
+
+    @param feed_initializer_fn Function to initialize market data feed
+    @param grid_strategy Grid trading strategy implementation
+    @param orderbook_strategy Orderbook-based trading strategy
+    @param arbitrage_strategy Arbitrage trading strategy
+    @param router Order routing and execution component
+    @param tick_buffer Shared buffer for market tick data
+    @param exec_buffer Shared buffer for market execution events
+    @param cmd_buffer Shared buffer for order commands
+    @param runtime_cfg Runtime configuration parameters
+    @param core_cfg Engine configuration parameters
+    @return Lwt promise that resolves when all components terminate *)
 let start ~(feed_initializer_fn : unit -> unit Lwt.t)
     ~(grid_strategy : Core.grid_strategy)
     ~(orderbook_strategy : Core.orderbook_strategy)
@@ -32,15 +56,17 @@ let start ~(feed_initializer_fn : unit -> unit Lwt.t)
     ~(cmd_buffer: Core.order_cmd Ringbuffer.t)
     (runtime_cfg : Config.runtime_cfg)
     (core_cfg : Config.engine_config) =
-  (* launch the five main fibers and supervise them *)
   let feed_fut = supervise "feed" feed_initializer_fn in
   let grid_strat_fut = supervise "grid_strategy" (fun () -> grid_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
   let orderbook_strat_fut = supervise "orderbook_strategy" (fun () -> orderbook_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
   let arbitrage_strat_fut = supervise "arbitrage_strategy" (fun () -> arbitrage_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
   let router_fut = supervise "router" (fun () -> router.start core_cfg ~cmd_buffer ~exec_buffer) in
+  (** Fetches and aggregates all account balances from Kraken.
+
+      Combines spot, earn, and liquid staking balances into a single
+      hash table for reporting purposes. *)
   let balance_fetcher _ =
     Kraken.Kraken_balances.wait_for_balances () >|= fun (spot_balances, earn_balances, liquid_balances, _) ->
-    (* Combine all balances: spot + earn + liquid *)
     let all_balances = Hashtbl.create 32 in
     Hashtbl.iter (fun asset balance -> Hashtbl.replace all_balances asset balance) spot_balances;
     Hashtbl.iter (fun asset balance ->

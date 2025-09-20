@@ -1,50 +1,50 @@
-(* src/engine/router.ml *)
-open Lwt.Infix  
+(** Trading command router and exchange handler.
+
+    Routes trading commands to appropriate exchange handlers while providing
+    deduplication and error handling. Supports multiple exchanges through
+    pluggable handler modules.
+*)
+open Lwt.Infix
 open Dio_types
 open Lwt_log_core
 
-(* order operations *)
+(** Standard response format for order operations *)
 type order_response = {
   success: bool;
   error: string option;
   result: Yojson.Safe.t option;
 }
 
-(* Order deduplication state *)
+(** Order deduplication cache to prevent duplicate command processing *)
 module OrderCache = struct
-  (* Cache recent orders to prevent duplicates *)
   let recent_orders = Hashtbl.create 1024
-  let cache_timeout = 10.0 (* seconds *)
+  let cache_timeout = 10.0
 
-  (* Create a unique key for each order *)
   let make_order_key = function
     | Core.Add { dst; symbol; side; _ } ->
         Printf.sprintf "add:%s:%s:%s"
-          dst symbol 
+          dst symbol
           (match side with Buy -> "buy" | Sell -> "sell")
     | Core.Amend { dst; order_id; _ } ->
-        Printf.sprintf "amend:%s:%s" 
+        Printf.sprintf "amend:%s:%s"
           dst order_id
     | Core.Cancel { dst; order_id } ->
         Printf.sprintf "cancel:%s:%s" dst order_id
 
-  (* Check if an order is a duplicate *)
   let is_duplicate cmd =
     let key = make_order_key cmd in
     match Hashtbl.find_opt recent_orders key with
     | Some timestamp ->
         let now = Unix.gettimeofday () in
         if now -. timestamp > cache_timeout then (
-          (* Entry expired, not a duplicate *)
           Hashtbl.replace recent_orders key now;
           false
         ) else true
     | None ->
-        (* New order, not a duplicate *)
         Hashtbl.add recent_orders key (Unix.gettimeofday ());
         false
 
-  (* Clean up expired entries *)
+  (** Remove expired cache entries to prevent memory leaks *)
   let cleanup () =
     let now = Unix.gettimeofday () in
     Hashtbl.filter_map_inplace
@@ -54,17 +54,17 @@ module OrderCache = struct
       recent_orders
 end
 
-(* Exchange-specific handlers *)
+(** Kraken exchange handler for routing trading commands *)
 module KrakenHandler = struct
-   (* The queue for Kraken commands *)
   let kraken_cmd_queue = Ringbuffer.create 1000
- 
+
+  (** Queue command for Kraken processing *)
   let handle_order _cfg _exec_buffer cmd =
     Ringbuffer.push kraken_cmd_queue cmd
- 
+
   let rec process_kraken_commands cfg exec_buffer () =
     Ringbuffer.pop kraken_cmd_queue >>= fun cmd ->
-    (* Re-introduce Kraken-specific logging before sending the command *)
+    (* Log command details before routing *)
     (match cmd with
      | Core.Add { symbol; side; price; qty; client_id; _ } ->
          info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
@@ -89,18 +89,12 @@ module KrakenHandler = struct
     process_kraken_commands cfg exec_buffer ()
 end
 
+(** Initialize router with command and execution buffers *)
 let start cfg ~cmd_buffer ~exec_buffer =
-  (* Start the Kraken command processing loop as an Lwt thread *)
   Lwt.async (KrakenHandler.process_kraken_commands cfg exec_buffer);
-  (* Process commands from cmd_buffer and route to appropriate exchange handler *)
   let rec cmd_loop () =
-    (* Periodically clean up expired cache entries *)
     OrderCache.cleanup ();
-
-    (* Asynchronously wait for a command from the buffer *)
     Ringbuffer.pop cmd_buffer >>= fun cmd ->
-
-    (* Check for duplicates *)
     if OrderCache.is_duplicate cmd then (
       warning_f ~section:(Lwt_log_core.Section.make "engine.router")
         "Dropping duplicate order: %s"
@@ -119,7 +113,7 @@ let start cfg ~cmd_buffer ~exec_buffer =
             (Primitives.Price.to_string price)
             (Primitives.Qty.to_string qty)
             (String.concat ";" (List.map (function 
-              | `Grid -> "grid" 
+              | `Grid -> "grid"   
               | `Manual -> "manual" 
               | `Rebalance -> "rebalance") tags))
       | Amend { dst; order_id; new_price; new_qty; _ } ->
@@ -131,10 +125,8 @@ let start cfg ~cmd_buffer ~exec_buffer =
       | Cancel { dst; order_id } ->
           Printf.sprintf "CANCEL order %s on %s" order_id dst
       in
-      info_f ~section:(Lwt_log_core.Section.make "engine.router") 
-        "Routing command: %s" cmd_str >>= fun () -> 
-
-      (* Route command to appropriate exchange *)
+      info_f ~section:(Lwt_log_core.Section.make "engine.router")
+        "Routing command: %s" cmd_str >>= fun () ->
       (match cmd with
       | Add { dst; _ } | Amend { dst; _ } | Cancel { dst; _ } ->
           let handle_cmd () =
@@ -156,6 +148,5 @@ let start cfg ~cmd_buffer ~exec_buffer =
           );
           cmd_loop ()
       )
-    )
-  in
+    ) in
   cmd_loop ()

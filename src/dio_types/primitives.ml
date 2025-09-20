@@ -1,48 +1,57 @@
-(* src/types/primitives.ml *)
+(**
+ * Core primitive types and utilities for the Dio trading system
+ *)
 
-(*---------------------------------------------------------------------------
-  Fixed-scale decimal implementation
-  ----------------------------------
-  Monetary values are stored as
-    { raw : int64 ; scale : int }
-  such that   value = raw / 10^scale
-  • Exact arithmetic (no floats)
-  • Up to 18 decimal places (fits in int64)
----------------------------------------------------------------------------*)
+(**
+ * Fixed-point decimal arithmetic for precise monetary calculations.
+ * Stores values as {raw: int64, scale: int} where value = raw / 10^scale.
+ * Supports exact arithmetic with up to 18 decimal places.
+ *)
 
 module Fixed : sig
   type t = { raw : int64; scale : int }
 
+  (** Parse decimal string to fixed-point value *)
   val of_string_exn : scale:int -> string -> t
-  val to_string     : t -> string
-  val pp            : Format.formatter -> t -> unit
 
-  (* -- JSON helpers for ppx_deriving_yojson ------------------------------ *)
+  (** Convert fixed-point value to decimal string *)
+  val to_string : t -> string
+
+  (** Pretty print fixed-point value *)
+  val pp : Format.formatter -> t -> unit
+
+  (** JSON serialization *)
   val to_yojson : t -> Yojson.Safe.t
   val of_yojson : Yojson.Safe.t -> (t, string) result
 
-  (* Calculate midpoint *)
+  (** Calculate arithmetic midpoint of two values *)
   val midpoint : t -> t -> t
 
-  (* Calculate powers of 10 *)
+  (** Compute 10^n as int64 *)
   val pow10 : int -> int64
 
-  (* Equality *)
+  (** Value equality comparison *)
   val equal : t -> t -> bool
 
-  (* Comparison *)
+  (** Comparison operators *)
   val (<=) : t -> t -> bool
+
+  (** Check if value is positive *)
   val is_positive : t -> bool
+
+  (** Check if value is non-negative *)
   val is_non_negative : t -> bool
 
-  (* Zero and One *)
+  (** Create zero value with given scale *)
   val zero : int -> t
+
+  (** Create unit value (1.0) with given scale *)
   val one : int -> t
 end = struct             
 
   type t = { raw : int64; scale : int }
 
-  (* 10^n helper (n ≤ 18) *)
+  (** Compute 10^n using tail recursion *)
   let rec pow10 n acc =
     if n = 0 then acc else pow10 (n - 1) Int64.(mul acc 10L)
 
@@ -78,7 +87,7 @@ end = struct
 
   let pp fmt t = Format.fprintf fmt "%s" (to_string t)
 
-  (* ---------------- JSON helpers ---------------- *)
+  (** JSON serialization support *)
   let to_yojson t = `String (to_string t)
 
   let of_yojson = function
@@ -115,54 +124,69 @@ end = struct
   let one scale = { raw = pow10 scale; scale }
 end
 
-(* Aliases for clarity – they inherit to_yojson/of_yojson *)
-module Price = Fixed
-module Qty   = Fixed
+(**
+ * Type aliases for domain-specific fixed-point values.
+ * Both inherit JSON serialization from Fixed module.
+ *)
+module Price = Fixed  (** Price values with fixed-point precision *)
+module Qty = Fixed    (** Quantity values with fixed-point precision *)
 
-type timestamp = int64  [@@deriving yojson]   (* µs since epoch *)
-type symbol    = string [@@deriving yojson]
-type currency  = string [@@deriving yojson]
+(** Core trading types *)
+type timestamp = int64 [@@deriving yojson]  (** Microseconds since Unix epoch *)
+type symbol = string [@@deriving yojson]    (** Trading pair symbol (e.g., "BTC/USD") *)
+type currency = string [@@deriving yojson] (** Currency code (e.g., "USD", "BTC") *)
+(**
+ * Unique identifier generation for orders and transactions.
+ *)
 module Id = struct
+  (** Generate random 12-character hexadecimal ID *)
   let gen () =
     let r1 = Random.bits () land 0xFFFFFF in
     let r2 = Random.bits () land 0xFFFFFF in
     Printf.sprintf "%06x%06x" r1 r2
 end
 
-(* format a float price to a string with specific precision *)
+(** Format float to string with specified decimal precision *)
 let format_float_precision (value : float) (precision : int) : string =
   try
     Printf.sprintf "%.*f" precision value
   with _ ->
     string_of_float value
 
-(* Transaction types for balance tracking *)
+(**
+ * Transaction categories for balance tracking and cost basis calculations.
+ *)
 type transaction_type =
   | Trade of { order_id : string; side : [`Buy | `Sell]; price : Price.t; qty : Qty.t }
-  | Deposit
-  | Withdrawal
-  | Staking_Reward
-  | Fee
-  | Adjustment
-  | Unknown
+      (** Market trade execution *)
+  | Deposit    (** External deposit to account *)
+  | Withdrawal (** External withdrawal from account *)
+  | Staking_Reward (** Staking rewards earned *)
+  | Fee       (** Trading or network fees *)
+  | Adjustment (** Manual balance adjustment *)
+  | Unknown   (** Unclassified transaction *)
 [@@deriving yojson]
 
-(* Transaction record for cost basis tracking *)
+(**
+ * Individual transaction record for portfolio tracking.
+ *)
 type transaction = {
-  id : string;
-  asset : string;
-  amount : float; (* positive for credits, negative for debits *)
-  timestamp : timestamp;
-  transaction_type : transaction_type;
-  cost_basis : float option; (* USD cost per unit for buys, None for other types *)
-  total_cost : float option; (* total USD cost for the transaction *)
-  balance_after : float; (* balance after this transaction *)
+  id : string;                    (** Unique transaction identifier *)
+  asset : string;                 (** Asset symbol (e.g., "BTC") *)
+  amount : float;                 (** Transaction amount (positive = credit, negative = debit) *)
+  timestamp : timestamp;          (** Transaction timestamp *)
+  transaction_type : transaction_type; (** Transaction category *)
+  cost_basis : float option;      (** USD cost per unit (for buy trades) *)
+  total_cost : float option;      (** Total USD cost of transaction *)
+  balance_after : float;          (** Account balance after transaction *)
 } [@@deriving yojson]
 
-(* Cost basis tracking for assets *)
+(**
+ * Cost basis tracking for FIFO (First In, First Out) calculations.
+ *)
 type cost_basis_info = {
-  total_units : float;
-  total_cost_basis : float; (* total USD cost of all units *)
-  average_cost_per_unit : float; (* total_cost_basis / total_units *)
-  last_updated : timestamp;
+  total_units : float;             (** Total units held *)
+  total_cost_basis : float;        (** Total USD cost of all units *)
+  average_cost_per_unit : float;   (** Average USD cost per unit *)
+  last_updated : timestamp;        (** Last update timestamp *)
 } [@@deriving yojson]

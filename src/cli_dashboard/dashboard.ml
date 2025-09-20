@@ -1,3 +1,15 @@
+(**
+ * Terminal-based trading dashboard for real-time cryptocurrency portfolio monitoring.
+ *
+ * Provides a live view of:
+ * - Active trading assets with price ladders and order book visualization
+ * - Portfolio balances and performance metrics
+ * - System logs and status indicators
+ * - Strategy assignments and trading activity
+ *
+ * Features interactive controls for toggling views and real-time data updates.
+ *)
+
 open Lwt.Infix
 open Notty
 open Notty.A
@@ -13,54 +25,59 @@ let is_stablecoin asset =
 (* Mutex to prevent race conditions in dashboard state updates *)
 let state_mutex = Lwt_mutex.create ()
 
-(* ─── Enhanced Color Palette & Styles ───────────────────────────────────────── *)
-(* Professional dark theme with neon accents *)
+(** Terminal UI color palette and text styles for consistent visual theming *)
 let rgb_of_255 ~r ~g ~b = A.rgb ~r:(r*5/255) ~g:(g*5/255) ~b:(b*5/255)
+
+(** Base text styles *)
 let style_primary_text    = A.fg (rgb_of_255 ~r:200 ~g:200 ~b:200)
+let style_neutral_text    = A.fg (rgb_of_255 ~r:200 ~g:200 ~b:200)
+
+(** Trading-specific styles *)
 let style_buy_order_text  = A.fg (rgb_of_255 ~r:0 ~g:255 ~b:100) ++ A.st A.bold
 let style_sell_order_text = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100) ++ A.st A.bold
 let style_current_price_text= A.fg (rgb_of_255 ~r:0 ~g:200 ~b:200) ++ A.st A.bold ++ A.st A.underline
-let style_header_border   = A.fg (rgb_of_255 ~r:0 ~g:150 ~b:150) ++ A.st A.bold
-let style_logs_accent_text= A.fg (rgb_of_255 ~r:255 ~g:200 ~b:100) ++ A.st A.bold
 
-(* New professional colors *)
+(** Performance indicators *)
 let style_profit_text     = A.fg (rgb_of_255 ~r:50 ~g:255 ~b:100) ++ A.st A.bold
 let style_loss_text       = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100) ++ A.st A.bold
-let style_neutral_text    = A.fg (rgb_of_255 ~r:200 ~g:200 ~b:200)
+
+(** UI element styles *)
+let style_header_border   = A.fg (rgb_of_255 ~r:0 ~g:150 ~b:150) ++ A.st A.bold
 let style_highlight_text  = A.fg (rgb_of_255 ~r:255 ~g:200 ~b:100) ++ A.st A.bold
 let style_warning_text    = A.fg (rgb_of_255 ~r:255 ~g:150 ~b:50) ++ A.st A.bold
 let style_success_text    = A.fg (rgb_of_255 ~r:100 ~g:255 ~b:150) ++ A.st A.bold
+let style_logs_accent_text= A.fg (rgb_of_255 ~r:255 ~g:200 ~b:100) ++ A.st A.bold
 
-(* Status indicator colors *)
+(** Status indicators *)
 let style_active_indicator = A.fg (rgb_of_255 ~r:50 ~g:255 ~b:150) ++ A.st A.bold
 let style_inactive_indicator = A.fg (rgb_of_255 ~r:150 ~g:150 ~b:150)
 let style_error_indicator  = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100) ++ A.st A.bold
 
-(* Combined styles *)
+(** Composite styles for common UI elements *)
 let style_asset_name = style_current_price_text ++ A.st A.bold ++ A.st A.underline
 let style_header_title_art = style_header_border ++ A.st A.bold
-let style_header_info_text = style_primary_text 
+let style_header_info_text = style_primary_text
 let style_keybinding_bracket = style_header_border
 let style_keybinding_text = style_primary_text
 
-(* ─── Enhanced Professional Unicode Sprites ────────────────────────────────────── *)
-let spr_power_pellet  = I.string style_logs_accent_text "*"  (* Star - for highlights *)
-let spr_buy_order     = I.string style_buy_order_text "\u{25B2}"    (* ▲ Up Triangle - for buys *)
-let spr_sell_order    = I.string style_sell_order_text "\u{25BC}"   (* ▼ Down Triangle - for sells *)
+(** Unicode visual symbols for dashboard elements *)
+let spr_power_pellet  = I.string style_logs_accent_text "*"  (* Star - log highlights *)
+let spr_buy_order     = I.string style_buy_order_text "\u{25B2}"    (* ▲ Up Triangle - buy orders *)
+let spr_sell_order    = I.string style_sell_order_text "\u{25BC}"   (* ▼ Down Triangle - sell orders *)
 let spr_price_now frame =
   let blink = (frame / 10) mod 2 = 0 in
   let style = if blink then
     style_current_price_text ++ A.st A.bold ++ A.st A.underline
   else
     style_current_price_text ++ A.st A.bold in
-  I.string style "⦿" (* Circled Bullet - for current price *)
+  I.string style "⦿" (* Circled Bullet - blinking current price indicator *)
 let spr_profit        = I.string style_profit_text "+"      (* Profit indicator *)
 let spr_loss          = I.string style_loss_text "-"        (* Loss indicator *)
 let spr_neutral       = I.string style_neutral_text "."     (* Neutral indicator *)
-let spr_active        = I.string style_active_indicator "[A]" (* Active *)
-let spr_inactive      = I.string style_inactive_indicator "[I]" (* Inactive *)
-let spr_warning       = I.string style_warning_text "[W]"     (* Warning *)
-let spr_error         = I.string style_error_indicator "[E]"  (* Error *)
+let spr_active        = I.string style_active_indicator "[A]" (* Active status *)
+let spr_inactive      = I.string style_inactive_indicator "[I]" (* Inactive status *)
+let spr_warning       = I.string style_warning_text "[W]"     (* Warning status *)
+let spr_error         = I.string style_error_indicator "[E]"  (* Error status *)
 let spr_grid          = I.string style_highlight_text "[G]"   (* Grid strategy *)
 let spr_orderbook     = I.string style_highlight_text "[M]"   (* Market Maker strategy *)
 let spr_arbitrage     = I.string style_highlight_text "[A]"    (* Arbitrage strategy *)
@@ -77,6 +94,7 @@ let get_term_dimensions () =
   | Some (w, h) -> (h, w)
   | None -> (24, 80)
 
+(** Render ASCII price ladder visualization showing order distribution around current price *)
 let price_ladder ~ladder_width current_price buy_orders sell_orders frame =
   let ladder = Array.make ladder_width (I.string A.empty " ") in
   let min_display_price, max_display_price = 
@@ -106,6 +124,7 @@ let price_ladder ~ladder_width current_price buy_orders sell_orders frame =
   if current_idx < ladder_width && current_idx >= 0 then ladder.(current_idx) <- spr_price_now frame;
   I.hcat (Array.to_list ladder)
 
+(** Format price with appropriate decimal precision based on asset trading rules *)
 let format_price asset price =
   match Kraken.Kraken_incoming_data.get_price_precision asset with
   | Some prec -> Printf.sprintf "%.*f" prec price
@@ -130,26 +149,29 @@ let get_strategy_indicator asset =
       if has_orders then "ARB" else "MONITOR"
 
 
+(** Portfolio balance information for a single asset *)
 type balance_info = {
-  asset: string;
-  total_balance: float; (* spot + earn + liquid *)
-  reconciliation_balance: float; (* spot + earn *)
-  total_value_usd: float;
-  accumulated_balance: float; (* earn + spot_available *)
-  accumulated_value_usd: float; (* USD value of assets not in pending sell orders *)
-  unrealized_value_usd: float;
+  asset: string;                    (** Asset symbol (e.g., "BTC", "ETH") *)
+  total_balance: float;             (** Total holdings: spot + earn + liquid staking *)
+  reconciliation_balance: float;    (** Spot + earn balances for reconciliation *)
+  total_value_usd: float;           (** Current USD value of total_balance *)
+  accumulated_balance: float;       (** Balance excluding pending sell orders *)
+  accumulated_value_usd: float;     (** USD value of accumulated_balance *)
+  unrealized_value_usd: float;      (** Unrealized P&L from pending orders *)
 }
 
+(** Dashboard UI state for rendering and user interaction *)
 type dashboard_state = {
-  show_logs: bool;
-  frame: int;
-  balances: balance_info list;
-  show_balances: bool;
-  active_assets: string list;  (* Cache to prevent flickering *)
-  order_data: (string, (float * float) list * (float * float) list) Hashtbl.t;  (* Cache orders per symbol *)
-  term_dimensions: int * int;  (* Cache terminal dimensions *)
-  cached_logs: string list;  (* Cache logs to prevent polling strain *)
-  last_log_count: int;  (* Track log count to detect changes *)
+  show_logs: bool;                  (** Whether to display system logs panel *)
+  frame: int;                       (** Animation frame counter for blinking effects *)
+  balances: balance_info list;      (** Current portfolio balances *)
+  show_balances: bool;              (** Whether to display balances panel *)
+  active_assets: string list;       (** Cached list of actively traded assets *)
+  order_data: (string, (float * float) list * (float * float) list) Hashtbl.t;
+                                  (** Cached order book data: asset -> (buy_orders, sell_orders) *)
+  term_dimensions: int * int;       (** Cached terminal dimensions (height, width) *)
+  cached_logs: string list;         (** Recent system logs to prevent excessive polling *)
+  last_log_count: int;              (** Previous log count to detect new entries *)
 }
 
 let initial_state = {
@@ -169,6 +191,7 @@ let rec intersperse sep = function
   | [x] -> [x]
   | x :: xs -> x :: sep :: intersperse sep xs
 
+(** Render a single asset row with price ladder, order book, and strategy info *)
 let row_of_asset asset frame state =
   let open I in
   let _, term_width = state.term_dimensions in
@@ -308,7 +331,7 @@ let row_of_asset asset frame state =
   ] in
   I.vcat [info_pane_line; ladder_pane_line]
 
-(* Get all active trading symbols from order data and strategies *)
+(** Get all assets currently being traded or configured for strategies *)
 let get_all_active_assets () =
   let orderbook_assets = Kraken.Kraken_incoming_data.get_all_open_orders ()
     |> Hashtbl.to_seq_values
@@ -337,6 +360,7 @@ let compare_assets active_assets a b =
   in
   compare (get_priority a) (get_priority b)
 
+(** Fetch and calculate portfolio balances from Kraken API, including P&L metrics *)
 let get_balance_info () : balance_info list Lwt.t =
   Kraken.Kraken_balances.wait_for_balances () >>= fun (spot_balances, earn_balances, liquid_balances, _) ->
   let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
@@ -434,6 +458,7 @@ let get_balance_info () : balance_info list Lwt.t =
   balance_info_list_lwt >|= fun balance_info_list ->
   List.sort (fun b1 b2 -> compare b1.asset b2.asset) balance_info_list
 
+(** Render tabular portfolio balances with current values and performance metrics *)
 let render_balances_section (balances: balance_info list) term_width =
   let open I in
   let content_width = term_width - 2 in
@@ -584,6 +609,7 @@ let render_balances_section (balances: balance_info list) term_width =
 
     vcat ([top_border; header; sep] @ intersperse sep rows @ [sep; total_row; bottom_border])
 
+(** Main dashboard rendering function - composes all UI sections into final display *)
 let render state =
   let open I in
   let term_height, term_width = state.term_dimensions in
@@ -774,7 +800,7 @@ vcat [
   void term_width 1
 ]
 
-(* ─── loop ────────────────────────────────────────────────── *)
+(** Main dashboard application entry point - initializes terminal and starts event loops *)
 let start ~on_quit:(on_quit: unit -> unit Lwt.t) () : Notty_lwt.Term.t =
   let term_instance = Notty_lwt.Term.create ~mouse:false () in
   let state = ref initial_state in
@@ -789,7 +815,7 @@ let start ~on_quit:(on_quit: unit -> unit Lwt.t) () : Notty_lwt.Term.t =
         Lwt.return_unit
     | _ -> Lwt.return_unit
   in
-
+(* Main update loop - fetches fresh data and re-renders dashboard every second *)
 let rec tick () =
   get_balance_info () >>= fun balances ->
   let new_frame = !state.frame + 1 in

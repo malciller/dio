@@ -4,12 +4,13 @@ open Primitives
 
 let section = Lwt_log_core.Section.make "dio_types.config" 
 
-(* Helper to format error messages consistently *)
+(* Helper to format error messages consistently - wraps Printf.sprintf for uniform error formatting *)
 let format_error_message fmt = Printf.sprintf fmt
 
-type strategy_type = 
-  | Grid
-  | Orderbook
+(** Trading strategy types available for assets *)
+type strategy_type =
+  | Grid      (** Grid trading: buys/sells at fixed price intervals with profit-taking multipliers *)
+  | Orderbook (** Orderbook-based: maintains positions based on orderbook depth and min USD balance *)
 
 let strategy_type_to_yojson = function
   | Grid -> `String "Grid"
@@ -27,33 +28,38 @@ let strategy_type_of_yojson_exn json =
     Lwt_main.run (Lwt_log_core.error_f ~section "Failed to parse strategy_type: %s" msg); 
     failwith msg 
 
+(** Configuration for a single tradable asset *)
 type asset_cfg = {
-  symbol        : symbol;
-  qty           : Qty.t;
-  grid_interval : Fixed.t option; [@yojson.optional] [@yojson.default None]
-  sell_mult     : Fixed.t option; [@yojson.optional] [@yojson.default None]
-  min_usd_balance : Fixed.t option; [@yojson.optional] [@yojson.default None]
-  strategy      : strategy_type;
+  symbol        : symbol;           (** Trading pair symbol (e.g., "BTC/USD") *)
+  qty           : Qty.t;            (** Base quantity to trade per order *)
+  grid_interval : Fixed.t option [@yojson.optional] [@yojson.default None];   (** Grid: price interval between buy/sell levels. Required for Grid strategy *)
+  sell_mult     : Fixed.t option [@yojson.optional] [@yojson.default None];   (** Grid: profit-taking multiplier (< 1.0). Required for Grid strategy *)
+  min_usd_balance : Fixed.t option [@yojson.optional] [@yojson.default None]; (** Orderbook: minimum USD balance to maintain. Required for Orderbook strategy *)
+  strategy      : strategy_type;    (** Trading strategy to use for this asset *)
 } [@@deriving yojson { exn = true }]   
 
+(** Runtime configuration loaded from JSON config file *)
 type runtime_cfg = {
-  assets      : asset_cfg list;
-  queues_cap  : int;
-  profit_threshold_pct : float; [@yojson.default 0.0010]
+  assets      : asset_cfg list;   (** List of assets to trade with their configurations *)
+  queues_cap  : int;              (** Maximum capacity for internal message queues *)
+  profit_threshold_pct : float;   (** Minimum profit percentage threshold (default 0.10%) *)
 } [@@deriving yojson { exn = true }]
 
+(** Engine configuration for connecting to Kraken exchange *)
 type engine_config = {
-  ws_host: string;
-  ws_port: int;
-  ws_path: string;
-  symbols: string list;
-  auth_token: string option;
-  kraken_api_key : string;
-  kraken_api_secret : string;
+  ws_host: string;              (** WebSocket hostname (e.g., "ws.kraken.com") *)
+  ws_port: int;                 (** WebSocket port number *)
+  ws_path: string;              (** WebSocket path endpoint *)
+  symbols: string list;         (** List of trading pair symbols to subscribe to *)
+  auth_token: string option;    (** Optional authentication token for private feeds *)
+  kraken_api_key : string;      (** Kraken API key for authenticated requests *)
+  kraken_api_secret : string;   (** Kraken API secret for request signing *)
 }
 
-(* --- Validation --- *)
+(** --- Validation Functions --- *)
 
+(** Validates a single asset configuration based on its strategy requirements.
+    Returns Ok () if valid, Error msg with detailed validation failures. *)
 let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
   let open Primitives in
   let errors = ref [] in
@@ -61,6 +67,7 @@ let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
   if not (Qty.is_positive asset.qty) then
     errors := (format_error_message "Asset '%s': qty must be positive." asset.symbol) :: !errors;
   
+  (* Strategy-specific validation: Grid requires grid_interval and sell_mult, Orderbook requires min_usd_balance *)
   (match asset.strategy with
   | Grid ->
       (match asset.grid_interval with
@@ -101,6 +108,8 @@ let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
   else
     Error (String.concat "\n" (List.rev !errors))
 
+(** Validates the complete runtime configuration including all assets.
+    Checks for duplicate symbols, validates each asset, and ensures required fields. *)
 let validate_runtime_cfg (cfg : runtime_cfg) : (unit, string) result =
   let errors = ref [] in
 
@@ -110,13 +119,13 @@ let validate_runtime_cfg (cfg : runtime_cfg) : (unit, string) result =
   if cfg.queues_cap <= 0 then
     errors := "queues_cap must be positive." :: !errors;
 
-  (* Check for duplicate symbols *)
+  (* Check for duplicate symbols - extract all symbols, deduplicate, and compare lengths *)
   let symbols = List.map (fun a -> a.symbol) cfg.assets in
   let unique_symbols = List.sort_uniq String.compare symbols in
   if List.length symbols <> List.length unique_symbols then
     errors := "Duplicate symbols found in assets configuration." :: !errors;
 
-  (* Validate each asset *)
+  (* Validate each asset individually and collect any validation errors *)
   let asset_errors = List.filter_map (fun asset ->
     match validate_asset_cfg asset with
     | Ok () -> None
