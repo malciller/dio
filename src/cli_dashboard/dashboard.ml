@@ -515,7 +515,12 @@ let render_balances_section (balances: balance_info list) term_width =
     ] in
 
     let rows = List.map (fun info ->
-      let value_style = if info.total_value_usd > 100.0 then style_profit_text else style_neutral_text in
+      let value_style = if info.total_value_usd > 0.0 then style_success_text
+                        else if info.total_value_usd < 0.0 then style_loss_text
+                        else style_neutral_text in
+      let accumulated_style = if info.accumulated_value_usd > 0.0 then style_success_text
+                             else if info.accumulated_value_usd < 0.0 then style_loss_text
+                             else style_neutral_text in
       let unrealized_display =
         let dollar_str = Printf.sprintf "$%.2f" info.unrealized_value_usd in
         if info.total_value_usd = 0.0 then
@@ -547,7 +552,7 @@ let render_balances_section (balances: balance_info list) term_width =
         I.string style_header_border "│";
         I.string value_style (Printf.sprintf "%*s" value_w (Printf.sprintf "$%.2f" info.total_value_usd));
         I.string style_header_border "│";
-        I.string style_success_text (Printf.sprintf "%*s" accum_w (Printf.sprintf "$%.2f" info.accumulated_value_usd));
+        I.string accumulated_style (Printf.sprintf "%*s" accum_w (Printf.sprintf "$%.2f" info.accumulated_value_usd));
         I.string style_header_border "│";
         unrealized_display;
         I.string style_header_border "┃";
@@ -581,6 +586,12 @@ let render_balances_section (balances: balance_info list) term_width =
           let display_style = if perc >= 0.0 then (style_highlight_text ++ A.st A.bold) else (style_loss_text ++ A.st A.bold) in
           I.string display_style (Printf.sprintf "%*s" unreal_w dollar_str)
     in
+    let total_value_style = if total_portfolio_value > 0.0 then (style_success_text ++ A.st A.bold)
+                            else if total_portfolio_value < 0.0 then (style_loss_text ++ A.st A.bold)
+                            else (style_neutral_text ++ A.st A.bold) in
+    let total_accumulated_style = if total_accumulated_value > 0.0 then (style_success_text ++ A.st A.bold)
+                                  else if total_accumulated_value < 0.0 then (style_loss_text ++ A.st A.bold)
+                                  else (style_neutral_text ++ A.st A.bold) in
     let total_row =
       I.hcat [
         I.string style_header_border "┃";
@@ -588,9 +599,9 @@ let render_balances_section (balances: balance_info list) term_width =
         I.string style_header_border "│";
         I.string style_neutral_text (Printf.sprintf "%*s" total_w "");
         I.string style_header_border "│";
-        I.string (style_profit_text ++ A.st A.bold) (Printf.sprintf "%*s" value_w (Printf.sprintf "$%.2f" total_portfolio_value));
+        I.string total_value_style (Printf.sprintf "%*s" value_w (Printf.sprintf "$%.2f" total_portfolio_value));
         I.string style_header_border "│";
-        I.string (style_success_text ++ A.st A.bold) (Printf.sprintf "%*s" accum_w (Printf.sprintf "$%.2f" total_accumulated_value));
+        I.string total_accumulated_style (Printf.sprintf "%*s" accum_w (Printf.sprintf "$%.2f" total_accumulated_value));
         I.string style_header_border "│";
         total_unrealized_display;
         I.string style_header_border "┃";
