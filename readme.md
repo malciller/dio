@@ -72,7 +72,6 @@ Edit `_config.json` (example):
 ## Dashboard
 
 ![Dio Dashboard](.github/readme/image.png) 
-
 ## Notification
 
 ### Balance Updates
