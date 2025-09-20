@@ -662,7 +662,6 @@ let render state =
 
   let grid_assets = get_strategy_assets State.Grid in
   let orderbook_assets = get_strategy_assets State.Orderbook in
-  let arbitrage_assets = get_strategy_assets State.Arbitrage in
 
   let format_asset_list assets =
     let get_base_asset s =
@@ -679,14 +678,13 @@ let render state =
   let orderbook_str = if orderbook_assets <> [] then
     Printf.sprintf "MM[%s]" (format_asset_list orderbook_assets)
   else "" in
-  let arbitrage_str = if arbitrage_assets <> [] then
-    Printf.sprintf "ARB[%s]" (format_asset_list arbitrage_assets)
+  let arbitrage_str = if grid_assets <> [] || orderbook_assets <> [] then
+    "ARB[all]"
   else "" in
 
   let active_parts = List.filter (fun s -> s <> "") [grid_str; orderbook_str; arbitrage_str] in
-  let strategy_status = I.string style_highlight_text ("Active Strategies: " ^ String.concat " • " active_parts) in
 
-  let header_components = [left_label; runtime_img; strategy_status; key_bindings_img] in
+  let header_components = [left_label; runtime_img; key_bindings_img] in
   let separator = I.string style_header_border " │ " in
   let header_content = I.hcat (intersperse separator header_components) in
   let inner_width = term_width - 2 in
@@ -728,8 +726,10 @@ let render state =
 
   let new_asset_rows_height = height asset_rows_section_with_boxing in
 
-  let other_height = 1 (* header *) + 1 (* void after header *) + 
-                   (if state.show_balances && state.balances <> [] then balances_section_height + 1 (* void after balances *) else  0) + 
+  let strategy_status_height = if active_parts <> [] then 1 (* strategy status line *) + 1 (* void after strategy status *) else 0 in
+  let other_height = 1 (* header *) + 1 (* void after header *) +
+                   (if state.show_balances && state.balances <> [] then balances_section_height + 1 (* void after balances *) else  0) +
+                   strategy_status_height +
                    1 (* void before assets *) + new_asset_rows_height + 1 (* void after assets *) in
 let logs_height =
   if state.show_logs then
@@ -794,6 +794,21 @@ vcat [
   void term_width 1;
   balances_section_image;
   (if state.show_balances && state.balances <> [] then void term_width 1 else I.empty);
+  (if active_parts <> [] then
+    let live_trade_title = I.hcat [
+      I.string (style_highlight_text ++ A.st A.bold) "Active Strategies: ";
+      I.string style_highlight_text (String.concat " • " active_parts)
+    ] in
+    let title_width = I.width live_trade_title in
+    let title_padding = max 0 (term_width - title_width - 4) in
+    I.hcat [
+      I.string style_header_border "┃ ";
+      live_trade_title;
+      void title_padding 1;
+      I.string style_header_border " ┃"
+    ]
+  else I.empty);
+  (if active_parts <> [] then void term_width 1 else I.empty);
   asset_rows_section_with_boxing;
   void term_width 1;
   logs_section_image;
