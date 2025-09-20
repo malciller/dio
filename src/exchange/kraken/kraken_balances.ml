@@ -271,23 +271,33 @@ let handle_balances_message msg =
   Lwt.catch (fun () ->
     let json = Yojson.Safe.from_string msg in
     let open Yojson.Safe.Util in
-    match member "channel" json with
-    | `String "balances" ->
-        (match member "type" json with
-        | `String "snapshot" -> handle_balance_snapshot (member "data" json)
-        | `String "update" -> handle_balance_update (member "data" json)
-        | _ -> warning_f ~section "Unhandled message type on balances channel: %s" msg
-        )
+    (* Check for subscription confirmation messages first *)
+    match member "method" json |> to_string_option with
+    | Some "subscribe" ->
+        let success = member "success" json |> to_bool_option |> Option.value ~default:false in
+        let error = member "error" json |> to_string_option in
+        if success then
+          let channel = member "result" json |> member "channel" |> to_string_option |> Option.value ~default:"unknown" in
+          debug_f ~section "Subscription successful for channel: %s" channel
+        else
+          let error_msg = Option.value error ~default:"unknown error" in
+          warning_f ~section "Subscription failed: %s. Payload: %s" error_msg msg
     | _ ->
-        Lwt.catch (fun () ->
-          let channel = member "channel" json |> to_string in
-          if channel <> "heartbeat" then
-            debug_f ~section "Received non-balances message: %s" msg
-          else
-            Lwt.return_unit
-        ) (fun exn ->
-          warning_f ~section "Error parsing non-balances message: %s (%s)" msg (Printexc.to_string exn)
-        )
+        (* Handle data messages by channel *)
+        match member "channel" json |> to_string_option with
+        | Some "balances" ->
+            (match member "type" json |> to_string_option with
+            | Some "snapshot" -> handle_balance_snapshot (member "data" json)
+            | Some "update" -> handle_balance_update (member "data" json)
+            | _ -> warning_f ~section "Unhandled message type on balances channel: %s" msg
+            )
+        | Some channel ->
+            if channel <> "heartbeat" then
+              debug_f ~section "Received non-balances message on channel %s: %s" channel msg
+            else
+              Lwt.return_unit
+        | None ->
+            debug_f ~section "Received message without channel: %s" msg
   ) (fun exn ->
     error_f ~section "JSON parsing error in balances message: %s (%s)" msg (Printexc.to_string exn) >>= fun () ->
     Lwt.return_unit
