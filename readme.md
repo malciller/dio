@@ -103,6 +103,7 @@ dune build @doc
 
 1. Fork
 2. Create branch (`git checkout -b feature/xyz`)
+    - Trading logic found in src/dio_engine/trade_strategies/
 3. Commit (`git commit -m "..."`)
 4. Push (`git push origin feature/xyz`)
 5. Open PR
