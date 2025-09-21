@@ -50,6 +50,13 @@ let style_warning_text    = A.fg (rgb_of_255 ~r:255 ~g:150 ~b:50) ++ A.st A.bold
 let style_success_text    = A.fg (rgb_of_255 ~r:100 ~g:255 ~b:150) ++ A.st A.bold
 let style_logs_accent_text= A.fg (rgb_of_255 ~r:255 ~g:200 ~b:100) ++ A.st A.bold
 
+(** Strategy-specific styles *)
+let style_strat_grid      = A.fg (rgb_of_255 ~r:130 ~g:180 ~b:255) ++ A.st A.bold
+let style_strat_gmm       = A.fg (rgb_of_255 ~r:100 ~g:220 ~b:100) ++ A.st A.bold
+let style_strat_arb       = A.fg (rgb_of_255 ~r:255 ~g:120 ~b:255) ++ A.st A.bold
+let style_strat_vmm       = A.fg (rgb_of_255 ~r:255 ~g:220 ~b:100) ++ A.st A.bold
+let style_strat_monitor   = A.fg (rgb_of_255 ~r:170 ~g:170 ~b:170)
+
 (** Status indicators *)
 let style_active_indicator = A.fg (rgb_of_255 ~r:50 ~g:255 ~b:150) ++ A.st A.bold
 let style_inactive_indicator = A.fg (rgb_of_255 ~r:150 ~g:150 ~b:150)
@@ -359,20 +366,28 @@ let rec take n = function
   | [] -> []
   | x :: xs -> if n <= 0 then [] else x :: take (n-1) xs
 
-let get_strategy_indicator asset =
-  match State.get_global_strategy_assignment asset with
-  | Some State.Grid -> "GRID"
-  | Some State.Orderbook -> "GMM"
-  | Some State.Arbitrage -> "ARB"
-  | Some State.Monitor -> "MONITOR"
-  | Some State.VMM -> "VMM"
+let get_strategy_info asset =
+  let open State in
+  match get_global_strategy_assignment asset with
+  | Some Grid -> (Grid, "GRID")
+  | Some Orderbook -> (Orderbook, "GMM")
+  | Some Arbitrage -> (Arbitrage, "ARB")
+  | Some Monitor -> (Monitor, "MONITOR")
+  | Some VMM -> (VMM, "VMM")
   | None ->
       (* Fallback: check if there are actual orders for this asset *)
       let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
       let has_orders = Hashtbl.fold (fun _ order acc ->
         acc || String.equal order.Kraken.Kraken_common_types.order_symbol asset
       ) open_orders false in
-      if has_orders then "ARB" else "MONITOR"
+      if has_orders then (Arbitrage, "ARB") else (Monitor, "MONITOR")
+
+let style_of_strategy = function
+  | State.Grid -> style_strat_grid
+  | State.Orderbook -> style_strat_gmm
+  | State.Arbitrage -> style_strat_arb
+  | State.VMM -> style_strat_vmm
+  | State.Monitor -> style_strat_monitor
 
 
 (** Portfolio balance information for a single asset *)
@@ -429,7 +444,7 @@ let compact_row_of_asset asset _frame state =
     | None -> ([], [])
   in
 
-  let strategy_indicator = get_strategy_indicator asset in
+  let strategy, strategy_name = get_strategy_info asset in
   let order_count = List.length all_buy_orders_for_symbol + List.length all_sell_orders_for_symbol in
 
   (* Compact single-line display *)
@@ -444,7 +459,7 @@ let compact_row_of_asset asset _frame state =
       let asset_name = Printf.sprintf "%-6s" asset in
       let _price_str = Printf.sprintf "$%.2f" current_f in
       let orders_str = string_of_int order_count in
-      let strat_str = strategy_indicator in
+      let strat_str = strategy_name in
 
       (* Get the best pending buy and sell prices with distance indicators *)
       let pending_buy_price = if all_buy_orders_for_symbol <> [] then
@@ -510,7 +525,7 @@ let compact_row_of_asset asset _frame state =
         I.string style_neutral_text spacing;
         I.string style_logs_accent_text orders_str;
         I.string style_neutral_text spacing;
-        I.string style_highlight_text strat_str
+        I.string (style_of_strategy strategy) strat_str
       ] in
       I.hcat [
         I.string style_header_border "┃";
@@ -548,7 +563,7 @@ let row_of_asset asset frame state =
     | None -> ([], [])
   in
 
-  let strategy_indicator = get_strategy_indicator asset in
+  let strategy, strategy_name = get_strategy_info asset in
   let order_count = List.length all_buy_orders_for_symbol + List.length all_sell_orders_for_symbol in
 
   (* Calculate price statistics and distance to furthest order *)
@@ -570,7 +585,7 @@ let row_of_asset asset frame state =
   let asset_header = I.hcat [
     I.string style_asset_name (Printf.sprintf "%-6s" asset);
     spr_separator;
-    I.string style_highlight_text strategy_indicator;
+    I.string (style_of_strategy strategy) strategy_name;
     spr_separator;
     create_status_indicator ~icon:spr_active ~text:(string_of_int order_count) ~style:style_logs_accent_text;
     spr_separator;
