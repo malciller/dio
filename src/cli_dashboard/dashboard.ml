@@ -18,7 +18,7 @@ module Stats = Stats
 module M = State.SMap
 module StringSet = Set.Make(String)
 
-
+let section = Lwt_log_core.Section.make "dashboard"
 
 let is_stablecoin asset =
   let stablecoins = ["USD"; "USDT"; "USDC"; "USDG"; "USDR"] in
@@ -746,18 +746,6 @@ let compare_assets active_assets a b =
 let get_balance_info () : balance_info list Lwt.t =
   Kraken.Kraken_balances.wait_for_balances () >>= fun (spot_balances, earn_balances, liquid_balances, _) ->
   let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
-  let on_sell_orders : (string, Kraken.Kraken_common_types.order list) Hashtbl.t = Hashtbl.create 16 in
-  let get_base_asset s =
-    try String.sub s 0 (String.index s '/')
-    with Not_found -> s in
-  Hashtbl.iter (fun _order_id (order: Kraken.Kraken_common_types.order) ->
-    match order.side with
-    | Some Core.Sell ->
-        let base_asset = get_base_asset order.order_symbol in
-        let current_orders = Option.value ~default:[] (Hashtbl.find_opt on_sell_orders base_asset) in
-        Hashtbl.replace on_sell_orders base_asset (order :: current_orders)
-    | _ -> ()
-  ) open_orders;
 
   let all_assets =
     let keyset = ref StringSet.empty in
@@ -791,17 +779,6 @@ let get_balance_info () : balance_info list Lwt.t =
         let earn_balance = Hashtbl.find_opt earn_balances asset |> Option.value ~default:0.0 in
         let liquid_balance = Hashtbl.find_opt liquid_balances asset |> Option.value ~default:0.0 in
 
-        (* Debug EURR liquid balance tracking *)
-        let _ =
-          if asset = "EURR" then
-            Lwt.ignore_result (
-              Lwt_log_core.info ~section:(Lwt_log_core.Section.make "dashboard")
-                (Printf.sprintf "EURR balance breakdown: spot=%.8f, earn=%.8f, liquid=%.8f"
-                  spot_balance earn_balance liquid_balance)
-            )
-          else
-            ()
-        in
 
         let total_balance = spot_balance +. earn_balance +. liquid_balance in
         if total_balance < 0.000001 then acc else
@@ -809,72 +786,73 @@ let get_balance_info () : balance_info list Lwt.t =
         let reconciliation_balance = spot_balance +. earn_balance in
         let total_value_usd = total_balance *. price_usd in
 
-        let sell_orders_for_asset = Option.value ~default:[] (Hashtbl.find_opt on_sell_orders asset) in
-        let open_sell_orders = List.filter (fun (o:Kraken.Kraken_common_types.order) -> o.status = Core.Open) sell_orders_for_asset in
-        let qty_on_sell_orders = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. o.qty) 0.0 open_sell_orders in
+        let qty_on_sell_orders =
+          let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
+          Hashtbl.fold (fun _ (order : Kraken.Kraken_common_types.order) acc ->
+            let base_of_order =
+              match String.split_on_char '/' order.order_symbol with
+              | base :: _ -> Some base
+              | _ -> None
+            in
+            match base_of_order with
+            | Some base when base = asset && order.side = Some Core.Sell ->
+                acc +. order.qty
+            | _ ->
+                acc
+          ) open_orders 0.0
+        in
 
         (* Accumulated balance is total balance less assets held in open sell orders *)
         let raw_accumulated_balance = total_balance -. qty_on_sell_orders in
 
-        (* Debug EURR balance calculations *)
-        let _ = if asset = "EURR" then
-          let order_details = List.map (fun (o:Kraken.Kraken_common_types.order) ->
-            Printf.sprintf "ID:%s qty:%.8f price:%.4f status:%s" o.order_id o.qty o.limit_price
-              (match o.status with Core.Open -> "Open" | Core.Filled -> "Filled" | Core.Canceled -> "Canceled" | Core.Rejected -> "Rejected")) open_sell_orders in
-          Lwt.ignore_result (
-            Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "dashboard")
-              (Printf.sprintf "EURR DEBUG: balance=%.8f, qty_on_sell=%.8f, raw_accum=%.8f, price=%.4f"
-                total_balance qty_on_sell_orders raw_accumulated_balance price_usd)
-          );
-          Lwt.ignore_result (
-            Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "dashboard")
-              (Printf.sprintf "EURR orders: %s" (String.concat ", " order_details))
-          )
-        in
-
-        (* Debug EURR orders if negative accumulated value detected *)
-        let accumulated_balance =
-          if asset = "EURR" && raw_accumulated_balance < 0.0 then
-            let _ =
-              Lwt.ignore_result (
-                Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "dashboard")
-                  (Printf.sprintf "EURR negative accumulated value detected! total_balance=%.8f, qty_on_sell_orders=%.8f, raw_accumulated_balance=%.8f"
-                    total_balance qty_on_sell_orders raw_accumulated_balance)
-              )
+        if raw_accumulated_balance < 0.0 then
+          Lwt.async (fun () ->
+            let msg =
+              (Printf.sprintf "%s negative accumulated value detected! total_balance=%.8f, qty_on_sell_orders=%.8f, raw_accumulated_balance=%.8f"
+                asset total_balance qty_on_sell_orders raw_accumulated_balance)
             in
-            List.iter (fun (o:Kraken.Kraken_common_types.order) ->
-              Lwt.ignore_result (
-                Lwt_log_core.warning ~section:(Lwt_log_core.Section.make "dashboard")
-                  (Printf.sprintf "EURR sell order: id=%s, symbol=%s, status=%s, qty=%.8f, price=%.8f"
-                    o.order_id o.order_symbol
-                    (match o.status with Core.Open -> "Open" | Core.Filled -> "Filled" | Core.Canceled -> "Canceled" | Core.Rejected -> "Rejected")
-                    o.qty o.limit_price)
-              )
-            ) open_sell_orders;
-            (* For now, clamp negative values to 0 to prevent display issues *)
-            0.0
-          else
-            raw_accumulated_balance
-        in
+            Lwt_log_core.error ~section:(Lwt_log_core.Section.make "dashboard") msg
+          );
+
+        let accumulated_balance = raw_accumulated_balance in
 
         let pnl_accumulated_balance = accumulated_balance in
         let accumulated_value_usd =
-          if asset = "USD" then 0.0
+          if asset = "USD" || asset = "USDG" || asset = "USDC" || asset = "USDR" || asset = "EURR" then 0.0
           else accumulated_balance *. price_usd in
 
 
         (* Calculate unrealized value based on pending sell orders *)
         let unrealized_value_usd =
+          let open_sell_orders =
+            Hashtbl.fold (fun _ (order : Kraken.Kraken_common_types.order) acc ->
+              let base_of_order =
+                match String.split_on_char '/' order.order_symbol with
+                | base :: _ -> Some base
+                | _ -> None
+              in
+              match base_of_order with
+              | Some base when base = asset && order.side = Some Core.Sell ->
+                  order :: acc
+              | _ ->
+                  acc
+            ) open_orders []
+          in
           let unrealized_value_on_orders = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. (o.qty *. o.limit_price)) 0.0 open_sell_orders in
           let highest_sell_price = List.fold_left (fun max_p (o:Kraken.Kraken_common_types.order) -> max max_p o.limit_price) 0.0 open_sell_orders in
           let unrealized_value_accumulated =
             if open_sell_orders <> [] then
               pnl_accumulated_balance *. highest_sell_price
             else
-              (* Use current market price for assets without pending sell orders *)
-              pnl_accumulated_balance *. price_usd
+              (* If no sell orders, unrealized value of accumulated balance is just its current accumulated value *)
+              accumulated_value_usd
           in
-          let total_unrealized = unrealized_value_on_orders +. unrealized_value_accumulated in
+          let total_unrealized =
+            if open_sell_orders <> [] then
+              unrealized_value_on_orders +. unrealized_value_accumulated
+            else
+              unrealized_value_accumulated
+          in
 
           (* Debug unrealized value calculation *)
           let _ = if asset = "EURR" then
@@ -885,7 +863,7 @@ let get_balance_info () : balance_info list Lwt.t =
             )
           in
 
-          total_unrealized
+          if asset = "USD" && total_unrealized = 0.0 then total_value_usd else total_unrealized
         in
 
         let info = {

@@ -558,15 +558,14 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
             | "new" -> (match Hashtbl.find_opt pending_orders order_id with Some o -> o.qty | None -> Option.value order_qty_opt ~default:0.0)
             | "amended" -> (match Hashtbl.find_opt all_open_orders order_id with Some o -> Option.value order_qty_opt ~default:o.qty | None -> Option.value order_qty_opt ~default:0.0)
             | "trade" ->
-                (* For trade events, order_qty should contain the remaining quantity for partially filled orders *)
                 (match Hashtbl.find_opt all_open_orders order_id with
-                 | Some existing ->
-                     (* We have an existing order, but for trade events, order_qty should be the remaining quantity *)
-                     Option.value order_qty_opt ~default:existing.qty
-                 | None ->
-                     (* No existing order found, use order_qty if available (should be remaining qty) *)
-                     Option.value order_qty_opt ~default:0.0)
-            | _ -> Option.value order_qty_opt ~default:0.0
+                 | Some existing -> existing.qty
+                 | None -> Option.value order_qty_opt ~default:0.0)
+            | _ ->
+                let order_qty_val = Option.value order_qty_opt ~default:0.0 in
+                let cum_qty_val = Option.value cum_qty_opt ~default:0.0 in
+                let rem_qty = order_qty_val -. cum_qty_val in
+                if rem_qty > 0.0 && cum_qty_val > 0.0 then rem_qty else order_qty_val
           in
           let order : Kraken_common_types.order = {
             order_id; client_id = userref_opt; order_symbol = symbol;
@@ -607,27 +606,27 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
                 if status = Core.Open then
                   (match Hashtbl.find_opt all_open_orders order_id with
                    | Some existing ->
-                       (* For trade events, order_qty should contain the correct remaining quantity *)
-                       let remaining_qty = Option.value order_qty_opt ~default:existing.qty in
+                       let last_qty = Option.value last_qty_opt ~default:0.0 in
+                       let remaining_qty = existing.qty -. last_qty in
                        let updated_order = { existing with qty = (if remaining_qty > 0.0 then remaining_qty else 0.0) } in
                        Hashtbl.replace all_open_orders order_id updated_order;
-                       Lwt_log_core.debug ~section (Printf.sprintf "[TRADE UPDATE] %s: existing_qty=%.8f, order_qty=%.8f, cum_qty=%.8f, last_qty=%.8f, remaining_qty=%.8f" order_id existing.qty (Option.value order_qty_opt ~default:0.0) cum_qty_val last_qty_val remaining_qty) >>= fun () ->
                        let log_msg = Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Remaining qty: %.8f)" suffix last_qty_val order.order_symbol last_price_val remaining_qty in
                        Lwt_log_core.debug ~section log_msg >>= fun () ->
                        Lwt.return log_msg
                    | None ->
-                       (* If no existing order found, this might be a partial fill for a new order *)
-                       (* Use order_qty if available (should be remaining qty), otherwise this is an error *)
-                       let remaining_qty = Option.value order_qty_opt ~default:0.0 in
+                       (* This case should ideally not be hit frequently if snapshots are processed correctly,
+                          but as a fallback, we'll create a new open order record with the remaining quantity if provided. *)
+                       let order_qty_val = Option.value order_qty_opt ~default:0.0 in
+                       let cum_qty_val = Option.value cum_qty_opt ~default:0.0 in
+                       let remaining_qty = order_qty_val -. cum_qty_val in
                        if remaining_qty > 0.0 then
-                         let updated_order = { order with qty = remaining_qty } in
-                         Hashtbl.replace all_open_orders order_id updated_order;
-                         Lwt_log_core.debug ~section (Printf.sprintf "[TRADE WARNING] No existing order found for trade event %s, order_qty=%.8f, cum_qty=%.8f, created with qty=%.8f" order_id (Option.value order_qty_opt ~default:0.0) cum_qty_val remaining_qty) >>= fun () ->
-                         let log_msg = Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Created with remaining qty: %.8f)" suffix last_qty_val order.order_symbol last_price_val remaining_qty in
+                         let new_open_order = { order with qty = remaining_qty } in
+                         Hashtbl.replace all_open_orders order_id new_open_order;
+                         let log_msg = Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Created new open order with remaining qty: %.8f)" suffix last_qty_val order.order_symbol last_price_val remaining_qty in
                          Lwt_log_core.debug ~section log_msg >>= fun () ->
                          Lwt.return log_msg
                        else
-                         Lwt_log_core.error ~section (Printf.sprintf "[TRADE ERROR] No existing order found for trade event %s and order_qty=%.8f" order_id remaining_qty) >>= fun () ->
+                         Lwt_log_core.error ~section (Printf.sprintf "[TRADE ERROR] No existing order found for trade event %s and no remaining qty provided." order_id) >>= fun () ->
                          Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (ERROR: No existing order found)" suffix last_qty_val order.order_symbol last_price_val))
                 else
                   (* Check if it was pending before moving *)
