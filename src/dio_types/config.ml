@@ -10,15 +10,15 @@ let format_error_message fmt = Printf.sprintf fmt
 (** Trading strategy types available for assets *)
 type strategy_type =
   | Grid      (** Grid trading: buys/sells at fixed price intervals with profit-taking multipliers *)
-  | MM (** Orderbook-based: maintains positions based on orderbook depth and min USD balance *)
+  | GMM (** Orderbook-based: maintains positions based on orderbook depth and min USD balance *)
 
 let strategy_type_to_yojson = function
   | Grid -> `String "Grid"
-  | MM -> `String "MM"
+  | GMM -> `String "GMM"
 
 let strategy_type_of_yojson = function
   | `String "Grid" -> Ok Grid
-  | `String "MM" -> Ok MM
+  | `String "GMM" -> Ok GMM
   | _ -> Error "Invalid strategy type"
 
 let strategy_type_of_yojson_exn json =
@@ -88,7 +88,7 @@ let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
 
       if asset.min_usd_balance <> None then
         errors := (format_error_message "Asset '%s' (Grid): min_usd_balance is not applicable." asset.symbol) :: !errors
-  | MM ->
+  | GMM ->
       (match asset.min_usd_balance with
       | Some min_usd_balance ->
           if not (Fixed.is_non_negative min_usd_balance) then

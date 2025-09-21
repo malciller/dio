@@ -1,7 +1,7 @@
 (library
  (name engine_strategy)
  (public_name dio.engine.strategy)
- (modules kraken_suicide_grid kraken_top_level_mm kraken_arbitrage)
+ (modules kraken_suicide_grid kraken_greedy_mm kraken_arbitrage)
  (libraries
   dio.dio_types
   dio.state

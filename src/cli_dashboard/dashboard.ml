@@ -362,7 +362,7 @@ let rec take n = function
 let get_strategy_indicator asset =
   match State.get_global_strategy_assignment asset with
   | Some State.Grid -> "GRID"
-  | Some State.Orderbook -> "MM"
+  | Some State.Orderbook -> "GMM"
   | Some State.Arbitrage -> "ARB"
   | Some State.Monitor -> "MONITOR"
   | None ->

@@ -13,7 +13,7 @@ open Engine
 module K = Kraken
 
 
-let section = Lwt_log_core.Section.make "engine.strategy.kraken.MM"
+let section = Lwt_log_core.Section.make "engine.strategy.kraken.GMM"
 
 (*
   Strategy State Management
@@ -90,8 +90,44 @@ module State = struct
           | Some min_balance ->
               let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
               if !usd_balance < min_balance_float then (
-              info_f ~section "USD balance %.2f is below minimum %.2f for %s. Skipping order creation."
-                  !usd_balance min_balance_float symbol
+                info_f ~section "USD balance %.2f is below minimum %.2f for %s. Checking for remaining asset balance to sell."
+                  !usd_balance min_balance_float symbol >>= fun () ->
+
+                match K.Kraken_incoming_data.get_instrument symbol with
+                | Some instrument ->
+                    let base_currency = instrument.base in
+                    let qty_prec = instrument.qty_precision in
+                    
+                    Kraken.Kraken_balances.wait_for_balances () >>= fun (spot_balances, _, liquid_balances, _) ->
+                    let spot_bal = Hashtbl.find_opt spot_balances base_currency |> Option.value ~default:0.0 in
+                    let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
+                    let tradeable_balance = spot_bal +. liquid_bal in
+
+                    if tradeable_balance > 0.00000001 then (
+                      info_f ~section "Found %.8f of %s to sell before pausing (spot: %.8f, liquid: %.8f)." 
+                        tradeable_balance base_currency spot_bal liquid_bal >>= fun () ->
+                      (match get_price symbol with
+                      | Some tick ->
+                          let sell_price = tick.ask in
+                          let qty_str = Printf.sprintf "%.*f" qty_prec tradeable_balance in
+                          let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
+                          let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
+                          (match sell_order with
+                          | Some sell_cmd ->
+                              Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                              info_f ~section "Placed final sell order for %s." symbol
+                          | None ->
+                              error_f ~section "Failed to create final sell order for %s." symbol
+                          )
+                      | None ->
+                          warning_f ~section "No price info for %s, cannot place final sell order." symbol
+                      )
+                    ) else (
+                      info_f ~section "No remaining tradeable asset balance for %s to sell. Pausing." base_currency
+                    )
+                | None ->
+                    warning_f ~section "No instrument data for %s, cannot place final sell order." symbol
+
               ) else (
                 match get_price symbol with
                 | Some tick ->
@@ -290,7 +326,7 @@ module State = struct
   let initialize_orders (runtime_cfg : Config.runtime_cfg) =
     let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
       match asset.strategy with
-      | Config.MM -> Some asset.symbol
+      | Config.GMM -> Some asset.symbol
       | _ -> None
     ) runtime_cfg.assets in
     let exchange_orders = K.Kraken_incoming_data.get_all_open_orders () in
@@ -327,7 +363,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
 
   let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
     match asset.strategy with
-    | Config.MM -> Some asset.symbol
+    | Config.GMM -> Some asset.symbol
     | _ -> None
   ) runtime_cfg.assets in
 

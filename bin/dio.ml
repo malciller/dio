@@ -119,12 +119,12 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
         let grid_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
           match asset.strategy with
           | Config.Grid -> Some asset.symbol
-          | Config.MM -> None
+          | Config.GMM -> None
         ) runtime_cfg.assets in
 
         let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
           match asset.strategy with
-          | Config.MM -> Some asset.symbol
+          | Config.GMM -> Some asset.symbol
           | Config.Grid -> None
         ) runtime_cfg.assets in
 
@@ -137,7 +137,7 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
         List.iter (fun (asset: Config.asset_cfg) ->
           let strategy = match asset.strategy with
             | Config.Grid -> State.Grid
-            | Config.MM -> State.Orderbook
+            | Config.GMM -> State.Orderbook
           in
           State.update_global_strategy_assignment asset.symbol strategy
         ) runtime_cfg.assets;
@@ -233,7 +233,7 @@ let start_engine_logic () : unit Lwt.t =
             start = Kraken_suicide_grid.start
           } in
           let orderbook_strategy : Core.orderbook_strategy = {
-            start = Kraken_top_level_mm.start
+            start = Kraken_greedy_mm.start
           } in
           let arbitrage_strategy : Core.arbitrage_strategy = {
             start = Kraken_arbitrage.start

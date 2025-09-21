@@ -1,0 +1,46 @@
+loop:
+  1. check current_inventory against max_inventory
+
+  2. if current_inventory < max_inventory:
+        read top_ask_price
+
+        buy_price = top_ask_price * (1 - ((2 * asset_fee) + profit_threshold))
+        target_sell_price = buy_price * (1 + ((2 * asset_fee) + profit_threshold))
+        # store target_sell_price along with order id
+
+        place buy at buy_price
+
+        if top_ask_price changes:
+            new_buy_price = top_ask_price * (1 - ((2 * asset_fee) + profit_threshold))
+            new_target_sell_price = new_buy_price * (1 + ((2 * asset_fee) + profit_threshold))
+            amend buy at new_buy_price
+            update stored target_sell_price
+
+  3. when a buy order fills:
+        current_inventory += filled_amount
+
+        # fetch the stored target_sell_price for this fill
+        sell_price = max(current_top_ask_price, target_sell_price)
+        # ensures you never go below your pre-computed profit price
+
+        place sell at sell_price
+
+        if current_inventory >= max_inventory:
+            # reached exposure limit
+            cancel all remaining buy orders
+
+            # compute a consolidated sell for total inventory
+            # use each position’s stored target price or a weighted avg
+            consolidated_sell_price = weighted_avg(target_sell_prices of held inventory)
+            place sell for current_inventory at consolidated_sell_price
+
+            # do not place any new buy orders until inventory < max_inventory
+            goto step 4
+
+  4. when a sell order fills:
+        current_inventory -= filled_amount
+        remove corresponding target_sell_price from inventory record
+
+        if current_inventory < max_inventory:
+            # resume normal operation
+            go back to step 2
