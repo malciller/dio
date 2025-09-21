@@ -42,11 +42,16 @@ Edit `_config.json` (example):
     { "symbol": "USDT/USD",  // Pair to Trade
       "qty": "100.0",  // Base asset amount per trade
       "min_usd_balance": "500.0",  // Minimum USD balance for this pair and strategy to run
-      "strategy": "MM"  // Strategy Name (Grid/MM)
-     }
+      "strategy": "GMM"  // Strategy Name (Grid/GMM/VMM)
+     },
+         { "symbol": "USDT/USD",  // Pair to Trade
+      "qty": "100.0",  // Base asset amount per trade
+      "max_exposure": "500.0",  // Maximum amount of asset to accumulate before pausing strategy
+      "strategy": "VMM"  // Strategy Name (Grid/GMM/VMM)
+     },
   ],
   "queues_cap": 1000,  // Maximum queue size allocated
-  "profit_threshold_pct": 0.0010  // Arbitrage strategy profit threshold (percentage)
+  "profit_threshold_pct": 0.0010  // Relevant strategy profit threshold (percentage)
 }
 ```
 
@@ -59,7 +64,8 @@ Edit `_config.json` (example):
 ## Strategies
 
 - GRID: Maintains buy/sell ladders around price with configurable spacing and size.
-- GMM(Greedy Market Maker): Quotes at top-of-book using fixed sizes. Ignores fees.
+- GMM (Greedy Market Maker): Places buy and sell orders at the top bid and ask in the order book using fixed sizes. Does not account for fees or any profit threshold—simply quotes at the best available prices.
+- VMM (Valley Market Maker): Places buy orders below the top ask, at a price that ensures the expressed profit margin and fee threshold are met. When a buy order is filled, it sells at the top ask when liquidity is present. Always accounts for fees and the configured profit margin.
 - ARB: **Strategy runs automatically, does not require a config.** Finds triangle/longer cycles and single-pair spreads; sizes by liquidity and balances, runs for all assets active with other strategies.
 
 ## Architecture

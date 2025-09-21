@@ -37,7 +37,7 @@ let start_feed (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config
  * @param core_cfg Engine-specific configuration
  * @return Lwt promise representing the complete trading session
  *)
-let run ~grid_strategy ~orderbook_strategy ~arbitrage_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config) =
+let run ~grid_strategy ~orderbook_strategy ~vmm_strategy ~arbitrage_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config) =
   (* Create the ring buffers with configurable capacity *)
   let buffer_cap = runtime_cfg.queues_cap in
   let tick_buffer = Ringbuffer.create buffer_cap in
@@ -49,6 +49,7 @@ let run ~grid_strategy ~orderbook_strategy ~arbitrage_strategy ~router (runtime_
     ~feed_initializer_fn:(fun () -> start_feed runtime_cfg core_cfg tick_buffer exec_buffer)
     ~grid_strategy
     ~orderbook_strategy
+    ~vmm_strategy
     ~arbitrage_strategy
     ~router
     ~tick_buffer

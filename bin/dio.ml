@@ -28,7 +28,7 @@ let setup_logging () =
   (** Set base log levels for all sections *)
   Lwt_log.add_rule "*" Error;
   Lwt_log.add_rule "*" Warning;
-  Lwt_log.add_rule "*" Info;  
+  (*Lwt_log.add_rule "*" Info;  *)
   
 
   (** Create logger based on execution mode *)
@@ -91,7 +91,8 @@ let setup_logging () =
   default := default_logger;
 
   (** Additional section-specific log level rules can be added here *)
-  (*Lwt_log.add_rule "dashboard" Debug; *)
+    Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; 
+    Lwt_log.add_rule "engine.strategy.kraken.VMM" Info; 
 
   
   ()
@@ -120,24 +121,34 @@ let read_config config_path : (Config.runtime_cfg * Config.engine_config, string
           match asset.strategy with
           | Config.Grid -> Some asset.symbol
           | Config.GMM -> None
+          | Config.VMM -> None
         ) runtime_cfg.assets in
 
         let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
           match asset.strategy with
           | Config.GMM -> Some asset.symbol
           | Config.Grid -> None
+          | Config.VMM -> None
+        ) runtime_cfg.assets in
+
+        let vmm_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
+          match asset.strategy with
+          | Config.VMM -> Some asset.symbol
+          | _ -> None
         ) runtime_cfg.assets in
 
         let all_symbols = List.map (fun (asset: Config.asset_cfg) -> asset.symbol) runtime_cfg.assets in
 
         info_f ~section:config_section "[CONFIG] Grid strategy symbols: [%s]" (String.concat ", " grid_symbols) |> Lwt.ignore_result;
         info_f ~section:config_section "[CONFIG] Orderbook strategy symbols: [%s]" (String.concat ", " orderbook_symbols) |> Lwt.ignore_result;
+        info_f ~section:config_section "[CONFIG] VMM strategy symbols: [%s]" (String.concat ", " vmm_symbols) |> Lwt.ignore_result;
 
         (** Update global state with strategy assignments for each symbol *)
         List.iter (fun (asset: Config.asset_cfg) ->
           let strategy = match asset.strategy with
             | Config.Grid -> State.Grid
             | Config.GMM -> State.Orderbook
+            | Config.VMM -> State.VMM
           in
           State.update_global_strategy_assignment asset.symbol strategy
         ) runtime_cfg.assets;
@@ -235,6 +246,9 @@ let start_engine_logic () : unit Lwt.t =
           let orderbook_strategy : Core.orderbook_strategy = {
             start = Kraken_greedy_mm.start
           } in
+          let vmm_strategy : Core.vmm_strategy = {
+            start = Kraken_valley_mm.start
+          } in
           let arbitrage_strategy : Core.arbitrage_strategy = {
             start = Kraken_arbitrage.start
           } in
@@ -243,7 +257,7 @@ let start_engine_logic () : unit Lwt.t =
             start = Router.start
           } in
           (** Start the main engine with all configured components *)
-          Engine.run ~grid_strategy ~orderbook_strategy ~arbitrage_strategy ~router runtime_cfg core_cfg
+          Engine.run ~grid_strategy ~orderbook_strategy ~vmm_strategy ~arbitrage_strategy ~router runtime_cfg core_cfg
     )
     (fun exn ->
       error_f ~section "Error in engine: %s" (Printexc.to_string exn) >>= fun () ->

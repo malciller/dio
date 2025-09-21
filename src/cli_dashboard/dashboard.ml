@@ -365,6 +365,7 @@ let get_strategy_indicator asset =
   | Some State.Orderbook -> "GMM"
   | Some State.Arbitrage -> "ARB"
   | Some State.Monitor -> "MONITOR"
+  | Some State.VMM -> "VMM"
   | None ->
       (* Fallback: check if there are actual orders for this asset *)
       let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in

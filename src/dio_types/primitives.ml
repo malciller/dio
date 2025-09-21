@@ -35,6 +35,7 @@ module Fixed : sig
 
   (** Comparison operators *)
   val (<=) : t -> t -> bool
+  val gt : t -> t -> bool
 
   (** Check if value is positive *)
   val is_positive : t -> bool
@@ -114,6 +115,11 @@ end = struct
     if p1.scale <> p2.scale then
       invalid_arg "Fixed.(<=): scales must match";
     p1.raw <= p2.raw
+
+  let gt p1 p2 =
+    if p1.scale <> p2.scale then
+      invalid_arg "Fixed.gt: scales must match";
+    p1.raw > p2.raw
 
   let is_positive { raw; _ } = raw > 0L
 

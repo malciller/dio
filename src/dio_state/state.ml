@@ -11,9 +11,10 @@ module SMap = Map.Make(String)
 let section = Lwt_log_core.Section.make "dio_state"
 
 (** Trading strategy types supported by the engine. *)
-type strategy_type =
+type strategy_assignment =
   | Grid       (** Grid trading strategy *)
   | Orderbook  (** Orderbook-based strategy *)
+  | VMM
   | Arbitrage  (** Arbitrage trading strategy *)
   | Monitor    (** Market monitoring strategy *)
 
@@ -26,7 +27,7 @@ type t = {
   pending_orders: int SMap.t;           (** Count of pending orders per symbol *)
   trades_executed: Int64.t SMap.t;      (** Total trades executed per symbol *)
   current_prices: Primitives.Price.t SMap.t;  (** Latest price per symbol *)
-  strategy_assignments: strategy_type SMap.t; (** Active strategy per symbol *)
+  strategy_assignments: strategy_assignment SMap.t; (** Active strategy per symbol *)
 }
 
 (** Initial empty state for new state instances. *)

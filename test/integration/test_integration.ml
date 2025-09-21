@@ -66,6 +66,7 @@ let test_type_system_consistency _switch () =
       grid_interval = Some grid_interval;
       sell_mult = Some sell_mult;
       min_usd_balance = None;
+      max_exposure = None;
       strategy = Config.Grid;
     } in
     

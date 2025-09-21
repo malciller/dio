@@ -353,7 +353,7 @@ end
 
 (** Start the top-level market making strategy *)
 let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
-  info_f ~section "Starting orderbook market making strategy" >>= fun () ->
+  info_f ~section "Starting greedy market making strategy" >>= fun () ->
 
   K.Kraken_incoming_data.wait_for_snapshot () >>= fun () ->
   K.Kraken_incoming_data.wait_for_instruments () >>= fun () ->

@@ -11,14 +11,17 @@ let format_error_message fmt = Printf.sprintf fmt
 type strategy_type =
   | Grid      (** Grid trading: buys/sells at fixed price intervals with profit-taking multipliers *)
   | GMM (** Orderbook-based: maintains positions based on orderbook depth and min USD balance *)
+  | VMM
 
 let strategy_type_to_yojson = function
   | Grid -> `String "Grid"
   | GMM -> `String "GMM"
+  | VMM -> `String "VMM"
 
 let strategy_type_of_yojson = function
   | `String "Grid" -> Ok Grid
   | `String "GMM" -> Ok GMM
+  | `String "VMM" -> Ok VMM
   | _ -> Error "Invalid strategy type"
 
 let strategy_type_of_yojson_exn json =
@@ -35,6 +38,7 @@ type asset_cfg = {
   grid_interval : Fixed.t option [@yojson.optional] [@yojson.default None];   (** Grid: price interval between buy/sell levels. Required for Grid strategy *)
   sell_mult     : Fixed.t option [@yojson.optional] [@yojson.default None];   (** Grid: profit-taking multiplier (< 1.0). Required for Grid strategy *)
   min_usd_balance : Fixed.t option [@yojson.optional] [@yojson.default None]; (** Orderbook: minimum USD balance to maintain. Required for Orderbook strategy *)
+  max_exposure : Fixed.t option [@yojson.optional] [@yojson.default None];
   strategy      : strategy_type;    (** Trading strategy to use for this asset *)
 } [@@deriving yojson { exn = true }]   
 
@@ -101,6 +105,19 @@ let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
       
       if asset.sell_mult <> None then
         errors := (format_error_message "Asset '%s' (MM): sell_mult is not applicable." asset.symbol) :: !errors
+  | VMM ->
+    (match asset.max_exposure with
+      | Some max_exposure ->
+        if not (Fixed.is_non_negative max_exposure) then
+          errors := (format_error_message "Asset '%s' (VMM): max_exposure must be non-negative." asset.symbol) :: !errors
+      | None ->
+        errors := (format_error_message "Asset '%s' (VMM): max_exposure is required." asset.symbol) :: !errors);
+    if asset.grid_interval <> None then
+      errors := (format_error_message "Asset '%s' (VMM): grid_interval is not applicable." asset.symbol) :: !errors;
+    if asset.sell_mult <> None then
+      errors := (format_error_message "Asset '%s' (VMM): sell_mult is not applicable." asset.symbol) :: !errors;
+    if asset.min_usd_balance <> None then
+      errors := (format_error_message "Asset '%s' (VMM): min_usd_balance is not applicable." asset.symbol) :: !errors
   );
 
   if !errors = [] then

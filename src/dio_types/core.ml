@@ -99,6 +99,14 @@ type orderbook_strategy = {
          exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
 }
 
+(** VMM strategy interface *)
+type vmm_strategy = {
+  start: Config.runtime_cfg -> Config.engine_config ->
+         tick_buffer:Event.tick Ringbuffer.t ->
+         cmd_buffer:order_cmd Ringbuffer.t ->
+         exec_buffer:market_event Ringbuffer.t -> unit Lwt.t;
+}
+
 (** Cross-exchange arbitrage strategy interface *)
 type arbitrage_strategy = {
   start: Config.runtime_cfg -> Config.engine_config ->

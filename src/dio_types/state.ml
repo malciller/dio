@@ -69,6 +69,7 @@ type strategy_assignment =
   | Orderbook (** Orderbook-based strategy *)
   | Arbitrage (** Arbitrage strategy *)
   | Monitor   (** Price monitoring only *)
+  | VMM       (** Volatility Market Making strategy *)
 
 (** Global system state shared across all components. *)
 type global_state_t = {

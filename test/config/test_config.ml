@@ -18,6 +18,7 @@ let asset_cfg_sample =
   ; grid_interval        = Some (Fixed.of_string_exn ~scale:8 "1.0") (* Represents 1% *)
   ; sell_mult            = Some (Fixed.of_string_exn ~scale:8 "0.999")
   ; min_usd_balance      = None
+  ; max_exposure         = None
   ; strategy             = Config.Grid
   }
 

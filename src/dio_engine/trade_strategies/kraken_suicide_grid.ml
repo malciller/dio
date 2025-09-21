@@ -107,6 +107,11 @@ module State = struct
             | Some asset_cfg ->
                 (match asset_cfg.grid_interval, asset_cfg.sell_mult with
                 | Some grid_interval, Some sell_mult ->
+                    Kraken.Kraken_balances.wait_for_balances () >>= fun (_, _, _, balances) ->
+                    let z_usd_balance = Hashtbl.find_opt balances "ZUSD" |> Option.value ~default:0.0 in
+                    let usd_balance_val = Hashtbl.find_opt balances "USD" |> Option.value ~default:0.0 in
+                    let usd_balance = z_usd_balance +. usd_balance_val in
+
                     let current_price = tick.current_price in
                     let current_price_float =
                       Float.of_string (Primitives.Price.to_string current_price) in
@@ -114,42 +119,52 @@ module State = struct
                     let grid_pct =
                       Float.of_string (Primitives.Fixed.to_string grid_interval) in
 
-                    let sell_price_raw = current_price_float *. (1.0 +. (grid_pct /. 100.0)) in
                     let buy_price_raw = current_price_float *. (1.0 -. (grid_pct /. 100.0)) in
 
-                    let sell_price = Primitives.Price.of_string_exn ~scale:current_price.scale
-                      (Printf.sprintf "%.*f" current_price.scale sell_price_raw) in
                     let buy_price = Primitives.Price.of_string_exn ~scale:current_price.scale
                       (Printf.sprintf "%.*f" current_price.scale buy_price_raw) in
 
-                    let base_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
-                    let sell_mult_float = Float.of_string (Primitives.Fixed.to_string sell_mult) in
-                    let sell_qty_float = base_qty_float *. sell_mult_float in
-                    let sell_qty = match K.Kraken_incoming_data.get_precisions symbol with
-                      | Some (_, qty_prec) ->
-                          Primitives.Qty.of_string_exn ~scale:qty_prec
-                            (Printf.sprintf "%.*f" qty_prec sell_qty_float)
-                      | None ->
-                          Primitives.Qty.of_string_exn ~scale:asset_cfg.qty.scale
-                            (Printf.sprintf "%.*f" asset_cfg.qty.scale sell_qty_float)
-                    in
+                    let order_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
+                    let order_cost = buy_price_raw *. order_qty_float in
 
-                    info_f ~section
-                      "Order quantities for %s: buy=%.8f sell=%.8f (mult=%.3f -> %.8f * %.3f = %.8f)"
-                        symbol
-                        base_qty_float
-                        sell_qty_float
-                        sell_mult_float
-                        base_qty_float
-                        sell_mult_float
-                        (base_qty_float *. sell_mult_float) >>= fun () ->
+                    if usd_balance >= order_cost then (
+                      let sell_price_raw = current_price_float *. (1.0 +. (grid_pct /. 100.0)) in
 
-                    let sell_cmd = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
-                    Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                    let buy_cmd = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
-                    Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
-                    
-                    Lwt.return_unit
+                      let sell_price = Primitives.Price.of_string_exn ~scale:current_price.scale
+                        (Printf.sprintf "%.*f" current_price.scale sell_price_raw) in
+
+                      let base_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
+                      let sell_mult_float = Float.of_string (Primitives.Fixed.to_string sell_mult) in
+                      let sell_qty_float = base_qty_float *. sell_mult_float in
+                      let sell_qty = match K.Kraken_incoming_data.get_precisions symbol with
+                        | Some (_, qty_prec) ->
+                            Primitives.Qty.of_string_exn ~scale:qty_prec
+                              (Printf.sprintf "%.*f" qty_prec sell_qty_float)
+                        | None ->
+                            Primitives.Qty.of_string_exn ~scale:asset_cfg.qty.scale
+                              (Printf.sprintf "%.*f" asset_cfg.qty.scale sell_qty_float)
+                      in
+
+                      info_f ~section
+                        "Order quantities for %s: buy=%.8f sell=%.8f (mult=%.3f -> %.8f * %.3f = %.8f)"
+                          symbol
+                          base_qty_float
+                          sell_qty_float
+                          sell_mult_float
+                          base_qty_float
+                          sell_mult_float
+                          (base_qty_float *. sell_mult_float) >>= fun () ->
+
+                      let sell_cmd = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
+                      Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                      let buy_cmd = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
+                      Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
+                      
+                      Lwt.return_unit
+                    ) else (
+                      warning_f ~section "Insufficient USD balance to place grid order for %s. Required: %.2f, Available: %.2f"
+                        symbol order_cost usd_balance
+                    )
                 | _, _ ->
                     warning_f ~section
                       "Grid strategy requires grid_interval and sell_mult for %s" symbol >>= fun () -> Lwt.return_unit)
@@ -388,6 +403,7 @@ module State = struct
       match asset.strategy with
       | Config.Grid -> Some asset.symbol
       | Config.GMM -> None
+      | Config.VMM -> None
     ) runtime_cfg.assets in
 
     List.iter (fun symbol -> Hashtbl.replace initialized_symbols symbol false) grid_symbols;
@@ -592,6 +608,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
     match asset.strategy with
     | Config.Grid -> Some asset.symbol
     | Config.GMM -> None
+    | Config.VMM -> None
   ) runtime_cfg.assets in
 
   info_f ~section
