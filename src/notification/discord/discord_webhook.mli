@@ -1,8 +1,6 @@
 open Dio_types
 
 
-val get_current_time : unit -> string
-(** [get_current_time ()] returns the current time as a RFC3339 formatted string. *)
 
 
 type fill_notification_payload = {

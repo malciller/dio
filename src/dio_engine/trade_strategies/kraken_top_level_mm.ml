@@ -12,6 +12,7 @@ open Lwt_log_core
 open Engine
 module K = Kraken
 
+
 let section = Lwt_log_core.Section.make "engine.strategy.kraken.MM"
 
 (*
@@ -89,7 +90,7 @@ module State = struct
           | Some min_balance ->
               let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
               if !usd_balance < min_balance_float then (
-                warning_f ~section "USD balance %.2f is below minimum %.2f for %s. Skipping order creation."
+              info_f ~section "USD balance %.2f is below minimum %.2f for %s. Skipping order creation."
                   !usd_balance min_balance_float symbol
               ) else (
                 match get_price symbol with

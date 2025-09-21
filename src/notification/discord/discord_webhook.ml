@@ -7,9 +7,6 @@ open Lwt_log_core
 open Dio_types
 open Dio_types.Core
 
-(** Get current timestamp in RFC3339 format *)
-let get_current_time () =
-  Ptime.to_rfc3339 (Ptime_clock.now ())
 
 (** Get formatted server time as MM/DD/YYYY HH:MM:SS *)
 let get_formatted_server_time () =
@@ -44,7 +41,8 @@ type notification_payload =
 
 let section = Section.make "notification.discord"  
 let message_queue : notification_payload Ringbuffer.t = Ringbuffer.create 100
-let logged_no_url = ref false  (** Flag to prevent repeated warnings about missing webhook URL *)
+let logged_no_url = ref false  
+let start_promise : unit Lwt.t option ref = ref None  (** Ensure start is idempotent *)
 
 (** Create Discord embed JSON for trade execution notifications *)
 let make_order_embed (payload: fill_notification_payload) =
@@ -258,9 +256,16 @@ let rec worker () =
       )) >>= fun () ->
   worker ()
 
-(** Initialize the Discord notification system with worker and balance scheduler threads *)
+(** Initialize the Discord notification system with worker and balance scheduler threads (idempotent) *)
 let start (balance_fetcher: Config.engine_config -> (string, float) Hashtbl.t Lwt.t) (cfg: Config.engine_config) =
-  Lwt.join [
-    worker ();
-    balance_scheduler balance_fetcher cfg
-  ]
+  match !start_promise with
+  | Some p -> p
+  | None ->
+      let p =
+        Lwt.join [
+          worker ();
+          balance_scheduler balance_fetcher cfg
+        ]
+      in
+      start_promise := Some p;
+      p

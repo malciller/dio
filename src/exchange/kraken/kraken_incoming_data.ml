@@ -708,7 +708,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                           | Some symbol ->
                               let price_prec, qty_prec = Option.value (get_precisions symbol) ~default:(8, 8) in
                               match item_exec_type, last_qty_opt, last_price_opt, kraken_side_to_core_side side_str_opt with
-                              | ("trade" | "filled"), Some qty_f, Some price_f, Some side when qty_f > 0.0 ->
+                              | ("trade"), Some qty_f, Some price_f, Some side when qty_f > 0.0 ->
                                   (try
                                      let fill_event = Core.Fill { symbol; order_id; client_id; price=(float_to_price ~scale:price_prec price_f); qty=(float_to_qty ~scale:qty_prec qty_f); side; ts } in
                                      

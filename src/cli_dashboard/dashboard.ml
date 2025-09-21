@@ -456,10 +456,19 @@ let row_of_asset asset frame state =
           ) None all_buy_orders_for_symbol in
           match best_bid with
           | Some bid_price ->
+              let distance = current_f -. bid_price in
+              let distance_pct = if current_f <> 0.0 then (distance /. current_f) *. 100.0 else 0.0 in
+              let (distance_str, distance_style) = if abs_float distance_pct < 0.01 then
+                (Printf.sprintf "(0%%)", style_neutral_text)
+              else if distance_pct > 0.0 then
+                (Printf.sprintf "(-%.2f%%)" distance_pct, style_loss_text)  (* Red for positive distance - need to go down to execute buy *)
+              else
+                (Printf.sprintf "(+%.2f%%)" (-.distance_pct), style_profit_text) in  (* Green for negative distance - need to go up to execute buy *)
               I.hcat [
                 spr_buy_order;
                 I.string style_buy_order_text (Printf.sprintf "%.4f" bid_price);
-                I.string style_neutral_text (Printf.sprintf "(%s)" (format_quantity total_buy_qty))
+                I.string style_neutral_text (Printf.sprintf "(%s)" (format_quantity total_buy_qty));
+                I.string distance_style distance_str
               ]
           | None -> I.string style_neutral_text "No bids"
         else
@@ -473,10 +482,19 @@ let row_of_asset asset frame state =
           ) None all_sell_orders_for_symbol in
           match best_ask with
           | Some ask_price ->
+              let distance = ask_price -. current_f in
+              let distance_pct = if current_f <> 0.0 then (distance /. current_f) *. 100.0 else 0.0 in
+              let (distance_str, distance_style) = if abs_float distance_pct < 0.01 then
+                (Printf.sprintf "(0%%)", style_neutral_text)
+              else if distance_pct < 0.0 then
+                (Printf.sprintf "(-%.2f%%)" (-.distance_pct), style_loss_text)  (* Red for negative distance - need to go down to execute sell *)
+              else
+                (Printf.sprintf "(+%.2f%%)" distance_pct, style_profit_text) in  (* Green for positive distance - need to go up to execute sell *)
               I.hcat [
                 spr_sell_order;
                 I.string style_sell_order_text (Printf.sprintf "%.4f" ask_price);
-                I.string style_neutral_text (Printf.sprintf "(%s)" (format_quantity total_sell_qty))
+                I.string style_neutral_text (Printf.sprintf "(%s)" (format_quantity total_sell_qty));
+                I.string distance_style distance_str
               ]
           | None -> I.string style_neutral_text "No asks"
         else
@@ -822,9 +840,10 @@ let render_balances_section (balances: balance_info list) term_width =
       let value_style = if info.total_value_usd > 0.0 then style_success_text
                         else if info.total_value_usd < 0.0 then style_loss_text
                         else style_neutral_text in
-      let accumulated_style = if info.accumulated_value_usd > 0.0 then style_success_text
-                             else if info.accumulated_value_usd < 0.0 then style_loss_text
-                             else style_neutral_text in
+      let accumulated_style =
+        if abs_float info.accumulated_value_usd < 0.01 then style_neutral_text
+        else if info.accumulated_value_usd > 0.0 then style_success_text
+        else style_loss_text in
       let unrealized_display =
         let dollar_str = Printf.sprintf "$%.2f" info.unrealized_value_usd in
         if info.total_value_usd = 0.0 then
@@ -893,9 +912,10 @@ let render_balances_section (balances: balance_info list) term_width =
     let total_value_style = if total_portfolio_value > 0.0 then (style_success_text ++ A.st A.bold)
                             else if total_portfolio_value < 0.0 then (style_loss_text ++ A.st A.bold)
                             else (style_neutral_text ++ A.st A.bold) in
-    let total_accumulated_style = if total_accumulated_value > 0.0 then (style_success_text ++ A.st A.bold)
-                                  else if total_accumulated_value < 0.0 then (style_loss_text ++ A.st A.bold)
-                                  else (style_neutral_text ++ A.st A.bold) in
+    let total_accumulated_style =
+      if abs_float total_accumulated_value < 0.01 then (style_neutral_text ++ A.st A.bold)
+      else if total_accumulated_value > 0.0 then (style_success_text ++ A.st A.bold)
+      else (style_loss_text ++ A.st A.bold) in
     let total_row =
       I.hcat [
         I.string style_header_border "┃";
