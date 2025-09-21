@@ -205,6 +205,7 @@ module State = struct
               } in
               K.Kraken_balances.handle_fill_event fill_event >>= fun () ->
               sync_open_orders () >>= fun () ->
+              refresh_usd_balance () >>= fun () ->
 
               if not (Hashtbl.mem open_orders order_id) then (
                 info_f ~section "Order %s completely filled" order_id >>= fun () ->
@@ -223,6 +224,7 @@ module State = struct
               warning_f ~section "Fill event for unknown order %s, attempting to create orders anyway" order_id >>= fun () ->
               (* If we can't find the order, we can't determine its side, so we'll be conservative and create orders *)
               sync_open_orders () >>= fun () ->
+              refresh_usd_balance () >>= fun () ->
               create_initial_order runtime_cfg symbol cmd_buffer
         ) else (
           debug_f ~section "Fill event for %s not in orderbook symbols, ignoring" symbol >>= fun () ->
