@@ -31,6 +31,7 @@ module State = struct
   let inventory_tracker : (string, float) Hashtbl.t = Hashtbl.create 16
   (* Track fill quantities for target price cleanup *)
   let fill_qty_tracker : (string, float) Hashtbl.t = Hashtbl.create 16
+  let fee_rates : (string, float) Hashtbl.t = Hashtbl.create 16
 
   (** Update USD balance from exchange *)
   let refresh_usd_balance () =
@@ -60,11 +61,18 @@ module State = struct
 
   (** Get fee rate for a given symbol *)
   let get_fee_rate symbol =
-    match K.Kraken_incoming_data.get_instrument symbol with
-    | Some instrument ->
-      instrument.maker_fee |> Option.value ~default:0.002 (* Default maker fee *)
+    match Hashtbl.find_opt fee_rates symbol with
+    | Some fee -> fee
     | None ->
-      0.002 (* Conservative default fee rate *)
+      match K.Kraken_incoming_data.get_instrument symbol with
+      | Some instrument ->
+        let fee = instrument.maker_fee |> Option.value ~default:0.002 in
+        info_f ~section "Fee for %s: %.6f" symbol fee |> ignore;
+        Hashtbl.add fee_rates symbol fee;
+        fee
+      | None ->
+        info_f ~section "No instrument data for %s, using default fee: 0.002" symbol |> ignore;
+        0.002 (* Conservative default fee rate *)
 
   (** Check if symbol has any open buy orders *)
   let has_open_buy_order symbol =
