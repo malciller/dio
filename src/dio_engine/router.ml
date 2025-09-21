@@ -96,7 +96,7 @@ let start cfg ~cmd_buffer ~exec_buffer =
     OrderCache.cleanup ();
     Ringbuffer.pop cmd_buffer >>= fun cmd ->
     if OrderCache.is_duplicate cmd then (
-      warning_f ~section:(Lwt_log_core.Section.make "engine.router")
+      debug_f ~section:(Lwt_log_core.Section.make "engine.router")
         "Dropping duplicate order: %s"
           (match cmd with
           | Add { client_id; _ } -> client_id

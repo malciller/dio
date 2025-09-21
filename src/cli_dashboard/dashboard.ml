@@ -64,8 +64,8 @@ let style_keybinding_text = style_primary_text
 
 (** Enhanced Unicode visual symbols for modern dashboard elements *)
 let spr_power_pellet  = I.string style_logs_accent_text "●"  (* Bullet - log highlights *)
-let spr_buy_order     = I.string style_buy_order_text "▲"    (* Up Triangle - buy orders *)
-let spr_sell_order    = I.string style_sell_order_text "▼"   (* Down Triangle - sell orders *)
+let spr_buy_order     = I.string style_buy_order_text "▼"    (* Down Triangle - buy orders *)
+let spr_sell_order    = I.string style_sell_order_text "▲"   (* Up Triangle - sell orders *)
 let spr_price_now frame =
   let blink = (frame / 8) mod 2 = 0 in
   let style = if blink then
@@ -153,6 +153,137 @@ let create_sparkline ~width ~height ~prices ~current_price =
     ) prices in
 
     I.hcat spark_chars
+
+(** Maintain a simple in-memory rolling price history per asset for trend display *)
+let price_history_tbl : (string, float list) Hashtbl.t = Hashtbl.create 32
+let max_history_points = 120
+
+let update_price_history asset price =
+  let existing = Option.value ~default:[] (Hashtbl.find_opt price_history_tbl asset) in
+  let new_list =
+    match existing with
+    | last :: _ when Float.abs (last -. price) < 1e-9 -> existing
+    | _ -> price :: existing
+  in
+  let rec take_first n lst =
+    if n <= 0 then [] else match lst with [] -> [] | h :: t -> h :: take_first (n - 1) t
+  in
+  let trimmed = if List.length new_list > max_history_points then take_first max_history_points new_list else new_list in
+  Hashtbl.replace price_history_tbl asset trimmed
+
+let get_price_history asset =
+  match Hashtbl.find_opt price_history_tbl asset with
+  | Some lst -> List.rev lst  (* oldest -> newest for left-to-right rendering *)
+  | None -> []
+
+(** Render a single-row block-character sparkline that is visually clear *)
+let create_block_sparkline ~width ~prices =
+  let prices =
+    if prices = [] then []
+    else if List.length prices <= width then prices
+    else (
+      let total = List.length prices in
+      let stride = (float_of_int total) /. (float_of_int width) in
+      let rec sample i acc =
+        if i >= width then List.rev acc
+        else
+          let idx = int_of_float (floor ((float_of_int i) *. stride)) in
+          match List.nth_opt prices (min (total - 1) idx) with
+          | Some v -> sample (i + 1) (v :: acc)
+          | None -> sample (i + 1) acc
+      in
+      sample 0 []
+    )
+  in
+  let levels = [| "▁"; "▂"; "▃"; "▄"; "▅"; "▆"; "▇"; "█" |] in
+  let img_of_prices ps =
+    match ps with
+    | [] -> I.string style_neutral_text (String.concat "" (List.init (max 0 width) (fun _ -> "─")))
+    | _ ->
+        let min_p = List.fold_left min (List.hd ps) ps in
+        let max_p = List.fold_left max (List.hd ps) ps in
+        let range = if max_p = min_p then 1.0 else max_p -. min_p in
+        let to_lvl p = int_of_float (min 7.0 (max 0.0 (((p -. min_p) /. range) *. 7.0))) in
+        let first = List.hd ps in
+        let last = List.hd (List.rev ps) in
+        let trend_up = last -. first >= 0.0 in
+        let rec build acc idx rest =
+          match rest with
+          | [] -> List.rev acc
+          | [p] ->
+              let lvl = to_lvl p in
+              let ch = levels.(lvl) in
+              let style = if trend_up then style_profit_text else style_loss_text in
+              build (I.string style ch :: acc) (idx + 1) []
+          | p :: xs ->
+              let lvl = to_lvl p in
+              let ch = levels.(lvl) in
+              build (I.string style_neutral_text ch :: acc) (idx + 1) xs
+        in
+        I.hcat (build [] 0 ps)
+  in
+  img_of_prices prices
+
+(** Render a multi-row (e.g., 2-row) block-character sparkline for higher vertical clarity *)
+let create_block_sparkline_multi ~width ~rows ~prices =
+  let clamp_rows = max 1 rows in
+  let prices =
+    if prices = [] then []
+    else if List.length prices <= width then prices
+    else (
+      let total = List.length prices in
+      let stride = (float_of_int total) /. (float_of_int width) in
+      let rec sample i acc =
+        if i >= width then List.rev acc
+        else
+          let idx = int_of_float (floor ((float_of_int i) *. stride)) in
+          match List.nth_opt prices (min (total - 1) idx) with
+          | Some v -> sample (i + 1) (v :: acc)
+          | None -> sample (i + 1) acc
+      in
+      sample 0 []
+    )
+  in
+  let img_of_prices ps =
+    match ps with
+    | [] -> I.string style_neutral_text (String.concat "" (List.init (max 0 width) (fun _ -> "─")))
+    | _ ->
+        let min_p = List.fold_left min (List.hd ps) ps in
+        let max_p = List.fold_left max (List.hd ps) ps in
+        let range = if max_p = min_p then 1.0 else max_p -. min_p in
+        let halves_total = clamp_rows * 2 in
+        let to_halves p = int_of_float (min (float_of_int halves_total) (max 0.0 (((p -. min_p) /. range) *. float_of_int halves_total))) in
+        let first = List.hd ps in
+        let last = List.hd (List.rev ps) in
+        let trend_up = last -. first >= 0.0 in
+        let color_for_idx idx = if idx = width - 1 then (if trend_up then style_profit_text else style_loss_text) else style_neutral_text in
+        let build_rows () =
+          let cols = List.mapi (fun idx p -> (idx, to_halves p)) ps in
+          let build_row row_idx =
+            let row_from_bottom = row_idx in
+            let top_row = clamp_rows - 1 in
+            let is_top = row_from_bottom = top_row in
+            let char_for_col idx halves =
+              (* Distribute halves from bottom to top *)
+              let halves_for_bottom = min 2 halves in
+              let halves_remaining = max 0 (halves - halves_for_bottom) in
+              let halves_for_this_row =
+                if is_top then min 2 halves_remaining else halves_for_bottom
+              in
+              match halves_for_this_row with
+              | 0 -> I.string style_neutral_text " "
+              | 1 -> I.string (color_for_idx idx) (if is_top then "▀" else "▄")
+              | _ -> I.string (color_for_idx idx) "█"
+            in
+            I.hcat (List.map (fun (idx, h) -> char_for_col idx h) cols)
+          in
+          (* Build from top to bottom for visual order *)
+          let rec loop r acc = if r < 0 then acc else loop (r - 1) (build_row r :: acc) in
+          List.rev (loop (clamp_rows - 1) [])
+        in
+        I.vcat (build_rows ())
+  in
+  img_of_prices prices
 
 (** Create a compact status indicator with icon and text *)
 let create_status_indicator ~icon ~text ~style =
@@ -429,6 +560,7 @@ let row_of_asset asset frame state =
           let min_price = List.fold_left min (List.hd all_prices) all_prices in
           let max_price = List.fold_left max (List.hd all_prices) all_prices in
           (max_price -. min_price) /. current_f *. 100.0 in
+        update_price_history asset current_f;
         (current_f, volatility, if volatility > 2.0 then spr_warning else if volatility > 1.0 then spr_neutral else spr_success_text)
     | None -> (0.0, 0.0, spr_neutral)
   in
@@ -539,41 +671,32 @@ let row_of_asset asset frame state =
         I.string style_neutral_text ""
   in
 
-  (* Create mini sparkline if we have price data *)
-  let sparkline = match current_price_opt with
-    | Some _ ->
-        let recent_prices = List.map fst (all_buy_orders_for_symbol @ all_sell_orders_for_symbol) in
-        let spark_width = min 15 (term_width / 5) in
-        let sparkline_img = create_sparkline
-          ~width:spark_width
-          ~height:3
-          ~prices:(if recent_prices = [] then [current_price] else recent_prices)
-          ~current_price in
-        I.hcat [spr_bullet; I.string style_neutral_text " Trend: "; sparkline_img]
-    | None ->
-        I.string style_neutral_text ""
-  in
-
-  (* Combine all elements into a compact, modern layout *)
   let content_width = term_width - 2 in
   let left_section = I.vcat [
     asset_header;
     price_display;
-    order_book_viz;
-    sparkline
+    order_book_viz
   ] in
 
   let right_section = match current_price_opt with
     | Some _ ->
-        let ladder_width = min 25 (content_width - I.width left_section - 4) in
-        if ladder_width > 10 then
-          price_ladder
-            ~ladder_width
-            current_price
-            all_buy_orders_for_symbol
-            all_sell_orders_for_symbol
-            frame
-        else I.empty
+        let available = content_width - I.width left_section - 4 in
+        let ladder_width = min 25 available in
+        let ladder_img =
+          if ladder_width > 10 then
+            price_ladder ~ladder_width current_price all_buy_orders_for_symbol all_sell_orders_for_symbol frame
+          else I.empty
+        in
+        let history = get_price_history asset in
+        let trend_width = max 20 (available - max 0 (I.width ladder_img) - 3) in
+        let trend_img =
+          if trend_width > 10 && history <> [] then (
+            let line = I.hcat [ I.string style_neutral_text " "; create_block_sparkline ~width:trend_width ~prices:history ] in
+            let spacer = I.void (I.width line) 1 in
+            I.vcat [ line; spacer ]
+          ) else I.empty
+        in
+        I.vcat [ladder_img; trend_img]
     | None -> I.empty
   in
 

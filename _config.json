@@ -46,12 +46,6 @@
       "qty": "10.0",
       "min_usd_balance": "600.0",
       "strategy": "MM"
-    },
-    {
-      "symbol": "USDR/USD",
-      "qty": "10.0",
-      "min_usd_balance": "4000.0",
-      "strategy": "MM"
     }
   ],
   "queues_cap": 1000,
