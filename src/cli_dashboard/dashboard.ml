@@ -951,7 +951,7 @@ let render_balances_section (balances: balance_info list) term_width =
           I.string style_neutral_text (Printf.sprintf "%*s" unreal_w dollar_str)
         else
           let perc = ((info.unrealized_value_usd -. info.total_value_usd) /. info.total_value_usd) *. 100.0 in
-          let perc_style = if perc >= 0.0 then style_profit_text else style_loss_text in
+          let perc_style = if abs_float perc < 0.01 then style_neutral_text else if perc >= 0.0 then style_profit_text else style_loss_text in
           let perc_str = Printf.sprintf "%+.2f%%" perc in
           let dollar_len = String.length dollar_str in
           let perc_len = String.length perc_str in
@@ -993,7 +993,7 @@ let render_balances_section (balances: balance_info list) term_width =
         I.string (style_neutral_text ++ A.st A.bold) (Printf.sprintf "%*s" unreal_w dollar_str)
       else
         let perc = ((total_unrealized_value -. total_portfolio_value) /. total_portfolio_value) *. 100.0 in
-        let perc_style = if perc >= 0.0 then (style_highlight_text ++ A.st A.bold) else (style_loss_text ++ A.st A.bold) in
+        let perc_style = if abs_float perc < 0.01 then (style_neutral_text ++ A.st A.bold) else if perc >= 0.0 then (style_highlight_text ++ A.st A.bold) else (style_loss_text ++ A.st A.bold) in
         let perc_str = Printf.sprintf "%+.2f%%" perc in
         let dollar_len = String.length dollar_str in
         let perc_len = String.length perc_str in
