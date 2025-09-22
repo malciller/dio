@@ -27,6 +27,8 @@ module State = struct
   (* Track fill quantities for target price cleanup *)
   let fill_qty_tracker : (string, float) Hashtbl.t = Hashtbl.create 16
   let fee_rates : (string, float) Hashtbl.t = Hashtbl.create 16
+  let last_amend_time : (string, float) Hashtbl.t = Hashtbl.create 16  (* order_id -> last amend timestamp *)
+  let amend_cooldown = 5.0  (* Minimum seconds between amendments for same order *)
 
   (** Update USD balance from exchange *)
   let refresh_usd_balance () =
@@ -230,7 +232,7 @@ module State = struct
             let open_sell_qty = get_open_sell_order_qty symbol in
             let qty_to_sell = current_inventory -. open_sell_qty in
 
-            if qty_to_sell > 0.00001 then ( (* Basic dust filter *)
+            if qty_to_sell > 0.000001 then ( (* Basic dust filter *)
               (* Round down to qty_precision to exclude dust fractions *)
               let clean_qty = floor (qty_to_sell *. 10.0 ** float_of_int instrument.qty_precision) /. (10.0 ** float_of_int instrument.qty_precision) in
               (match get_price symbol with
@@ -293,23 +295,36 @@ module State = struct
           let price_diff_pct = abs_float (order_price_float -. new_buy_price_float) /. order_price_float in
 
           if price_diff_pct > 0.0001 then ( (* 0.01% threshold *)
-            info_f ~section "Top ask changed. Amending buy order %s (%.8f -> %.8f)"
-              order.order_id order_price_float new_buy_price_float >>= fun () ->
-            let amend_cmd = Core.Amend {
-              dst = "kraken";
-              order_id = order.order_id;
-              symbol = order.order_symbol;
-              new_price = new_buy_price;
-              new_qty = Primitives.Qty.of_string_exn ~scale:instrument.qty_precision (Printf.sprintf "%.*f" instrument.qty_precision order.qty);
-              ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-            } in
-            Hashtbl.replace buy_order_targets order.order_id new_target_sell_price;
-            Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
-            info_f ~section "Amending order %s to new price %s. New target sell: %s"
-              order.order_id
-              (Primitives.Price.to_string new_buy_price)
-              (Primitives.Price.to_string new_target_sell_price)
-          ) else Lwt.return_unit
+            let now = Unix.gettimeofday () in
+            let last_amend = Hashtbl.find_opt last_amend_time order.order_id |> Option.value ~default:0.0 in
+            let time_since_last_amend = now -. last_amend in
+
+            if time_since_last_amend >= amend_cooldown then (
+              info_f ~section "Top ask changed. Amending buy order %s (%.8f -> %.8f)"
+                order.order_id order_price_float new_buy_price_float >>= fun () ->
+              let amend_cmd = Core.Amend {
+                dst = "kraken";
+                order_id = order.order_id;
+                symbol = order.order_symbol;
+                new_price = new_buy_price;
+                new_qty = Primitives.Qty.of_string_exn ~scale:instrument.qty_precision (Printf.sprintf "%.*f" instrument.qty_precision order.qty);
+                ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+              } in
+              Hashtbl.replace buy_order_targets order.order_id new_target_sell_price;
+              Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+              Hashtbl.replace last_amend_time order.order_id now;
+              info_f ~section "Amending order %s to new price %s. New target sell: %s"
+                order.order_id
+                (Primitives.Price.to_string new_buy_price)
+                (Primitives.Price.to_string new_target_sell_price)
+            ) else (
+              debug_f ~section "Skipping amend for order %s - cooldown active (%.1fs remaining)"
+                order.order_id (amend_cooldown -. time_since_last_amend)
+            )
+          ) else (
+            debug_f ~section "Order %s price %.8f matches target %.8f within threshold, no amendment needed"
+              order.order_id order_price_float new_buy_price_float
+          )
         | [] -> Lwt.return_unit
         | _ ->
           debug_f ~section "Multiple buy orders for %s, skipping adjustment." tick.symbol

@@ -25,6 +25,8 @@ module State = struct
   let price_info : (string, Event.tick) Hashtbl.t = Hashtbl.create 16
   let open_orders : (string, K.Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
   let usd_balance : float ref = ref 0.0
+  let last_amend_time : (string, float) Hashtbl.t = Hashtbl.create 16  (* order_id -> last amend timestamp *)
+  let amend_cooldown = 5.0  (* Minimum seconds between amendments for same order *)
 
   (** Update USD balance from exchange *)
   let refresh_usd_balance () =
@@ -202,22 +204,33 @@ module State = struct
             let top_bid_price_float = Float.of_string (Primitives.Price.to_string top_bid_price) in
             
             let price_diff = abs_float (order_price_float -. top_bid_price_float) in
-            
-            if price_diff > 0.0 then (
-              info_f ~section "Prices differ, creating amend command for order %s (%.8f -> %.8f)"
-                order.order_id order_price_float top_bid_price_float >>= fun () ->
-              let amend_cmd = Core.Amend {
-                dst = "kraken";
-                order_id = order.order_id;
-                symbol = order.order_symbol;
-                new_price = top_bid_price;
-                new_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty);
-                ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-              } in
-              Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
-              info_f ~section "Amending order %s to new price %s" order.order_id (Primitives.Price.to_string top_bid_price)
+            let price_diff_pct = if order_price_float > 0.0 then price_diff /. order_price_float else 0.0 in
+
+            if price_diff_pct > 0.0001 then ( (* 0.01% threshold *)
+              let now = Unix.gettimeofday () in
+              let last_amend = Hashtbl.find_opt last_amend_time order.order_id |> Option.value ~default:0.0 in
+              let time_since_last_amend = now -. last_amend in
+
+              if time_since_last_amend >= amend_cooldown then (
+                info_f ~section "Prices differ, creating amend command for order %s (%.8f -> %.8f)"
+                  order.order_id order_price_float top_bid_price_float >>= fun () ->
+                let amend_cmd = Core.Amend {
+                  dst = "kraken";
+                  order_id = order.order_id;
+                  symbol = order.order_symbol;
+                  new_price = top_bid_price;
+                  new_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty);
+                  ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+                } in
+                Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+                Hashtbl.replace last_amend_time order.order_id now;
+                info_f ~section "Amending order %s to new price %s" order.order_id (Primitives.Price.to_string top_bid_price)
+              ) else (
+                debug_f ~section "Skipping amend for order %s - cooldown active (%.1fs remaining)"
+                  order.order_id (amend_cooldown -. time_since_last_amend)
+              )
             ) else (
-              debug_f ~section "Order %s price %.8f matches top bid %.8f exactly, no amendment needed"
+              debug_f ~section "Order %s price %.8f matches top bid %.8f within threshold, no amendment needed"
                 order.order_id order_price_float top_bid_price_float >>= fun () ->
               Lwt.return_unit
             )
