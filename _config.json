@@ -56,13 +56,13 @@
     {
       "symbol": "USDT/USD",
       "qty": "100.0",
-      "max_exposure": "200.0",
+      "max_exposure": "100.0",
       "strategy": "VMM"
     },
     {
       "symbol": "USDC/USD",
       "qty": "100.0",
-      "max_exposure": "200.0",
+      "max_exposure": "100.0",
       "strategy": "VMM"
     }
   ],

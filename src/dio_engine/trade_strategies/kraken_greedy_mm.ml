@@ -51,6 +51,15 @@ module State = struct
   (** Get current price data for symbol *)
   let get_price symbol = Hashtbl.find_opt price_info symbol
 
+  (** Get total quantity of an asset locked in open orders for a given symbol *)
+  let get_balance_in_open_orders symbol =
+    Hashtbl.fold (fun _ (order : K.Kraken_common_types.order) acc ->
+      if String.equal order.order_symbol symbol then
+        acc +. order.qty
+      else
+        acc
+    ) open_orders 0.0
+
   (** Create exchange-compliant order with proper formatting *)
   let create_order ~symbol ~side ~price ~qty =
     match K.Kraken_incoming_data.get_precisions symbol with
@@ -101,15 +110,20 @@ module State = struct
                     Kraken.Kraken_balances.wait_for_balances () >>= fun (spot_balances, _, liquid_balances, _) ->
                     let spot_bal = Hashtbl.find_opt spot_balances base_currency |> Option.value ~default:0.0 in
                     let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
-                    let tradeable_balance = spot_bal +. liquid_bal in
+                    let total_balance = spot_bal +. liquid_bal in
+                    let balance_in_orders = get_balance_in_open_orders symbol in
+                    let available_balance = total_balance -. balance_in_orders in
 
-                    if tradeable_balance > 0.00000001 then (
+                    info_f ~section "Available balance for %s: total=%.8f, in_orders=%.8f, available=%.8f"
+                      base_currency total_balance balance_in_orders available_balance >>= fun () ->
+
+                    if available_balance > 0.00000001 then (
                       info_f ~section "Found %.8f of %s to sell before pausing (spot: %.8f, liquid: %.8f)." 
-                        tradeable_balance base_currency spot_bal liquid_bal >>= fun () ->
+                        available_balance base_currency spot_bal liquid_bal >>= fun () ->
                       (match get_price symbol with
                       | Some tick ->
                           let sell_price = tick.ask in
-                          let qty_str = Printf.sprintf "%.*f" qty_prec tradeable_balance in
+                          let qty_str = Printf.sprintf "%.*f" qty_prec available_balance in
                           let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
                           let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
                           (match sell_order with
@@ -376,7 +390,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
     execution_loop ()
   in
 
-  let balance_refresh_interval = 300.0 in
+  let balance_refresh_interval = 1.0 in
   let rec balance_loop () =
     Lwt_unix.sleep balance_refresh_interval >>= fun () ->
     State.refresh_usd_balance () >>= fun () ->

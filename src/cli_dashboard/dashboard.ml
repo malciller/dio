@@ -62,6 +62,12 @@ let style_active_indicator = A.fg (rgb_of_255 ~r:50 ~g:255 ~b:150) ++ A.st A.bol
 let style_inactive_indicator = A.fg (rgb_of_255 ~r:150 ~g:150 ~b:150)
 let style_error_indicator  = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100) ++ A.st A.bold
 
+(** Log level styles *)
+let style_log_info = A.fg (rgb_of_255 ~r:100 ~g:255 ~b:150)
+let style_log_warning = A.fg (rgb_of_255 ~r:255 ~g:200 ~b:100)
+let style_log_error = A.fg (rgb_of_255 ~r:255 ~g:100 ~b:100)
+let style_log_debug = style_primary_text
+
 (** Composite styles for common UI elements *)
 let style_asset_name = style_current_price_text ++ A.st A.bold ++ A.st A.underline
 let style_header_title_art = style_header_border ++ A.st A.bold
@@ -110,6 +116,15 @@ let spr_tee_down      = I.string style_header_border "┬"
 let spr_tee_up        = I.string style_header_border "┴"
 let spr_tee_right     = I.string style_header_border "├"
 let spr_tee_left      = I.string style_header_border "┤"
+
+let style_of_log_level msg =
+  let info_regexp = Str.regexp ".*info.*" in
+  let warning_regexp = Str.regexp ".*warning.*" in
+  let error_regexp = Str.regexp ".*error.*" in
+  if Str.string_match info_regexp msg 0 then style_log_info
+  else if Str.string_match warning_regexp msg 0 then style_log_warning
+  else if Str.string_match error_regexp msg 0 then style_log_error
+  else style_log_debug
 
 
 (* ─── helpers ─────────────────────────────────────────────── *)
@@ -1192,8 +1207,9 @@ let logs_section_image =
     let logs_header_h = height logs_header_img in
     let num_log_lines_to_take = max 0 (logs_height - logs_header_h) in 
     let log_messages = 
-      List.map (fun msg -> 
-        let msg_img = I.string style_primary_text msg in
+      List.map (fun msg ->
+        let style = style_of_log_level msg in
+        let msg_img = I.string style msg in
         let msg_width = width msg_img in
         if msg_width > content_width then
           let chars_per_line = content_width in
@@ -1207,9 +1223,9 @@ let logs_section_image =
               wrap_text rest (line :: acc)
           in
           let wrapped_lines = wrap_text msg [] |> List.rev in
-          I.vcat (List.map (fun line -> I.string style_primary_text line) wrapped_lines)
+          I.vcat (List.map (fun line -> I.string style line) wrapped_lines)
         else
-          I.hcat [spr_power_pellet; I.string style_primary_text " "; msg_img; I.void (content_width - (width msg_img) - (width spr_power_pellet) - 1) 1]
+          I.hcat [I.string style "●"; I.string style " "; msg_img; I.void (content_width - (width msg_img) - (width spr_power_pellet) - 1) 1]
       ) (take num_log_lines_to_take state.cached_logs)
     in
     let logs_body_content = I.vcat log_messages in

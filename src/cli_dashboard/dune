@@ -11,4 +11,5 @@
   sexplib0
   notty
   notty.lwt
+  str
   lwt_log))
