@@ -208,6 +208,24 @@ let specs = [
  *)
 let start_engine_logic () : unit Lwt.t =
   init () >>= fun _ctx ->
+  
+  (** Start periodic telemetry reporting *)
+  Lwt.async (fun () ->
+    let rec telemetry_loop () =
+      Lwt_unix.sleep 30.0 >>= fun () ->
+      Telemetry.get_all_stats () >>= fun stats ->
+      List.iter (fun (name, s) ->
+        if s.Dio_types.Telemetry_types.count > 0 then
+          info_f ~section:(Section.make "telemetry")
+            "%s: count=%d avg=%.2fms p95=%.2fms p99=%.2fms"
+            name s.Dio_types.Telemetry_types.count (s.Dio_types.Telemetry_types.mean *. 1000.0) (s.Dio_types.Telemetry_types.p95 *. 1000.0) (s.Dio_types.Telemetry_types.p99 *. 1000.0)
+          |> Lwt.ignore_result
+      ) stats;
+      telemetry_loop ()
+    in
+    telemetry_loop ()
+  );
+  
   Lwt.catch
     (fun () ->
       (** Load configuration from default path *)
@@ -289,6 +307,12 @@ let main () =
 
   (** Configure logging system based on selected mode *)
   setup_logging ();
+
+  (** Initialize telemetry system *)
+  Lwt_main.run (
+    info ~section "Initializing telemetry system" >>= fun () ->
+    Telemetry.init ()
+  );
 
   (** Dashboard mode: Interactive terminal interface with graceful shutdown *)
   if !mode_dash then begin

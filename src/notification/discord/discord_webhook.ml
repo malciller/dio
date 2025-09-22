@@ -90,7 +90,7 @@ let make_order_embed (payload: fill_notification_payload) =
 (** Create Discord embed JSON for balance update notifications *)
 let make_balance_embed (payload: balance_notification_payload) =
   (* Filter out zero or very small balances and exclude stock assets *)
-  let excluded_assets = ["QQQ.EQ"; "SCHD.EQ"; "VTI.EQ"] in
+  let excluded_assets = ["QQQ.EQ"; "SCHD.EQ"; "VTI.EQ"; "QQQ"; "SCHD"; "VTI"] in
   let significant_balances = payload.balances
     |> List.filter (fun (asset, balance) ->
          balance >= 0.00001 && not (List.mem asset excluded_assets)

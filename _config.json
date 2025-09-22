@@ -16,7 +16,7 @@
     },
     {
       "symbol": "SOL/USD",
-      "qty": "0.046",
+      "qty": "0.05",
       "grid_interval": "0.75",
       "sell_mult": "0.999",
       "strategy": "Grid"

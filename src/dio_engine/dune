@@ -1,13 +1,12 @@
 (library
  (name engine)
  (public_name dio.engine)
- (modules engine supervisor feed router)
+ (modules telemetry engine supervisor feed router)
  (libraries
   dio.dio_types
   lwt
   yojson
   cohttp-lwt-unix
-  cmdliner
   dio.exchange.kraken
   dio.notification.discord_webhook)
  (preprocess

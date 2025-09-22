@@ -5,6 +5,7 @@
 
 open Lwt.Infix
 open Dio_types
+open Telemetry
 
 (** WebSocket interface for exchange connectivity.
     Defines the contract for streaming market data and order events. *)
@@ -34,29 +35,116 @@ module Make (W : WS) = struct
 
   (** Start market data feed with automatic reconnection on failures. *)
   let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
+    let component = Dio_types.Telemetry_types.Feed in
+    let tick_counter = ref 0 in
+    let last_tick_count_for_rate = ref 0 in
+    let last_rate_sample_time = ref (Unix.gettimeofday ()) in
+    
+    Lwt.async (fun () -> increment_counter component "connection_initialized" 1);
+
+    let instrumented_on_tick tick =
+      incr tick_counter;
+      Lwt.async (fun () ->
+        increment_counter component "ticks_processed" 1
+      );
+      on_tick tick
+    in
+    
     let rec retry_loop () =
       Lwt.catch
-        (fun () -> W.start ?runtime_cfg cfg ~on_tick)
+        (fun () -> 
+          Lwt.async (fun () -> increment_counter component "connection_attempts" 1);
+          W.start ?runtime_cfg cfg ~on_tick:instrumented_on_tick)
         (fun exn ->
+          Lwt.async (fun () -> increment_counter component "connection_failures" 1);
           Lwt_log_core.error_f ~section "Error starting public feed: %s. Retrying in 5s..." (Printexc.to_string exn) >>= fun () ->
           Lwt_unix.sleep 5.0 >>= fun () ->
           retry_loop ())
     in
+    (* Background sampler for tick rate (ticks per second) *)
+    Lwt.async (fun () ->
+      let rec loop () =
+        Lwt_unix.sleep 1.0 >>= fun () ->
+        let now = Unix.gettimeofday () in
+        let dt = now -. !last_rate_sample_time in
+        let delta = !tick_counter - !last_tick_count_for_rate in
+        if dt > 0.0 then (
+          let rate = (Float.of_int delta) /. dt in
+          Lwt.async (fun () -> record_gauge component "tick_rate" rate)
+        );
+        (* Also record as histogram for better statistical analysis *)
+        if delta > 0 then (
+          let rate = (Float.of_int delta) /. dt in
+          Lwt.async (fun () ->
+            let histogram_values = List.init delta (fun _ -> rate) in
+            record_histogram component "tick_rate_histogram" histogram_values
+          )
+        );
+        last_rate_sample_time := now;
+        last_tick_count_for_rate := !tick_counter;
+        loop ()
+      in
+      loop ()
+    );
     retry_loop ()
 
   (** Start execution feed with automatic reconnection.
       Requires authentication token; logs warning and skips if missing. *)
   let start_executions (cfg : Config.engine_config) ~on_execution =
+    let component = Dio_types.Telemetry_types.Feed in
+    let exec_counter = ref 0 in
+    let last_exec_count_for_rate = ref 0 in
+    let last_exec_rate_sample_time = ref (Unix.gettimeofday ()) in
+    
+    Lwt.async (fun () -> increment_counter component "exec_connection_initialized" 1);
+
+    let instrumented_on_execution executions =
+      let count = List.length executions in
+      exec_counter := !exec_counter + count;
+      Lwt.async (fun () ->
+        increment_counter component "executions_processed" count
+      );
+      on_execution executions
+    in
+    
     match cfg.auth_token with
     | Some _ ->
         let rec retry_loop () =
           Lwt.catch
-            (fun () -> W.start_executions cfg ~on_execution)
+            (fun () -> 
+              Lwt.async (fun () -> increment_counter component "exec_connection_attempts" 1);
+              W.start_executions cfg ~on_execution:instrumented_on_execution)
             (fun exn ->
+              Lwt.async (fun () -> increment_counter component "exec_connection_failures" 1);
               Lwt_log_core.error_f ~section "Error starting execution feed: %s. Retrying in 5s..." (Printexc.to_string exn) >>= fun () ->
               Lwt_unix.sleep 5.0 >>= fun () ->
               retry_loop ())
         in
+        (* Background sampler for execution event rate (events per second) *)
+        Lwt.async (fun () ->
+          let rec loop () =
+            Lwt_unix.sleep 1.0 >>= fun () ->
+            let now = Unix.gettimeofday () in
+            let dt = now -. !last_exec_rate_sample_time in
+            let delta = !exec_counter - !last_exec_count_for_rate in
+            if dt > 0.0 then (
+              let rate = (Float.of_int delta) /. dt in
+              Lwt.async (fun () -> record_gauge component "exec_rate" rate)
+            );
+            (* Also record as histogram for better statistical analysis *)
+            if delta > 0 then (
+              let rate = (Float.of_int delta) /. dt in
+              Lwt.async (fun () ->
+                let histogram_values = List.init delta (fun _ -> rate) in
+                record_histogram component "exec_rate_histogram" histogram_values
+              )
+            );
+            last_exec_rate_sample_time := now;
+            last_exec_count_for_rate := !exec_counter;
+            loop ()
+          in
+          loop ()
+        );
         retry_loop ()
     | None ->
         Lwt_log_core.warning ~section "Auth token not found, skipping execution feed." >>= fun () ->

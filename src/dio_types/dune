@@ -1,7 +1,7 @@
 (library
  (name dio_types)
  (public_name dio.dio_types)
- (modules primitives core event config ringbuffer state transaction_history)
+ (modules primitives core event config ringbuffer state transaction_history telemetry_types)
  (preprocess
   (pps ppx_deriving_yojson lwt_ppx))
  (libraries yojson ppx_deriving_yojson lwt lwt_log))
