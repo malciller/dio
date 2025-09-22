@@ -230,17 +230,19 @@ module State = struct
             let open_sell_qty = get_open_sell_order_qty symbol in
             let qty_to_sell = current_inventory -. open_sell_qty in
 
-            if qty_to_sell > 0.000001 then ( (* Basic dust filter *)
+            if qty_to_sell > 0.00001 then ( (* Basic dust filter *)
+              (* Round down to qty_precision to exclude dust fractions *)
+              let clean_qty = floor (qty_to_sell *. 10.0 ** float_of_int instrument.qty_precision) /. (10.0 ** float_of_int instrument.qty_precision) in
               (match get_price symbol with
               | Some tick ->
                 let sell_price = tick.ask in (* Sell at top of book *)
-                let sell_qty_obj = Primitives.Qty.of_string_exn ~scale:instrument.qty_precision 
-                  (Printf.sprintf "%.*f" instrument.qty_precision qty_to_sell) in
+                let sell_qty_obj = Primitives.Qty.of_string_exn ~scale:instrument.qty_precision
+                  (Printf.sprintf "%.*f" instrument.qty_precision clean_qty) in
                 (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty_obj with
                 | Some sell_cmd ->
                   Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                  info_f ~section "Max exposure reached. Placed consolidated sell order for %s: %.8f at %s"
-                    symbol qty_to_sell (Primitives.Price.to_string sell_price)
+                  info_f ~section "Max exposure reached. Placed consolidated sell order for %s: %.8f (clean: %.8f) at %s"
+                    symbol qty_to_sell clean_qty (Primitives.Price.to_string sell_price)
                 | None ->
                   error_f ~section "Failed to create consolidated sell order for %s" symbol)
               | None ->

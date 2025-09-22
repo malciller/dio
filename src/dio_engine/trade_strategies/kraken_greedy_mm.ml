@@ -117,13 +117,15 @@ module State = struct
                     info_f ~section "Available balance for %s: total=%.8f, in_orders=%.8f, available=%.8f"
                       base_currency total_balance balance_in_orders available_balance >>= fun () ->
 
-                    if available_balance > 0.00000001 then (
-                      info_f ~section "Found %.8f of %s to sell before pausing (spot: %.8f, liquid: %.8f)." 
-                        available_balance base_currency spot_bal liquid_bal >>= fun () ->
+                    if available_balance > 0.00001 then (
+                      (* Round down to qty_precision to exclude dust fractions *)
+                      let clean_qty = floor (available_balance *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
+                      info_f ~section "Found %.8f of %s to sell before pausing (spot: %.8f, liquid: %.8f). Clean qty: %.8f"
+                        available_balance base_currency spot_bal liquid_bal clean_qty >>= fun () ->
                       (match get_price symbol with
                       | Some tick ->
                           let sell_price = tick.ask in
-                          let qty_str = Printf.sprintf "%.*f" qty_prec available_balance in
+                          let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
                           let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
                           let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
                           (match sell_order with
