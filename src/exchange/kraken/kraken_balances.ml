@@ -18,7 +18,7 @@ let balance_update_queue : (string * Yojson.Safe.t) Ringbuffer.t = Ringbuffer.cr
 (** Ringbuffer for ordered fill event processing *)
 let fill_event_queue : Event.fill Ringbuffer.t = Ringbuffer.create 1000
 
-let section = Section.make "kraken.balances"
+let section = Section.make "kraken_balances"
 
 (** Balance storage by wallet type *)
 let spot_balances : (string, float) Hashtbl.t = Hashtbl.create(16)

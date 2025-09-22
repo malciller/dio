@@ -15,7 +15,7 @@ open Dio_types
 open State
 open Discord_webhook
 
-let section = Lwt_log_core.Section.make "kraken_ws_feed"
+let section = Lwt_log_core.Section.make "kraken_incoming_data"
 
 (** Extract orderbook symbols from runtime configuration for arbitrage trading. *)
 let get_orderbook_symbols (runtime_cfg : Config.runtime_cfg) : string list =
@@ -819,7 +819,7 @@ let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
             Lwt.return_unit)
           (fun _ -> Lwt.return_unit) >>= fun () ->
         (* Re-throw the exception so Feed.start's retry loop will handle it *)
-        Lwt.fail exn)
+        Lwt.fail (Failure (Printexc.to_string exn)))
   in
   connect cfg false >>= fun conn ->
   let subscribe_ticker_msg = make_subscribe_message ~req_id:1 cfg `Ticker in
@@ -863,7 +863,7 @@ let start_executions (cfg : Config.engine_config) ~on_execution =
                 Lwt.return_unit)
               (fun _ -> Lwt.return_unit) >>= fun () ->
             (* Re-throw the exception so Feed.start_executions's retry loop will handle it *)
-            Lwt.fail ex
+            Lwt.fail (Failure (Printexc.to_string ex))
           )
       in
       Lwt.catch 
@@ -881,5 +881,5 @@ let start_executions (cfg : Config.engine_config) ~on_execution =
         )
         (fun ex -> 
           Lwt_log_core.error_f ~section "Failed to connect/subscribe to auth endpoint: %s" (Printexc.to_string ex) >>= fun () ->
-          Lwt.fail ex
+          Lwt.fail (Failure (Printexc.to_string ex))
         )

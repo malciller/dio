@@ -9,7 +9,7 @@ open Dio_types
 open Lwt_log_core
 open Lwt.Infix
 
-let section = Section.make "kraken_nonce"
+let section = Section.make "kraken_common_types"
 
 (** Channel subscription parameters for Kraken WebSocket feeds *)
 type channel_params =

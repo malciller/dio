@@ -17,7 +17,7 @@ open Lwt_log_core
 let endpoint = "https://api.kraken.com"
 
 (** Logging section for auth token operations *)
-let section = Section.make "kraken.auth_token"
+let section = Section.make "kraken_generate_auth_token"
 
 (** Loads environment variables from .env file.
 

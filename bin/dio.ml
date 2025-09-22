@@ -28,7 +28,7 @@ let setup_logging () =
   (** Set base log levels for all sections *)
   Lwt_log.add_rule "*" Error;
   Lwt_log.add_rule "*" Warning;
-  (*Lwt_log.add_rule "*" Info;  *)
+  Lwt_log.add_rule "*" Info;  
   
 
   (** Create logger based on execution mode *)
@@ -91,8 +91,8 @@ let setup_logging () =
   default := default_logger;
 
   (** Additional section-specific log level rules can be added here *)
-    Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; 
-    Lwt_log.add_rule "engine.strategy.kraken.VMM" Info; 
+    (*Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; 
+    Lwt_log.add_rule "engine.strategy.kraken.VMM" Info; *)
 
   
   ()

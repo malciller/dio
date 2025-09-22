@@ -160,7 +160,7 @@ let log_top_of_book_update (symbol: string) (sorted_bids: price_level list) (sor
     
     if should_log then (
       Hashtbl.replace previous_top_of_book symbol current_top;
-      info_f ~section
+      debug_f ~section
         "Top-of-book update for %s: bid=%.8f@%.8f ask=%.8f@%.8f spread=%.8f"
            symbol top_bid.price top_bid.qty top_ask.price top_ask.qty (top_ask.price -. top_bid.price)
     ) else

@@ -29,7 +29,7 @@ let float_of_qty qty =
  * @param on_event Callback for order acknowledgment events
  *)
 let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_event : unit Lwt.t =
-  let section = Lwt_log_core.Section.make "kraken_rest_exec" in 
+  let section = Lwt_log_core.Section.make "kraken_outgoing_data" in 
   match cmd with
   | Add { symbol; side; price; qty; client_id; _ } -> 
       Lwt_log_core.debug ~section (Printf.sprintf "Processing REST Add Order for client_id: %s" client_id) >>= fun () ->
