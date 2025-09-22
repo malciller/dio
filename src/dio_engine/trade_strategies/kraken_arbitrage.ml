@@ -10,6 +10,7 @@
 open Lwt.Infix
 open Dio_types
 open Lwt_log_core
+open Telemetry
 
 
 let section = Section.make "engine.strategy.kraken.arbitrage"
@@ -759,12 +760,23 @@ let execute_arbitrage_cycle cycle graph cmd_buffer exec_buffer =
   in
 
   execute_legs 0 cycle.bottleneck_volume 1.0 >>= fun success ->
-  (if success then
-    info_f ~section "Cycle %s completed successfully" (String.concat " -> " cycle.path)
-  else
-    warning_f ~section "Cycle %s failed or was cancelled" (String.concat " -> " cycle.path)
-  ) >>= fun () ->
-  Lwt.return success
+    let total_duration = Unix.time () -. cycle_exec.start_time in
+
+    (* Record telemetry for cycle execution *)
+    Lwt.async (fun () ->
+      record_timer ["strategy"; "arbitrage"] "cycle_execution_duration" total_duration >>= fun () ->
+      record_counter ["strategy"; "arbitrage"] "cycles_executed" 1 >>= fun () ->
+      record_gauge ["strategy"; "arbitrage"] "cycle_success_rate" (if success then 1.0 else 0.0) >>= fun () ->
+      record_gauge ["strategy"; "arbitrage"] "cycle_profit_pct" cycle.profit_pct >>= fun () ->
+      record_gauge ["strategy"; "arbitrage"] "cycle_volume" cycle.bottleneck_volume
+    );
+
+    (if success then
+      info_f ~section "Cycle %s completed successfully in %.2fs" (String.concat " -> " cycle.path) total_duration
+    else
+      warning_f ~section "Cycle %s failed or was cancelled after %.2fs" (String.concat " -> " cycle.path) total_duration
+    ) >>= fun () ->
+    Lwt.return success
 
 let cancel_pending_orders cycle_exec cmd_buffer =
   Lwt_list.iter_s (fun order_state ->
@@ -800,6 +812,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
   initialize_cached_graph active_symbols >>= fun () ->
 
   let rec arbitrage_loop () =
+    let loop_start_time = Unix.time () in
     update_changed_edges active_symbols >>= fun () ->
 
     let graph = get_cached_graph () in
@@ -849,6 +862,19 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
     )) >>= fun () ->
 
     let sleep_time = if Hashtbl.length dirty_symbols = 0 then 5.0 else 1.0 in
+
+    (* Record telemetry for this iteration *)
+    let loop_duration = Unix.time () -. loop_start_time in
+    let cycles_found = List.length cycles in
+    let _cycles_executed = ref 0 in
+
+    Lwt.async (fun () ->
+      record_timer ["strategy"; "arbitrage"] "loop_duration" loop_duration >>= fun () ->
+      record_counter ["strategy"; "arbitrage"] "iterations" 1 >>= fun () ->
+      record_gauge ["strategy"; "arbitrage"] "cycles_per_iteration" (Float.of_int cycles_found) >>= fun () ->
+      record_gauge ["strategy"; "arbitrage"] "active_cycles" (Float.of_int !active_cycles)
+    );
+
     Lwt_unix.sleep sleep_time >>= fun () ->
     arbitrage_loop ()
   in

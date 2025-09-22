@@ -8,12 +8,23 @@ open Lwt.Infix
 
 let section = Lwt_log_core.Section.make "dio_types.ringbuffer"
 
-(** Ringbuffer type parameterized by element type 'a.
-    - buf: Underlying array storing optional values (None = empty slot)
-    - mask: Bitmask for efficient circular indexing (capacity - 1)
-    - head/tail: Producer/consumer indices
-    - mutex: Protects concurrent access
-    - not_full/not_empty: Condition variables for blocking operations *)
+(** Telemetry interface - functions that can be set by external modules *)
+let telemetry_record_timer = ref (fun _ _ _ -> Lwt.return_unit)
+let telemetry_record_counter = ref (fun _ _ _ -> Lwt.return_unit)
+let telemetry_record_gauge = ref (fun _ _ _ -> Lwt.return_unit)
+
+(** Set telemetry functions from external modules *)
+let set_telemetry_functions record_timer record_counter record_gauge =
+  telemetry_record_timer := record_timer;
+  telemetry_record_counter := record_counter;
+  telemetry_record_gauge := record_gauge
+
+(** Module interface to expose telemetry setup *)
+module TelemetryInterface = struct
+  let set_functions = set_telemetry_functions
+end
+
+(** Enhanced ringbuffer with telemetry collection *)
 type 'a t = {
   buf       : 'a option array;
   mask      : int;
@@ -22,6 +33,8 @@ type 'a t = {
   mutex     : Lwt_mutex.t;
   not_full  : unit Lwt_condition.t;
   not_empty : unit Lwt_condition.t;
+  name      : string;  (** Buffer identifier for telemetry *)
+  capacity  : int;     (** Actual capacity (power of 2) *)
 }
 
 (** Rounds up to the nearest power of 2 for efficient circular indexing. *)
@@ -31,7 +44,7 @@ let round_pow2 n =
 
 (** Creates a new ringbuffer with the specified minimum capacity.
     Capacity will be rounded up to the nearest power of 2. *)
-let create cap =
+let create ?(name="ringbuffer") cap =
   let cap = round_pow2 cap in
   {
     buf       = Array.make cap None;
@@ -41,24 +54,41 @@ let create cap =
     mutex     = Lwt_mutex.create ();
     not_full  = Lwt_condition.create ();
     not_empty = Lwt_condition.create ();
+    name      = name;
+    capacity  = cap;
   }
 
 (** Returns the current number of elements in the ringbuffer. *)
 let length q = q.head - q.tail
 
+(** Returns the current fill percentage of the ringbuffer. *)
+let fill_percentage q =
+  let len = length q in
+  let cap = q.capacity in
+  if cap = 0 then 0.0 else (Float.of_int len /. Float.of_int cap) *. 100.0
+
 (** Returns true if the ringbuffer is at maximum capacity. *)
-let is_full q  = length q = Array.length q.buf
+let is_full q  = length q = q.capacity
 
 (** Returns true if the ringbuffer contains no elements. *)
 let is_empty q = q.head = q.tail
 
+(** Record queue depth gauge *)
+let record_depth q =
+  let depth = length q in
+  let fill_pct = fill_percentage q in
+  !telemetry_record_gauge ["ringbuffer"; q.name] "depth" (Float.of_int depth) >>= fun () ->
+  !telemetry_record_gauge ["ringbuffer"; q.name] "fill_percentage" fill_pct
+
 (** Adds an element to the ringbuffer. Blocks if buffer is full.
     Thread-safe and signals waiting consumers when data becomes available. *)
 let push q v =
+  let start_time = Unix.gettimeofday () in
   Lwt_mutex.with_lock q.mutex (fun () ->
     let rec wait_if_full () =
       if is_full q then (
-        Lwt_log_core.debug_f ~section "Ringbuffer full, waiting to push." >>= fun () -> 
+        Lwt.async (fun () -> !telemetry_record_counter ["ringbuffer"; q.name] "buffer_full" 1);
+        Lwt_log_core.debug_f ~section "Ringbuffer %s full, waiting to push." q.name >>= fun () ->
         Lwt_condition.wait ~mutex:q.mutex q.not_full >>= wait_if_full
       ) else
         Lwt.return_unit
@@ -67,17 +97,29 @@ let push q v =
     q.buf.(q.head land q.mask) <- Some v;
     q.head <- q.head + 1;
     Lwt_condition.signal q.not_empty ();
-    Lwt_log_core.debug_f ~section "Pushed item to ringbuffer, signaling not_empty." |> Lwt.ignore_result; 
+
+    (* Record telemetry *)
+    let duration = Unix.gettimeofday () -. start_time in
+    Lwt.async (fun () ->
+      !telemetry_record_timer ["ringbuffer"; q.name] "push_duration" duration >>= fun () ->
+      !telemetry_record_counter ["ringbuffer"; q.name] "push_operations" 1 >>= fun () ->
+      record_depth q >>= fun () ->
+      Lwt.return_unit
+    );
+
+    Lwt_log_core.debug_f ~section "Pushed item to ringbuffer %s, signaling not_empty." q.name |> Lwt.ignore_result;
     Lwt.return_unit
   )
 
 (** Removes and returns the oldest element from the ringbuffer. Blocks if buffer is empty.
     Thread-safe and signals waiting producers when space becomes available. *)
 let pop q =
+  let start_time = Unix.gettimeofday () in
   Lwt_mutex.with_lock q.mutex (fun () ->
     let rec wait_if_empty () =
       if is_empty q then (
-        Lwt_log_core.debug_f ~section "Ringbuffer empty, waiting to pop." >>= fun () -> 
+        Lwt.async (fun () -> !telemetry_record_counter ["ringbuffer"; q.name] "buffer_empty" 1);
+        Lwt_log_core.debug_f ~section "Ringbuffer %s empty, waiting to pop." q.name >>= fun () ->
         Lwt_condition.wait ~mutex:q.mutex q.not_empty >>= wait_if_empty
       ) else
         Lwt.return_unit
@@ -93,6 +135,16 @@ let pop q =
         q.buf.(idx) <- None;
         q.tail <- q.tail + 1;
         Lwt_condition.signal q.not_full ();
-        Lwt_log_core.debug_f ~section "Popped item from ringbuffer, signaling not_full." |> Lwt.ignore_result; 
+
+        (* Record telemetry *)
+        let duration = Unix.gettimeofday () -. start_time in
+        Lwt.async (fun () ->
+          !telemetry_record_timer ["ringbuffer"; q.name] "pop_duration" duration >>= fun () ->
+          !telemetry_record_counter ["ringbuffer"; q.name] "pop_operations" 1 >>= fun () ->
+          record_depth q >>= fun () ->
+          Lwt.return_unit
+        );
+
+        Lwt_log_core.debug_f ~section "Popped item from ringbuffer %s, signaling not_full." q.name |> Lwt.ignore_result;
         Lwt.return v
   )

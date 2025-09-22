@@ -7,6 +7,11 @@ open Lwt_log_core
 open Dio_types
 open Dio_types.Core
 
+(** Ringbuffer telemetry interface for this module *)
+module RingbufferTelemetryInterface = struct
+  let set_functions = Ringbuffer.TelemetryInterface.set_functions [@@warning "-32"]
+end
+
 
 (** Get formatted server time as MM/DD/YYYY HH:MM:SS *)
 let get_formatted_server_time () =
@@ -40,7 +45,7 @@ type notification_payload =
   | Balance of balance_notification_payload (** Balance update notification *)
 
 let section = Section.make "notification.discord"  
-let message_queue : notification_payload Ringbuffer.t = Ringbuffer.create 100
+let message_queue : notification_payload Ringbuffer.t = Ringbuffer.create ~name:"discord_message_queue" 100
 let logged_no_url = ref false  
 let start_promise : unit Lwt.t option ref = ref None  (** Ensure start is idempotent *)
 

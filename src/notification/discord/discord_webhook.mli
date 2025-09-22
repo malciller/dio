@@ -28,4 +28,9 @@ val get_message_queue_for_test : unit -> notification_payload Ringbuffer.t
     NOTE: This is intended for testing purposes only. *)
 
 val start : (Config.engine_config -> (string, float) Hashtbl.t Lwt.t) -> Config.engine_config -> unit Lwt.t
-(** [start balance_fetcher cfg] starts the Discord webhook worker and balance scheduler with the given balance fetcher and configuration. *)    
+(** [start balance_fetcher cfg] starts the Discord webhook worker and balance scheduler with the given balance fetcher and configuration. *)
+
+(** Ringbuffer telemetry interface for this module *)
+module RingbufferTelemetryInterface : sig
+  val set_functions : (Telemetry_types.component_path -> string -> float -> unit Lwt.t) -> (Telemetry_types.component_path -> string -> int -> unit Lwt.t) -> (Telemetry_types.component_path -> string -> float -> unit Lwt.t) -> unit
+end

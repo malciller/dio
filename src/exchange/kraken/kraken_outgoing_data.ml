@@ -1,14 +1,19 @@
 (**
- * Kraken REST API client for outgoing order commands.
- *
- * This module handles the execution of trading commands (Add, Amend, Cancel) against
- * Kraken's REST API endpoints. It manages authentication, request formatting,
- * response parsing, and event notification for order lifecycle management.
- *)
+     * Kraken REST API client for outgoing order commands.
+     *
+     * This module handles the execution of trading commands (Add, Amend, Cancel) against
+     * Kraken's REST API endpoints. It manages authentication, request formatting,
+     * response parsing, and event notification for order lifecycle management.
+     *)
 
 open Lwt.Infix
 open Dio_types
 open Cohttp_lwt_unix
+
+(** Ringbuffer telemetry interface for this module *)
+module RingbufferTelemetryInterface = struct
+  let set_functions = Ringbuffer.TelemetryInterface.set_functions
+end
 
 (** Convert internal Price type to float for API transmission *)
 let float_of_price price =
@@ -29,9 +34,12 @@ let float_of_qty qty =
  * @param on_event Callback for order acknowledgment events
  *)
 let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_event : unit Lwt.t =
-  let section = Lwt_log_core.Section.make "kraken_outgoing_data" in 
+  let section = Lwt_log_core.Section.make "kraken_outgoing_data" in
+  let start_time = Unix.gettimeofday () in
+  (* Record total orders sent *)
+  Lwt.async (fun () -> !Ringbuffer.telemetry_record_counter ["exchange"; "kraken"] "orders_sent" 1);
   match cmd with
-  | Add { symbol; side; price; qty; client_id; _ } -> 
+  | Add { symbol; side; price; qty; client_id; _ } ->
       Lwt_log_core.debug ~section (Printf.sprintf "Processing REST Add Order for client_id: %s" client_id) >>= fun () ->
       let api_path = "/0/private/AddOrder" in
       let api_host = "api.kraken.com" in 
@@ -90,22 +98,50 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
           let error_msgs = String.concat "; " (List.map Yojson.Safe.Util.to_string errors) in
           Lwt_log_core.error ~section (Printf.sprintf "REST AddOrder failed for client_id %s: %s" truncated_client_id error_msgs) >>= fun () ->
           let ack = Core.Ack { order_id = "ERROR_" ^ truncated_client_id; client_id = truncated_client_id; state = Core.Rejected; ts } in
+          (* Record telemetry for failed order *)
+          Lwt.async (fun () ->
+            let duration = Unix.gettimeofday () -. start_time in
+            !Ringbuffer.telemetry_record_timer ["exchange"; "kraken"] "order_submission_latency" duration >>= fun () ->
+            !Ringbuffer.telemetry_record_counter ["exchange"; "kraken"] "orders_failed" 1 >>= fun () ->
+            !Ringbuffer.telemetry_record_gauge ["exchange"; "kraken"] "error_rate" 1.0
+          );
           on_event ack
         else
           match Yojson.Safe.Util.(member "result" json |> member "txid" |> to_list |> List.map Yojson.Safe.Util.to_string_option) with
           | (Some kraken_order_id) :: _ ->
               Lwt_log_core.info ~section (Printf.sprintf "REST AddOrder successful for client_id %s. Kraken Order ID: %s" truncated_client_id kraken_order_id) >>= fun () ->
               let ack = Core.Ack { order_id = kraken_order_id; client_id = truncated_client_id; state = Core.Open; ts } in
+              (* Record telemetry for successful order *)
+              Lwt.async (fun () ->
+                let duration = Unix.gettimeofday () -. start_time in
+                !Ringbuffer.telemetry_record_timer ["exchange"; "kraken"] "order_submission_latency" duration >>= fun () ->
+                !Ringbuffer.telemetry_record_counter ["exchange"; "kraken"] "orders_successful" 1 >>= fun () ->
+                !Ringbuffer.telemetry_record_gauge ["exchange"; "kraken"] "error_rate" 0.0
+              );
               on_event ack
           | _ ->
               Lwt_log_core.error ~section (Printf.sprintf "REST AddOrder: txid not found or invalid in response for client_id %s. Body: %s" truncated_client_id body_str) >>= fun () ->
               let ack = Core.Ack { order_id = "ERROR_NO_TXID_" ^ truncated_client_id; client_id = truncated_client_id; state = Core.Rejected; ts } in
+              (* Record telemetry for failed order *)
+              Lwt.async (fun () ->
+                let duration = Unix.gettimeofday () -. start_time in
+                !Ringbuffer.telemetry_record_timer ["exchange"; "kraken"] "order_submission_latency" duration >>= fun () ->
+                !Ringbuffer.telemetry_record_counter ["exchange"; "kraken"] "orders_failed" 1 >>= fun () ->
+                !Ringbuffer.telemetry_record_gauge ["exchange"; "kraken"] "error_rate" 1.0
+              );
               on_event ack
       ) (fun ex ->
         let err_msg = Printexc.to_string ex in
         Lwt_log_core.error ~section (Printf.sprintf "Exception during REST AddOrder for client_id %s: %s" truncated_client_id err_msg) >>= fun () ->
         let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
         let ack = Core.Ack { order_id = "EXCEPTION_" ^ truncated_client_id; client_id = truncated_client_id; state = Core.Rejected; ts } in
+        (* Record telemetry for exception *)
+        Lwt.async (fun () ->
+          let duration = Unix.gettimeofday () -. start_time in
+          !Ringbuffer.telemetry_record_timer ["exchange"; "kraken"] "order_submission_latency" duration >>= fun () ->
+          !Ringbuffer.telemetry_record_counter ["exchange"; "kraken"] "orders_failed" 1 >>= fun () ->
+          !Ringbuffer.telemetry_record_gauge ["exchange"; "kraken"] "error_rate" 1.0
+        );
         on_event ack
       )
 

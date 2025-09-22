@@ -5,7 +5,6 @@
 
 open Lwt.Infix
 open Dio_types
-open Telemetry
 
 (** WebSocket interface for exchange connectivity.
     Defines the contract for streaming market data and order events. *)
@@ -35,17 +34,19 @@ module Make (W : WS) = struct
 
   (** Start market data feed with automatic reconnection on failures. *)
   let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
-    let component = Dio_types.Telemetry_types.Feed in
     let tick_counter = ref 0 in
     let last_tick_count_for_rate = ref 0 in
     let last_rate_sample_time = ref (Unix.gettimeofday ()) in
     
-    Lwt.async (fun () -> increment_counter component "connection_initialized" 1);
+    Lwt.async (fun () -> Telemetry.record_counter ["feed"] "connection_initialized" 1);
 
     let instrumented_on_tick tick =
+      let start_time = Unix.gettimeofday () in
       incr tick_counter;
       Lwt.async (fun () ->
-        increment_counter component "ticks_processed" 1
+        Telemetry.record_counter ["feed"] "ticks_processed" 1 >>= fun () ->
+        let processing_time = Unix.gettimeofday () -. start_time in
+        Telemetry.record_timer ["feed"] "tick_processing_duration" processing_time
       );
       on_tick tick
     in
@@ -53,10 +54,10 @@ module Make (W : WS) = struct
     let rec retry_loop () =
       Lwt.catch
         (fun () -> 
-          Lwt.async (fun () -> increment_counter component "connection_attempts" 1);
+          Lwt.async (fun () -> Telemetry.record_counter ["feed"] "connection_attempts" 1);
           W.start ?runtime_cfg cfg ~on_tick:instrumented_on_tick)
         (fun exn ->
-          Lwt.async (fun () -> increment_counter component "connection_failures" 1);
+          Lwt.async (fun () -> Telemetry.record_counter ["feed"] "connection_failures" 1);
           Lwt_log_core.error_f ~section "Error starting public feed: %s. Retrying in 5s..." (Printexc.to_string exn) >>= fun () ->
           Lwt_unix.sleep 5.0 >>= fun () ->
           retry_loop ())
@@ -70,14 +71,14 @@ module Make (W : WS) = struct
         let delta = !tick_counter - !last_tick_count_for_rate in
         if dt > 0.0 then (
           let rate = (Float.of_int delta) /. dt in
-          Lwt.async (fun () -> record_gauge component "tick_rate" rate)
+          Lwt.async (fun () -> Telemetry.record_gauge ["feed"] "tick_rate" rate)
         );
         (* Also record as histogram for better statistical analysis *)
         if delta > 0 then (
           let rate = (Float.of_int delta) /. dt in
           Lwt.async (fun () ->
             let histogram_values = List.init delta (fun _ -> rate) in
-            record_histogram component "tick_rate_histogram" histogram_values
+            Telemetry.record_histogram ["feed"] "tick_rate_histogram" histogram_values
           )
         );
         last_rate_sample_time := now;
@@ -91,18 +92,20 @@ module Make (W : WS) = struct
   (** Start execution feed with automatic reconnection.
       Requires authentication token; logs warning and skips if missing. *)
   let start_executions (cfg : Config.engine_config) ~on_execution =
-    let component = Dio_types.Telemetry_types.Feed in
     let exec_counter = ref 0 in
     let last_exec_count_for_rate = ref 0 in
     let last_exec_rate_sample_time = ref (Unix.gettimeofday ()) in
     
-    Lwt.async (fun () -> increment_counter component "exec_connection_initialized" 1);
+    Lwt.async (fun () -> Telemetry.record_counter ["feed"] "exec_connection_initialized" 1);
 
     let instrumented_on_execution executions =
       let count = List.length executions in
+      let start_time = Unix.gettimeofday () in
       exec_counter := !exec_counter + count;
       Lwt.async (fun () ->
-        increment_counter component "executions_processed" count
+        Telemetry.record_counter ["feed"] "executions_processed" count >>= fun () ->
+        let processing_time = Unix.gettimeofday () -. start_time in
+        Telemetry.record_timer ["feed"] "execution_processing_duration" processing_time
       );
       on_execution executions
     in
@@ -112,10 +115,10 @@ module Make (W : WS) = struct
         let rec retry_loop () =
           Lwt.catch
             (fun () -> 
-              Lwt.async (fun () -> increment_counter component "exec_connection_attempts" 1);
+              Lwt.async (fun () -> Telemetry.record_counter ["feed"] "exec_connection_attempts" 1);
               W.start_executions cfg ~on_execution:instrumented_on_execution)
             (fun exn ->
-              Lwt.async (fun () -> increment_counter component "exec_connection_failures" 1);
+              Lwt.async (fun () -> Telemetry.record_counter ["feed"] "exec_connection_failures" 1);
               Lwt_log_core.error_f ~section "Error starting execution feed: %s. Retrying in 5s..." (Printexc.to_string exn) >>= fun () ->
               Lwt_unix.sleep 5.0 >>= fun () ->
               retry_loop ())
@@ -129,14 +132,14 @@ module Make (W : WS) = struct
             let delta = !exec_counter - !last_exec_count_for_rate in
             if dt > 0.0 then (
               let rate = (Float.of_int delta) /. dt in
-              Lwt.async (fun () -> record_gauge component "exec_rate" rate)
+              Lwt.async (fun () -> Telemetry.record_gauge ["feed"] "exec_rate" rate)
             );
             (* Also record as histogram for better statistical analysis *)
             if delta > 0 then (
               let rate = (Float.of_int delta) /. dt in
               Lwt.async (fun () ->
                 let histogram_values = List.init delta (fun _ -> rate) in
-                record_histogram component "exec_rate_histogram" histogram_values
+                Telemetry.record_histogram ["feed"] "exec_rate_histogram" histogram_values
               )
             );
             last_exec_rate_sample_time := now;

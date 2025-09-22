@@ -5,6 +5,7 @@
 
 open Lwt.Infix
 open Dio_types
+open Telemetry
 
 
 (** Supervises a fiber with automatic restart on failure.
@@ -13,15 +14,35 @@ open Dio_types
     for failed components. Normal exits restart after 1s, failures after 5s. *)
 let supervise name fiber_fun =
   let section = Lwt_log_core.Section.make ("engine.supervisor." ^ name) in
+  let restart_count = ref 0 in
+  let start_time = Unix.gettimeofday () in
+
   let rec loop () =
     Lwt.catch
       (fun () ->
         Lwt_log_core.info ~section ("Starting component: " ^ name) >>= fun () ->
+        (* Record component health *)
+        Lwt.async (fun () ->
+          record_gauge ["system"; "supervisor"] (name ^ "_health") 1.0 >>= fun () ->
+          record_gauge ["system"; "supervisor"] (name ^ "_uptime") (Unix.gettimeofday () -. start_time)
+        );
         fiber_fun () >>= fun () ->
+        (* Component exited normally *)
+        Lwt.async (fun () ->
+          record_gauge ["system"; "supervisor"] (name ^ "_health") 0.0 >>= fun () ->
+          record_counter ["system"; "supervisor"] (name ^ "_normal_exits") 1
+        );
         Lwt_log_core.warning ~section ("Component exited normally: " ^ name) >>= fun () ->
-        Lwt_unix.sleep 1.0 >>= loop 
+        Lwt_unix.sleep 1.0 >>= loop
       )
       (fun exn ->
+        (* Component failed *)
+        incr restart_count;
+        Lwt.async (fun () ->
+          record_gauge ["system"; "supervisor"] (name ^ "_health") 0.0 >>= fun () ->
+          record_counter ["system"; "supervisor"] (name ^ "_failures") 1 >>= fun () ->
+          record_gauge ["system"; "supervisor"] (name ^ "_restart_count") (Float.of_int !restart_count)
+        );
         Lwt_log_core.error ~section
           (Printf.sprintf "Component %s failed: %s. Restarting in 5s..." name (Printexc.to_string exn)) >>= fun () ->
         Lwt_unix.sleep 5.0 >>= loop

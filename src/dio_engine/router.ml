@@ -8,6 +8,11 @@ open Lwt.Infix
 open Dio_types
 open Lwt_log_core
 
+(** Ringbuffer telemetry interface for this module *)
+module RingbufferTelemetryInterface = struct
+  let set_functions = Ringbuffer.TelemetryInterface.set_functions
+end
+
 (** Standard response format for order operations *)
 type order_response = {
   success: bool;
@@ -56,7 +61,7 @@ end
 
 (** Kraken exchange handler for routing trading commands *)
 module KrakenHandler = struct
-  let kraken_cmd_queue = Ringbuffer.create 1000
+  let kraken_cmd_queue = Ringbuffer.create ~name:"kraken_cmd_queue" 1000
 
   (** Queue command for Kraken processing *)
   let handle_order _cfg _exec_buffer cmd =
@@ -91,15 +96,14 @@ end
 
 (** Initialize router with command and execution buffers *)
 let start cfg ~cmd_buffer ~exec_buffer =
-  let component = Telemetry_types.Router in
   Lwt.async (KrakenHandler.process_kraken_commands cfg exec_buffer);
   let rec cmd_loop () =
     OrderCache.cleanup ();
     let start_time = Unix.gettimeofday () in
     Ringbuffer.pop cmd_buffer >>= fun cmd ->
-    Lwt.async (fun () -> Telemetry.increment_counter component "commands_processed" 1);
+    Lwt.async (fun () -> Telemetry.record_counter ["router"] "commands_processed" 1);
     if OrderCache.is_duplicate cmd then (
-      Lwt.async (fun () -> Telemetry.increment_counter component "duplicate_commands" 1);
+      Lwt.async (fun () -> Telemetry.record_counter ["router"] "duplicate_commands" 1);
       debug_f ~section:(Lwt_log_core.Section.make "engine.router")
         "Dropping duplicate order: %s"
           (match cmd with
@@ -138,17 +142,17 @@ let start cfg ~cmd_buffer ~exec_buffer =
             | "kraken" ->
                 KrakenHandler.handle_order cfg exec_buffer cmd >>= fun () ->
                 let duration = Unix.gettimeofday () -. start_time in
-                Lwt.async (fun () -> Telemetry.record_timer component "command_processing_time" duration);
+                Lwt.async (fun () -> Telemetry.record_timer ["router"] "command_processing_time" duration);
                 Lwt.return_unit
             | _ ->
-                Lwt.async (fun () -> Telemetry.increment_counter component "unknown_exchange" 1);
+                Lwt.async (fun () -> Telemetry.record_counter ["router"] "unknown_exchange" 1);
                 error_f ~section:(Lwt_log_core.Section.make "engine.router")
                   "Unknown exchange: %s" dst >>= fun () ->
                 Lwt.return_unit
           in
           Lwt.async (fun () ->
             Lwt.catch handle_cmd (fun ex ->
-              Lwt.async (fun () -> Telemetry.increment_counter component "command_errors" 1);
+              Lwt.async (fun () -> Telemetry.record_counter ["router"] "command_errors" 1);
               error_f ~section:(Lwt_log_core.Section.make "engine.router")
                 "Unhandled exception in command handler: %s" (Printexc.to_string ex) >>= fun () ->
               Lwt.return_unit

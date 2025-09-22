@@ -9,14 +9,19 @@ open Lwt.Infix
 open Lwt_log_core
 open Dio_types
 
+(** Ringbuffer telemetry interface for this module *)
+module RingbufferTelemetryInterface = struct
+  let set_functions = Ringbuffer.TelemetryInterface.set_functions
+end
+
 (** Mutex for balance state synchronization *)
 let balance_mutex = Lwt_mutex.create ()
 
 (** Ringbuffer for ordered balance update processing *)
-let balance_update_queue : (string * Yojson.Safe.t) Ringbuffer.t = Ringbuffer.create 1000
+let balance_update_queue : (string * Yojson.Safe.t) Ringbuffer.t = Ringbuffer.create ~name:"balance_update_queue" 1000
 
 (** Ringbuffer for ordered fill event processing *)
-let fill_event_queue : Event.fill Ringbuffer.t = Ringbuffer.create 1000
+let fill_event_queue : Event.fill Ringbuffer.t = Ringbuffer.create ~name:"fill_event_queue" 1000
 
 let section = Section.make "kraken_balances"
 
@@ -34,6 +39,28 @@ let balances_initialized = Lwt_condition.create ()
 
 (** Flag indicating if balances have been initialized from WebSocket *)
 let balances_ready = ref false
+
+(** Trading performance tracking *)
+let orders_filled = ref 0
+let orders_partially_filled = ref 0
+let orders_not_filled = ref 0
+let total_fill_ratio = ref 0.0
+let total_pnl = ref 0.0
+let realized_pnl = ref 0.0
+
+(** Record trading performance metrics *)
+let record_trading_performance () =
+  let total_orders = !orders_filled + !orders_partially_filled + !orders_not_filled in
+  let fill_rate = if total_orders > 0 then Float.of_int !orders_filled /. Float.of_int total_orders else 0.0 in
+  let partial_fill_rate = if total_orders > 0 then Float.of_int !orders_partially_filled /. Float.of_int total_orders else 0.0 in
+
+  !Ringbuffer.telemetry_record_gauge ["trading"; "performance"] "fill_rate" fill_rate >>= fun () ->
+  !Ringbuffer.telemetry_record_gauge ["trading"; "performance"] "partial_fill_rate" partial_fill_rate >>= fun () ->
+  !Ringbuffer.telemetry_record_gauge ["trading"; "performance"] "total_pnl" !total_pnl >>= fun () ->
+  !Ringbuffer.telemetry_record_gauge ["trading"; "performance"] "realized_pnl" !realized_pnl >>= fun () ->
+  !Ringbuffer.telemetry_record_counter ["trading"; "performance"] "orders_filled" !orders_filled >>= fun () ->
+  !Ringbuffer.telemetry_record_counter ["trading"; "performance"] "orders_partially_filled" !orders_partially_filled >>= fun () ->
+  !Ringbuffer.telemetry_record_counter ["trading"; "performance"] "orders_not_filled" !orders_not_filled
 
 (** Classify balance change type for transaction categorization *)
 let classify_balance_change asset old_balance new_balance =
@@ -250,6 +277,24 @@ let process_fill_event_from_queue () =
 
     let base_tx = Transaction_history.transaction_from_fill fill in
     let%lwt _ = Transaction_history.add_transaction base_tx in
+
+    (* Update trading performance metrics *)
+    (* All fills processed here are actual fills, so count them as filled *)
+    incr orders_filled;
+    Lwt.async (fun () -> record_trading_performance ());
+
+    (* Calculate PnL impact for this fill *)
+    let price_float = Float.of_string (Primitives.Price.to_string fill.price) in
+    let qty_float = Float.of_string (Primitives.Qty.to_string fill.qty) in
+    let pnl_impact = match fill.side with
+      | `Buy -> price_float *. qty_float  (* Cost of purchase *)
+      | `Sell -> price_float *. qty_float  (* Revenue from sale *)
+    in
+    total_pnl := !total_pnl +. pnl_impact;
+    Lwt.async (fun () ->
+      !Ringbuffer.telemetry_record_gauge ["trading"; "performance"] "total_pnl" !total_pnl
+    );
+
     Lwt.return_unit
   )
 

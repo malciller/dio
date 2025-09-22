@@ -5,6 +5,7 @@
 open Dio_types
 module Feed = Feed
 module Kraken = Kraken
+module Discord_webhook = Discord_webhook
 
 (** Push market tick data to ring buffer for processing *)
 let push_tick_to_buffer tick_buffer tick =
@@ -38,11 +39,38 @@ let start_feed (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config
  * @return Lwt promise representing the complete trading session
  *)
 let run ~grid_strategy ~orderbook_strategy ~vmm_strategy ~arbitrage_strategy ~router (runtime_cfg: Config.runtime_cfg) (core_cfg: Config.engine_config) =
-  (* Create the ring buffers with configurable capacity *)
+  (* Create the ring buffers with configurable capacity and telemetry *)
   let buffer_cap = runtime_cfg.queues_cap in
-  let tick_buffer = Ringbuffer.create buffer_cap in
-  let exec_buffer = Ringbuffer.create buffer_cap in
-  let cmd_buffer  = Ringbuffer.create buffer_cap in
+  let tick_buffer = Ringbuffer.create ~name:"tick_buffer" buffer_cap in
+  let exec_buffer = Ringbuffer.create ~name:"exec_buffer" buffer_cap in
+  let cmd_buffer  = Ringbuffer.create ~name:"cmd_buffer" buffer_cap in
+
+  (* Initialize ringbuffer telemetry interface *)
+  Ringbuffer.TelemetryInterface.set_functions
+    Telemetry.record_timer
+    Telemetry.record_counter
+    Telemetry.record_gauge;
+
+  (* Initialize telemetry for ringbuffers in other modules *)
+  Kraken.Kraken_balances.RingbufferTelemetryInterface.set_functions
+    Telemetry.record_timer
+    Telemetry.record_counter
+    Telemetry.record_gauge;
+
+  Kraken.Kraken_outgoing_data.RingbufferTelemetryInterface.set_functions
+    Telemetry.record_timer
+    Telemetry.record_counter
+    Telemetry.record_gauge;
+
+  Router.RingbufferTelemetryInterface.set_functions
+    Telemetry.record_timer
+    Telemetry.record_counter
+    Telemetry.record_gauge;
+
+  Discord_webhook.RingbufferTelemetryInterface.set_functions
+    Telemetry.record_timer
+    Telemetry.record_counter
+    Telemetry.record_gauge;
 
   (* Start all components via the supervisor *)
   Supervisor.start
