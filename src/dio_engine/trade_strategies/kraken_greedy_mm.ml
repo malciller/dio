@@ -36,7 +36,7 @@ module State = struct
     if Hashtbl.length balances = 0 then
       warning_f ~section "No balance data received from WebSocket, USD balance may be stale: %.2f" new_balance
     else
-      info_f ~section "Refreshed USD balance: %.2f (from %d balance entries)" new_balance (Hashtbl.length balances)
+      info_f ~section "USD balance: %.2f" new_balance
 
   (** Check if symbol has any open buy orders *)
   let has_open_buy_order symbol =
@@ -390,7 +390,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
     execution_loop ()
   in
 
-  let balance_refresh_interval = 1.0 in
+  let balance_refresh_interval = 15.0 in
   let rec balance_loop () =
     Lwt_unix.sleep balance_refresh_interval >>= fun () ->
     State.refresh_usd_balance () >>= fun () ->

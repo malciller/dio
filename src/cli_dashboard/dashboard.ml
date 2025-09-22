@@ -395,6 +395,15 @@ let get_strategy_info asset =
       ) open_orders false in
       if has_orders then (Arbitrage, "ARB") else (Monitor, "MONITOR")
 
+(** Determine if a strategy is actively running (has open buy orders) or paused *)
+let get_strategy_status asset =
+  let open_orders = Kraken.Kraken_incoming_data.get_all_open_orders () in
+  let has_buy_orders = Hashtbl.fold (fun _ order acc ->
+    acc || (String.equal order.Kraken.Kraken_common_types.order_symbol asset &&
+            order.Kraken.Kraken_common_types.side = Some Core.Buy)
+  ) open_orders false in
+  has_buy_orders  (* true = running (green), false = paused (yellow) *)
+
 let style_of_strategy = function
   | State.Grid -> style_strat_grid
   | State.Orderbook -> style_strat_gmm
@@ -527,8 +536,14 @@ let compact_row_of_asset asset _frame state =
       let spacing = if available_content_width > 80 then " │ " else " │" in
       let slash_spacing = if available_content_width > 80 then " / " else " /" in
 
+      let asset_status = get_strategy_status asset in
+      let asset_name_style = if asset_status then
+        style_success_text ++ A.st A.bold ++ A.st A.underline  (* Green for running *)
+      else
+        style_warning_text ++ A.st A.bold ++ A.st A.underline  (* Yellow for paused *)
+      in
       let combined_content = I.hcat [
-        I.string style_asset_name asset_name;
+        I.string asset_name_style asset_name;
         I.string style_neutral_text spacing;
         pending_buy_price;
         I.string style_neutral_text slash_spacing;
@@ -595,8 +610,14 @@ let row_of_asset asset frame state =
   in
 
   (* Compact header with asset info and strategy *)
+  let asset_status = get_strategy_status asset in
+  let asset_name_style = if asset_status then
+    style_success_text ++ A.st A.bold ++ A.st A.underline  (* Green for running *)
+  else
+    style_warning_text ++ A.st A.bold ++ A.st A.underline  (* Yellow for paused *)
+  in
   let asset_header = I.hcat [
-    I.string style_asset_name (Printf.sprintf "%-6s" asset);
+    I.string asset_name_style (Printf.sprintf "%-6s" asset);
     spr_separator;
     I.string (style_of_strategy strategy) strategy_name;
     spr_separator;
