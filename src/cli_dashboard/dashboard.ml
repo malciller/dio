@@ -117,14 +117,12 @@ let spr_tee_up        = I.string style_header_border "┴"
 let spr_tee_right     = I.string style_header_border "├"
 let spr_tee_left      = I.string style_header_border "┤"
 
-let style_of_log_level msg =
-  let info_regexp = Str.regexp ".*info.*" in
-  let warning_regexp = Str.regexp ".*warning.*" in
-  let error_regexp = Str.regexp ".*error.*" in
-  if Str.string_match info_regexp msg 0 then style_log_info
-  else if Str.string_match warning_regexp msg 0 then style_log_warning
-  else if Str.string_match error_regexp msg 0 then style_log_error
-  else style_log_debug
+let style_of_log_level level_str =
+  match String.lowercase_ascii level_str with
+  | "info" -> style_log_info
+  | "warning" -> style_log_warning
+  | "error" -> style_log_error
+  | _ -> style_log_debug
 
 
 (* ─── helpers ─────────────────────────────────────────────── *)
@@ -1205,32 +1203,56 @@ let logs_section_image =
       ]
     in
     let logs_header_h = height logs_header_img in
-    let num_log_lines_to_take = max 0 (logs_height - logs_header_h) in 
-    let log_messages = 
+    let num_log_lines_to_take = max 0 (logs_height - logs_header_h) in
+    let log_messages =
       List.map (fun msg ->
-        let style = style_of_log_level msg in
-        let msg_img = I.string style msg in
-        let msg_width = width msg_img in
-        if msg_width > content_width then
-          let chars_per_line = content_width in
-          let rec wrap_text remaining_text acc =
-            if String.length remaining_text <= chars_per_line then
-              remaining_text :: acc
+        let re = Str.regexp "\\[\\([0-9:]+\\)\\]\\[\\([^|]+\\)|\\([^]]+\\)\\] \\(.*\\)" in
+        if Str.string_match re msg 0 then
+          let timestamp = Str.matched_group 1 msg in
+          let section = Str.matched_group 2 msg in
+          let level = Str.matched_group 3 msg in
+          let message = Str.matched_group 4 msg in
+          let style = style_of_log_level level in
+
+          let bullet_img = I.string style "● " in
+          let ts_img = I.string style (Printf.sprintf "[%s]" timestamp) in
+          let section_level_img = I.string style (Printf.sprintf "[%s|%s] " section level) in
+          let prefix_img = I.hcat [bullet_img; ts_img; section_level_img] in
+          let prefix_width = I.width prefix_img in
+
+          let message_img = I.string style_log_debug message in
+          let final_img = I.hcat [prefix_img; message_img] in
+
+          if I.width final_img > content_width then
+            let available_width = content_width - prefix_width in
+            if available_width > 0 then
+              let first_line_msg = String.sub message 0 (min available_width (String.length message)) in
+              let rest_of_msg = String.sub message (String.length first_line_msg) (String.length message - String.length first_line_msg) in
+              let first_line_img = I.hcat [prefix_img; I.string style_log_debug first_line_msg] in
+
+              let rec wrap_text remaining_text acc =
+                if String.length remaining_text <= content_width then
+                  (I.string style_log_debug remaining_text) :: acc
+                else
+                  let line = String.sub remaining_text 0 content_width in
+                  let rest = String.sub remaining_text content_width (String.length remaining_text - content_width) in
+                  wrap_text rest ((I.string style_log_debug line) :: acc)
+              in
+              let wrapped_lines = if String.length rest_of_msg > 0 then wrap_text rest_of_msg [] |> List.rev else [] in
+              I.vcat (first_line_img :: wrapped_lines)
             else
-              let line = String.sub remaining_text 0 chars_per_line in
-              let rest = String.sub remaining_text chars_per_line 
-                (String.length remaining_text - chars_per_line) in
-              wrap_text rest (line :: acc)
-          in
-          let wrapped_lines = wrap_text msg [] |> List.rev in
-          I.vcat (List.map (fun line -> I.string style line) wrapped_lines)
+              I.hsnap ~align:`Left content_width final_img
+          else
+            final_img
         else
-          I.hcat [I.string style "●"; I.string style " "; msg_img; I.void (content_width - (width msg_img) - (width spr_power_pellet) - 1) 1]
+          (* Fallback for messages that don't match the expected format *)
+          let style = style_of_log_level "debug" in (* Default to debug style *)
+          I.hcat [I.string style "● "; I.string style msg]
       ) (take num_log_lines_to_take state.cached_logs)
     in
     let logs_body_content = I.vcat log_messages in
     let logs_full_content = I.vcat [logs_header_img; logs_body_content] in
-    let cropped_logs_content = 
+    let cropped_logs_content =
       if height logs_full_content > logs_height then 
         vsnap ~align:`Top logs_height logs_full_content 
       else 
