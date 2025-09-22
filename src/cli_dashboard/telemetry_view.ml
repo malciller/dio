@@ -126,34 +126,17 @@ let render_header max_width =
 let sort_metrics_alphabetically stats =
   List.sort (fun (name1, _) (name2, _) ->
     String.compare name1 name2
-  ) stats |> List.filter (fun (name, _stats) ->
-    (* Filter out initialization metrics that just show "1.0" and provide no value *)
-    not (string_contains name "telemetry.initialized" ||
-         string_contains name "connection_initialized")
-  )
+  ) stats
 
 (** Main telemetry panel rendering function *)
-let render_telemetry_panel _width height =
+let render_telemetry_panel _width _height =
   Lwt.catch (fun () ->
     Telemetry.get_all_stats () >>= fun all_stats ->
 
     let sorted_stats = sort_metrics_alphabetically all_stats in
-
-    (* Take only top metrics that fit in the available height *)
-    let max_rows = max 0 (height - 4) in (* Reserve space for header and padding *)
-    let displayed_stats =
-      if List.length sorted_stats > max_rows then
-        let rec take n lst =
-          match n, lst with
-          | 0, _ -> []
-          | _, [] -> []
-          | n, h :: t when n > 0 -> h :: take (n - 1) t
-          | _, _ -> []
-        in
-        take max_rows sorted_stats
-      else
-        sorted_stats
-    in
+    
+    (* Show all metrics without limit *)
+    let displayed_stats = sorted_stats in
 
     let max_width = calculate_max_metric_name_width displayed_stats in
     let header = render_header max_width in
@@ -174,17 +157,10 @@ let render_telemetry_panel _width height =
   )
 
 (** Pure rendering of telemetry panel given pre-fetched stats (avoids Lwt in UI render path) *)
-let render_telemetry_panel_preloaded _width height (all_stats : (string * Dio_types.Telemetry_types.metric_stats) list) =
+let render_telemetry_panel_preloaded _width _height (all_stats : (string * Dio_types.Telemetry_types.metric_stats) list) =
   let sorted_stats = sort_metrics_alphabetically all_stats in
-  let max_rows = max 0 (height - 4) in
-  let rec take n lst =
-    match n, lst with
-    | 0, _ -> []
-    | _, [] -> []
-    | n, h :: t when n > 0 -> h :: take (n - 1) t
-    | _, _ -> []
-  in
-  let displayed_stats = if List.length sorted_stats > max_rows then take max_rows sorted_stats else sorted_stats in
+  (* Show all metrics without limit *)
+  let displayed_stats = sorted_stats in
 
   let max_width = calculate_max_metric_name_width displayed_stats in
   let header = render_header max_width in

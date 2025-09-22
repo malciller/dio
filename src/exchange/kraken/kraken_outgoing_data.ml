@@ -36,8 +36,6 @@ let float_of_qty qty =
 let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_event : unit Lwt.t =
   let section = Lwt_log_core.Section.make "kraken_outgoing_data" in
   let start_time = Unix.gettimeofday () in
-  (* Record total orders sent *)
-  Lwt.async (fun () -> !Ringbuffer.telemetry_record_counter ["exchange"; "kraken"] "orders_sent" 1);
   match cmd with
   | Add { symbol; side; price; qty; client_id; _ } ->
       Lwt_log_core.debug ~section (Printf.sprintf "Processing REST Add Order for client_id: %s" client_id) >>= fun () ->
@@ -102,8 +100,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
           Lwt.async (fun () ->
             let duration = Unix.gettimeofday () -. start_time in
             !Ringbuffer.telemetry_record_timer ["exchange"; "kraken"] "order_submission_latency" duration >>= fun () ->
-            !Ringbuffer.telemetry_record_counter ["exchange"; "kraken"] "orders_failed" 1 >>= fun () ->
-            !Ringbuffer.telemetry_record_gauge ["exchange"; "kraken"] "error_rate" 1.0
+            Lwt.return_unit
           );
           on_event ack
         else
@@ -115,8 +112,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
               Lwt.async (fun () ->
                 let duration = Unix.gettimeofday () -. start_time in
                 !Ringbuffer.telemetry_record_timer ["exchange"; "kraken"] "order_submission_latency" duration >>= fun () ->
-                !Ringbuffer.telemetry_record_counter ["exchange"; "kraken"] "orders_successful" 1 >>= fun () ->
-                !Ringbuffer.telemetry_record_gauge ["exchange"; "kraken"] "error_rate" 0.0
+                Lwt.return_unit
               );
               on_event ack
           | _ ->
@@ -126,8 +122,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
               Lwt.async (fun () ->
                 let duration = Unix.gettimeofday () -. start_time in
                 !Ringbuffer.telemetry_record_timer ["exchange"; "kraken"] "order_submission_latency" duration >>= fun () ->
-                !Ringbuffer.telemetry_record_counter ["exchange"; "kraken"] "orders_failed" 1 >>= fun () ->
-                !Ringbuffer.telemetry_record_gauge ["exchange"; "kraken"] "error_rate" 1.0
+                Lwt.return_unit
               );
               on_event ack
       ) (fun ex ->
@@ -139,8 +134,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         Lwt.async (fun () ->
           let duration = Unix.gettimeofday () -. start_time in
           !Ringbuffer.telemetry_record_timer ["exchange"; "kraken"] "order_submission_latency" duration >>= fun () ->
-          !Ringbuffer.telemetry_record_counter ["exchange"; "kraken"] "orders_failed" 1 >>= fun () ->
-          !Ringbuffer.telemetry_record_gauge ["exchange"; "kraken"] "error_rate" 1.0
+          Lwt.return_unit
         );
         on_event ack
       )

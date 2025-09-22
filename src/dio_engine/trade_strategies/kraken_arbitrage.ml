@@ -812,7 +812,6 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
   initialize_cached_graph active_symbols >>= fun () ->
 
   let rec arbitrage_loop () =
-    let loop_start_time = Unix.time () in
     update_changed_edges active_symbols >>= fun () ->
 
     let graph = get_cached_graph () in
@@ -862,18 +861,6 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
     )) >>= fun () ->
 
     let sleep_time = if Hashtbl.length dirty_symbols = 0 then 5.0 else 1.0 in
-
-    (* Record telemetry for this iteration *)
-    let loop_duration = Unix.time () -. loop_start_time in
-    let cycles_found = List.length cycles in
-    let _cycles_executed = ref 0 in
-
-    Lwt.async (fun () ->
-      record_timer ["strategy"; "arbitrage"] "loop_duration" loop_duration >>= fun () ->
-      record_counter ["strategy"; "arbitrage"] "iterations" 1 >>= fun () ->
-      record_gauge ["strategy"; "arbitrage"] "cycles_per_iteration" (Float.of_int cycles_found) >>= fun () ->
-      record_gauge ["strategy"; "arbitrage"] "active_cycles" (Float.of_int !active_cycles)
-    );
 
     Lwt_unix.sleep sleep_time >>= fun () ->
     arbitrage_loop ()

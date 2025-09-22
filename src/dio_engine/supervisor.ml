@@ -15,23 +15,13 @@ open Telemetry
 let supervise name fiber_fun =
   let section = Lwt_log_core.Section.make ("engine.supervisor." ^ name) in
   let restart_count = ref 0 in
-  let start_time = Unix.gettimeofday () in
 
   let rec loop () =
     Lwt.catch
       (fun () ->
         Lwt_log_core.info ~section ("Starting component: " ^ name) >>= fun () ->
-        (* Record component health *)
-        Lwt.async (fun () ->
-          record_gauge ["system"; "supervisor"] (name ^ "_health") 1.0 >>= fun () ->
-          record_gauge ["system"; "supervisor"] (name ^ "_uptime") (Unix.gettimeofday () -. start_time)
-        );
         fiber_fun () >>= fun () ->
-        (* Component exited normally *)
-        Lwt.async (fun () ->
-          record_gauge ["system"; "supervisor"] (name ^ "_health") 0.0 >>= fun () ->
-          record_counter ["system"; "supervisor"] (name ^ "_normal_exits") 1
-        );
+        (* Component exited normally - only count meaningful failures, not exits *)
         Lwt_log_core.warning ~section ("Component exited normally: " ^ name) >>= fun () ->
         Lwt_unix.sleep 1.0 >>= loop
       )
@@ -39,7 +29,6 @@ let supervise name fiber_fun =
         (* Component failed *)
         incr restart_count;
         Lwt.async (fun () ->
-          record_gauge ["system"; "supervisor"] (name ^ "_health") 0.0 >>= fun () ->
           record_counter ["system"; "supervisor"] (name ^ "_failures") 1 >>= fun () ->
           record_gauge ["system"; "supervisor"] (name ^ "_restart_count") (Float.of_int !restart_count)
         );

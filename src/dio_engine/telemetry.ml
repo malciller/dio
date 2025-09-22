@@ -139,6 +139,13 @@ let record_histogram component name values =
     let avg = List.fold_left (+.) 0.0 values /. Float.of_int (List.length values) in
     record_gauge component name avg
 
+(** Batch multiple metrics recording for better performance *)
+let record_batch_metrics metrics =
+  let process_metric (component, name, value) =
+    record_typed_metric component name value ()
+  in
+  Lwt_list.iter_p process_metric metrics
+
 (** High-level timing utility with type safety *)
 let time_operation component name operation =
   let start_time = Unix.gettimeofday () in
@@ -191,39 +198,37 @@ let record_histogram_legacy legacy_comp name values =
 (** Initialize the telemetry system *)
 let init () : unit Lwt.t =
   if not !config_ref.enabled then Lwt.return_unit else
+  begin
+    (* Start cleanup task if needed *)
+    if !config_ref.stats_window_seconds > 0.0 then
+      Lwt.async (fun () ->
+        let rec cleanup_loop () =
+          Lwt_unix.sleep 60.0 >>= fun () -> (* Clean up every minute *)
+          Lwt_mutex.with_lock metrics_mutex (fun () ->
+            let now = Unix.gettimeofday () in
+            let cutoff_time = now -. !config_ref.stats_window_seconds in
 
-  (* Record initialization metric *)
-  record_counter ["system"] "telemetry_initialized" 1 >>= fun () ->
+            (* Remove old raw values from all entries *)
+            Hashtbl.iter (fun _key entry ->
+              entry.raw_values <- List.filter (fun (ts, _) -> ts >= cutoff_time) entry.raw_values;
+              update_incremental_stats entry;
+            ) metrics_store;
 
-  (* Start cleanup task if needed *)
-  if !config_ref.stats_window_seconds > 0.0 then
-    Lwt.async (fun () ->
-      let rec cleanup_loop () =
-        Lwt_unix.sleep 60.0 >>= fun () -> (* Clean up every minute *)
-        Lwt_mutex.with_lock metrics_mutex (fun () ->
-          let now = Unix.gettimeofday () in
-          let cutoff_time = now -. !config_ref.stats_window_seconds in
+            (* Remove entries with no recent data *)
+            let to_remove = Hashtbl.fold (fun key entry acc ->
+              if entry.raw_values = [] then key :: acc else acc
+            ) metrics_store [] in
 
-          (* Remove old raw values from all entries *)
-          Hashtbl.iter (fun _key entry ->
-            entry.raw_values <- List.filter (fun (ts, _) -> ts >= cutoff_time) entry.raw_values;
-            update_incremental_stats entry;
-          ) metrics_store;
+            List.iter (Hashtbl.remove metrics_store) to_remove;
 
-          (* Remove entries with no recent data *)
-          let to_remove = Hashtbl.fold (fun key entry acc ->
-            if entry.raw_values = [] then key :: acc else acc
-          ) metrics_store [] in
+            Lwt.return_unit
+          ) >>= cleanup_loop
+        in
+        cleanup_loop ()
+      );
 
-          List.iter (Hashtbl.remove metrics_store) to_remove;
-
-          Lwt.return_unit
-        ) >>= cleanup_loop
-      in
-      cleanup_loop ()
-    );
-
-  Lwt.return_unit
+    Lwt.return_unit
+  end
 
 (** Get current statistics for all metrics *)
 let get_all_stats () : (string * metric_stats) list Lwt.t =

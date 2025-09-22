@@ -2,18 +2,39 @@
  * Trading engine core module - coordinates feed consumption, strategy execution, and order routing
  *)
 
+open Lwt.Infix
 open Dio_types
 module Feed = Feed
 module Kraken = Kraken
 module Discord_webhook = Discord_webhook
 
-(** Push market tick data to ring buffer for processing *)
+(** Push market tick data to ring buffer for processing with timing *)
 let push_tick_to_buffer tick_buffer tick =
-  Ringbuffer.push tick_buffer tick
+  let start_time = Unix.gettimeofday () in
+  Ringbuffer.push tick_buffer tick >>= fun () ->
+  let duration = Unix.gettimeofday () -. start_time in
+  (* Always record timing for tick buffer operations - critical path *)
+  Lwt.async (fun () -> 
+    Telemetry.record_timer ["engine"] "tick_buffer_push_duration" duration
+    (* Removed tick_buffer_depth_at_push gauge - non-duration metric *)
+  );
+  Lwt.return_unit
 
-(** Push execution events to ring buffer, maintaining order *)
+(** Push execution events to ring buffer with timing *)
 let push_execs_to_buffer exec_buffer events =
-  Lwt_list.iter_s (Ringbuffer.push exec_buffer) events
+  let start_time = Unix.gettimeofday () in
+  let count = List.length events in
+  Lwt_list.iter_s (Ringbuffer.push exec_buffer) events >>= fun () ->
+  let duration = Unix.gettimeofday () -. start_time in
+  (* Always record execution buffer timing *)
+  Lwt.async (fun () -> 
+    Telemetry.record_timer ["engine"] "exec_buffer_push_duration" duration >>= fun () ->
+    if count > 0 then 
+      Telemetry.record_timer ["engine"] "exec_buffer_per_item_push_duration" (duration /. Float.of_int count)
+    else 
+      Lwt.return_unit
+  );
+  Lwt.return_unit
 
 (**
  * Initialize and start market data feeds (ticks and executions) with ring buffer callbacks
