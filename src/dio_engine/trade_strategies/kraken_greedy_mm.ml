@@ -1,5 +1,5 @@
 (*
-  Kraken Top-Level Market Making Strategy
+  Kraken Greedy Market Making Strategy
 
   Maintains persistent orders at the best bid/ask prices in the order book.
   Places buy orders at top bid and sell orders at top ask, recreating positions

@@ -1,10 +1,5 @@
 (*
-  Kraken Top-Level Market Making Strategy
-
-  Maintains persistent orders at the best bid/ask prices in the order book.
-  Places buy orders at top bid and sell orders at top ask, recreating positions
-  only on buy order fills while continuously adjusting buy orders to maintain
-  top-of-book positioning.
+  Kraken Valley Market Making Strategy 
 *)
 open Lwt.Infix
 open Dio_types
