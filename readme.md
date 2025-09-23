@@ -88,6 +88,8 @@ Edit `_config.json` (example):
 #### Expanded Asset View
 ![Dio Dashboard](.github/readme/dashboard_expanded.png)
 
+#### Telemetry View
+![Dio Dashboard](.github/readme/dashboard_telemetry.png)
 ## Notification
 ### Balance Updates
 ![Balances](.github/readme/balances.png)
