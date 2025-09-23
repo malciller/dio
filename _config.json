@@ -8,6 +8,13 @@
       "strategy": "Grid"
     },
     {
+      "symbol": "PAXG/USD",
+      "qty": "0.0029",
+      "grid_interval": "0.41",
+      "sell_mult": "0.999",
+      "strategy": "Grid"
+    },
+    {
       "symbol": "ETH/USD",
       "qty": "0.0025", 
       "grid_interval": "0.75",

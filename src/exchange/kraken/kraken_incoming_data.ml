@@ -81,6 +81,15 @@ let redact_token_in_json_string (json_str : string) : string =
   with
   | _ -> json_str
 
+(** Limit overly large payload logging to prevent runaway logs *)
+let truncate_payload_for_log ?(max_len = 2048) (payload : string) : string =
+  let len = String.length payload in
+  if len <= max_len then
+    payload
+  else
+    let truncated = String.sub payload 0 max_len in
+    Printf.sprintf "%s... [truncated %d bytes]" truncated (len - max_len)
+
 (** Parse Kraken order side string to internal representation. *)
 let parse_order_side = function
   | "buy" -> Some Core.Buy
@@ -283,7 +292,8 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                 Lwt_log_core.debug ~section (Printf.sprintf "Subscription successful (req_id=%s, channel=%s)" req_id channel)
               else
                 let error_msg = Option.value error ~default:"unknown error" in
-                Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s. Payload: %s" req_id error_msg frame.content)
+                let payload = truncate_payload_for_log frame.content in
+                Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s. Payload: %s" req_id error_msg payload)
           | _ ->
               (* Handle data messages by channel *)
               match JsonUtil.(member "channel" json |> to_string_option) with
@@ -325,18 +335,22 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                           on_tick event_tick
                       ) ticker_list
                   | Ok _ ->
-                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected ticker data format: %s" frame.content)
+                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected ticker data format: %s" payload)
                   | Error err ->
-                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse ticker: %s. Payload: %s" err frame.content)
+                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
+                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse ticker: %s. Payload: %s" err payload)
                   end
               | Some "status" ->
                   begin match Kraken_common_types.status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
                       Lwt_log_core.debug ~section "Received valid status message"
                   | Ok _ ->
-                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected status data format: %s" frame.content)
+                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected status data format: %s" payload)
                   | Error err ->
-                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s. Payload: %s" err frame.content)
+                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
+                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s. Payload: %s" err payload)
                   end
               | Some "heartbeat" ->
                   Lwt.return_unit
@@ -420,15 +434,18 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                       Lwt.return_unit
                   )
               | Some unknown_channel ->
+                  let payload = truncate_payload_for_log ~max_len:1024 frame.content in
                   Lwt_log_core.warning ~section
-                    (Printf.sprintf "Received unhandled channel '%s': %s" unknown_channel frame.content)
+                    (Printf.sprintf "Received unhandled channel '%s': %s" unknown_channel payload)
               | None ->
+                  let payload = truncate_payload_for_log ~max_len:1024 frame.content in
                   Lwt_log_core.warning ~section
-                    (Printf.sprintf "Missing or invalid channel in message: %s" frame.content)
+                    (Printf.sprintf "Missing or invalid channel in message: %s" payload)
         )
         (fun ex ->
+          let payload = truncate_payload_for_log frame.content in
           Lwt_log_core.error ~section
-            (Printf.sprintf "Error processing text frame: %s. Payload: %s" (Printexc.to_string ex) frame.content)
+            (Printf.sprintf "Error processing text frame: %s. Payload: %s" (Printexc.to_string ex) payload)
           >>= fun () ->
           Lwt.return_unit)
   | Frame.Opcode.Ping ->
@@ -660,7 +677,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
               let error_opt = JsonUtil.(member "error" json |> to_string_option) in
               let req_id_str = Option.map string_of_int req_id_opt |> Option.value ~default:"N/A" in
               if not success then
-                let redacted_payload = redact_token_in_json_string frame.content in
+                let redacted_payload = frame.content |> redact_token_in_json_string |> truncate_payload_for_log in
                 let err_msg = Option.value error_opt ~default:("unknown error, payload: " ^ redacted_payload) in
                 Lwt_log_core.error ~section (Printf.sprintf "Auth subscription failed (req_id=%s): %s" req_id_str err_msg)
               else
@@ -760,29 +777,39 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                       ) else Lwt.return_unit
 
                   | Some other_type ->
-                      Lwt_log_core.warning ~section (Printf.sprintf "Unknown execution message type: %s. Payload: %s" other_type frame.content)
+                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unknown execution message type: %s. Payload: %s" other_type payload)
                   | None ->
-                      Lwt_log_core.warning ~section (Printf.sprintf "Message type is missing in execution message. Payload: %s" frame.content)
+                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
+                      Lwt_log_core.warning ~section (Printf.sprintf "Message type is missing in execution message. Payload: %s" payload)
                   end
               | Some "status" -> 
                   begin match Kraken_common_types.status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
                       Lwt.return_unit
                   | Ok _ ->
-                      Lwt_log_core.warning ~section ("Unexpected status data format: " ^ frame.content)
+                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
+
+
+
+                    
+                      Lwt_log_core.warning ~section ("Unexpected status data format: " ^ payload)
                   | Error err ->
                       Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s" err)
                   end
               | Some "heartbeat" ->
                   Lwt.return_unit
               | Some "" | None ->
-                  Lwt_log_core.warning ~section (Printf.sprintf "Auth message with empty or missing channel: %s" frame.content)
+                  let payload = truncate_payload_for_log frame.content in
+                  Lwt_log_core.warning ~section (Printf.sprintf "Auth message with empty or missing channel: %s" payload)
               | Some other_channel ->
-                  Lwt_log_core.warning ~section (Printf.sprintf "Unhandled public channel: %s. Content: %s" other_channel frame.content)
+                  let payload = truncate_payload_for_log frame.content in
+                  Lwt_log_core.warning ~section (Printf.sprintf "Unhandled public channel: %s. Content: %s" other_channel payload)
         )
         (fun ex ->
+          let payload = truncate_payload_for_log frame.content in
           Lwt_log_core.error ~section
-            (Printf.sprintf "Exception in auth handler: %s" (Printexc.to_string ex)) >>= fun () ->
+            (Printf.sprintf "Exception in auth handler: %s. Payload: %s" (Printexc.to_string ex) payload) >>= fun () ->
           Lwt.return_unit
         )
   | Frame.Opcode.Ping ->

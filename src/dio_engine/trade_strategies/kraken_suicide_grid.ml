@@ -341,6 +341,7 @@ module State = struct
             match state with
             | Canceled | Rejected ->
                 Hashtbl.remove open_orders order_id;
+                Hashtbl.remove pending_amends order_id;
                 info_f ~section
                   "Order %s %s" order_id
                     (match state with Canceled -> "canceled" | Rejected -> "rejected" | _ -> "") >>= fun () ->

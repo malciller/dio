@@ -22,34 +22,157 @@ let section = Lwt_log_core.Section.make "engine.strategy.kraken.GMM"
 *)
 
 module State = struct
+  let price_info : (string, Event.tick) Hashtbl.t = Hashtbl.create 16
+  let open_orders : (string, K.Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
+  let usd_balance : float ref = ref 0.0
+  let last_amend_time : (string, float) Hashtbl.t = Hashtbl.create 16
+  let amend_cooldown = 5.0
+
+  (** Update USD balance from exchange *)
+  let refresh_usd_balance () =
+    Kraken.Kraken_balances.wait_for_balances () >>= fun (_, _, _, balances) ->
+    let z_usd_balance = Hashtbl.find_opt balances "ZUSD" |> Option.value ~default:0.0 in
+    let usd_balance_val = Hashtbl.find_opt balances "USD" |> Option.value ~default:0.0 in
+    let new_balance = z_usd_balance +. usd_balance_val in
+    usd_balance := new_balance;
+    if Hashtbl.length balances = 0 then
+      warning_f ~section "No balance data received from WebSocket, USD balance may be stale: %.2f" new_balance
+    else
+      info_f ~section "USD balance: %.2f" new_balance
+
+  (** Check if symbol has any open buy orders *)
+  let has_open_buy_order symbol =
+    let buy_orders = Hashtbl.fold (fun _ (order : K.Kraken_common_types.order) acc ->
+      if String.equal order.order_symbol symbol && order.side = Some Core.Buy then
+        order :: acc
+      else
+        acc
+    ) open_orders [] in
+    List.length buy_orders > 0
+
+  (** Get current price data for symbol *)
+  let get_price symbol = Hashtbl.find_opt price_info symbol
+
+  (** Get total quantity of an asset locked in open orders for a given symbol *)
+  let get_balance_in_open_orders symbol =
+    Hashtbl.fold (fun _ (order : K.Kraken_common_types.order) acc ->
+      if String.equal order.order_symbol symbol then
+        acc +. order.qty
+      else
+        acc
+    ) open_orders 0.0
+
+  (** Create exchange-compliant order with proper formatting *)
+  let create_order ~symbol ~side ~price ~qty =
+    match K.Kraken_incoming_data.get_precisions symbol with
+    | Some (price_prec, qty_prec) ->
+        let price_str = Primitives.Price.to_string price in
+        let qty_str = Primitives.Qty.to_string qty in
+        let formatted_price = Primitives.Price.of_string_exn ~scale:price_prec price_str in
+        let formatted_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
+        let side_prefix = match side with Core.Buy -> "b-" | Core.Sell -> "s-" in
+        let timestamp_str = Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float) in
+        let client_id = side_prefix ^ timestamp_str in
+        let order = Core.Add {
+          dst = "kraken";
+          client_id;
+          symbol;
+          side;
+          price = formatted_price;
+          qty = formatted_qty;
+          tif = GTC;
+          tags = [];
+        } in
+        Some order
+    | None ->
+        None
 
   (** Create initial buy/sell order pair at top-of-book prices *)
   let create_initial_order (runtime_cfg : Config.runtime_cfg) symbol cmd_buffer =
-    let has_buy = K.Kraken_common_types.StrategyState.has_open_buy_order symbol in
+    let has_buy = has_open_buy_order symbol in
     if not has_buy then (
       let asset_cfg_opt = List.find_opt (fun (asset: Config.asset_cfg) ->
         String.equal asset.symbol symbol
       ) runtime_cfg.assets in
-
+      
       match asset_cfg_opt with
       | Some asset_cfg ->
           (match asset_cfg.min_usd_balance with
           | Some min_balance ->
               let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
-              if K.Kraken_common_types.StrategyState.get_usd_balance () < min_balance_float then (
-                info_f ~section "USD balance %.2f is below minimum %.2f for %s. Creating final sell order."
-                  (K.Kraken_common_types.StrategyState.get_usd_balance ()) min_balance_float symbol >>= fun () ->
-                K.Kraken_common_types.StrategyState.create_final_sell_order
-                  ~symbol ~cmd_buffer ~section
-                  ~get_instrument_fn:K.Kraken_incoming_data.get_instrument
-                  ~get_precisions_fn:(K.Kraken_common_types.StrategyState.get_precisions K.Kraken_incoming_data.get_precisions)
-                  ~get_balances_fn:(fun () -> K.Kraken_balances.wait_for_balances ())
+              if !usd_balance < min_balance_float then (
+                info_f ~section "USD balance %.2f is below minimum %.2f for %s. Checking for remaining asset balance to sell."
+                  !usd_balance min_balance_float symbol >>= fun () ->
+
+                match K.Kraken_incoming_data.get_instrument symbol with
+                | Some instrument ->
+                    let base_currency = instrument.base in
+                    let qty_prec = instrument.qty_precision in
+                    
+                    Kraken.Kraken_balances.wait_for_balances () >>= fun (spot_balances, _, liquid_balances, _) ->
+                    let spot_bal = Hashtbl.find_opt spot_balances base_currency |> Option.value ~default:0.0 in
+                    let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
+                    let total_balance = spot_bal +. liquid_bal in
+                    let balance_in_orders = get_balance_in_open_orders symbol in
+                    let available_balance = total_balance -. balance_in_orders in
+
+                    info_f ~section "Available balance for %s: total=%.8f, in_orders=%.8f, available=%.8f"
+                      base_currency total_balance balance_in_orders available_balance >>= fun () ->
+
+                    if available_balance > 0.00001 then (
+                      (* Round down to qty_precision to exclude dust fractions *)
+                      let clean_qty = floor (available_balance *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
+                      info_f ~section "Found %.8f of %s to sell before pausing (spot: %.8f, liquid: %.8f). Clean qty: %.8f"
+                        available_balance base_currency spot_bal liquid_bal clean_qty >>= fun () ->
+                      (match get_price symbol with
+                      | Some tick ->
+                          let sell_price = tick.ask in
+                          let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
+                          let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
+                          let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
+                          (match sell_order with
+                          | Some sell_cmd ->
+                              Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                              info_f ~section "Placed final sell order for %s." symbol
+                          | None ->
+                              error_f ~section "Failed to create final sell order for %s." symbol
+                          )
+                      | None ->
+                          warning_f ~section "No price info for %s, cannot place final sell order." symbol
+                      )
+                    ) else (
+                      info_f ~section "No remaining tradeable asset balance for %s to sell. Pausing." base_currency
+                    )
+                | None ->
+                    warning_f ~section "No instrument data for %s, cannot place final sell order." symbol
+
               ) else (
-                K.Kraken_common_types.StrategyState.create_top_of_book_orders
-                  ~symbol ~qty:asset_cfg.qty ~cmd_buffer ~section
-                  ~get_precisions_fn:(K.Kraken_common_types.StrategyState.get_precisions K.Kraken_incoming_data.get_precisions)
+                match get_price symbol with
+                | Some tick ->
+                    let buy_price = tick.bid in
+                    let sell_price = tick.ask in
+                    let buy_order = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
+                    let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:asset_cfg.qty in
+                    (match buy_order, sell_order with
+                    | Some buy_cmd, Some sell_cmd ->
+                        info_f ~section "Successfully created both orders for %s, pushing to buffer" symbol >>= fun () ->
+                        Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
+                        info_f ~section "Buy order pushed to buffer for %s" symbol >>= fun () ->
+                        Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                        info_f ~section "Sell order pushed to buffer for %s" symbol
+                    | Some _, None ->
+                        error_f ~section "Failed to create sell order for %s" symbol >>= fun () ->
+                        Lwt.return_unit
+                    | None, Some _ ->
+                        error_f ~section "Failed to create buy order for %s" symbol >>= fun () ->
+                        Lwt.return_unit
+                    | None, None ->
+                        error_f ~section "Failed to create both orders for %s" symbol >>= fun () ->
+                        Lwt.return_unit)
+                | None ->
+                    warning_f ~section "No price info for %s" symbol
               )
-          | None ->
+          | None -> 
               warning_f ~section "min_usd_balance not configured for %s" symbol
           )
       | None ->
@@ -71,12 +194,46 @@ module State = struct
             (order_id, order) :: acc
           else
             acc
-        ) (K.Kraken_common_types.StrategyState.open_orders) [] in
+        ) open_orders [] in
         debug_f ~section "Found %d open buy orders for %s" (List.length open_buy_orders) tick.symbol >>= fun () ->
         (match open_buy_orders with
         | [(_order_id, order)] ->
             debug_f ~section "Processing single buy order %s for %s" order.order_id tick.symbol >>= fun () ->
-            K.Kraken_common_types.StrategyState.amend_order_if_needed ~order ~new_price:tick.bid ~cmd_buffer ~section
+            let top_bid_price = tick.bid in
+            let order_price_float = order.limit_price in
+            let top_bid_price_float = Float.of_string (Primitives.Price.to_string top_bid_price) in
+            
+            let price_diff = abs_float (order_price_float -. top_bid_price_float) in
+            let price_diff_pct = if order_price_float > 0.0 then price_diff /. order_price_float else 0.0 in
+
+            if price_diff_pct > 0.0001 then ( (* 0.01% threshold *)
+              let now = Unix.gettimeofday () in
+              let last_amend = Hashtbl.find_opt last_amend_time order.order_id |> Option.value ~default:0.0 in
+              let time_since_last_amend = now -. last_amend in
+
+              if time_since_last_amend >= amend_cooldown then (
+                info_f ~section "Prices differ, creating amend command for order %s (%.8f -> %.8f)"
+                  order.order_id order_price_float top_bid_price_float >>= fun () ->
+                let amend_cmd = Core.Amend {
+                  dst = "kraken";
+                  order_id = order.order_id;
+                  symbol = order.order_symbol;
+                  new_price = top_bid_price;
+                  new_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty);
+                  ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+                } in
+                Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+                Hashtbl.replace last_amend_time order.order_id now;
+                info_f ~section "Amending order %s to new price %s" order.order_id (Primitives.Price.to_string top_bid_price)
+              ) else (
+                debug_f ~section "Skipping amend for order %s - cooldown active (%.1fs remaining)"
+                  order.order_id (amend_cooldown -. time_since_last_amend)
+              )
+            ) else (
+              debug_f ~section "Order %s price %.8f matches top bid %.8f within threshold, no amendment needed"
+                order.order_id order_price_float top_bid_price_float >>= fun () ->
+              Lwt.return_unit
+            )
         | [] ->
             debug_f ~section "No open buy orders found for %s" tick.symbol >>= fun () ->
             Lwt.return_unit
@@ -86,27 +243,51 @@ module State = struct
     | None ->
         warning_f ~section "No configuration found for %s" tick.symbol
 
+  (** Sync local order state with exchange *)
+  let sync_open_orders () =
+    let exchange_orders = K.Kraken_incoming_data.get_all_open_orders () in
+    Hashtbl.clear open_orders;
+    Hashtbl.iter (fun order_id (order : K.Kraken_common_types.order) ->
+      Hashtbl.add open_orders order_id order
+    ) exchange_orders;
+    Lwt.return_unit
+
   (** Process market events and recreate positions as needed *)
   let handle_execution runtime_cfg cmd_buffer symbols (event: Core.market_event) =
     match event with
     | Core.Fill { order_id; symbol; price; qty; _ } ->
         if List.mem symbol symbols then (
-          match Hashtbl.find_opt (K.Kraken_common_types.StrategyState.open_orders) order_id with
+          match Hashtbl.find_opt open_orders order_id with
           | Some (order : K.Kraken_common_types.order) ->
-              K.Kraken_common_types.StrategyState.handle_order_fill
-                ~order_id ~symbol ~price ~qty ~side:(match order.side with Some Buy -> `Buy | Some Sell -> `Sell | None -> `Buy) ~cmd_buffer ~runtime_cfg ~section
-                ~handle_fill_fn:K.Kraken_balances.handle_fill_event
-                ~sync_orders_fn:(fun () -> K.Kraken_common_types.StrategyState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ()) ())
-                ~refresh_balance_fn:(fun () -> K.Kraken_common_types.StrategyState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()))
-                ~create_orders_fn:(fun ~symbol ~qty ~cmd_buffer ~section ->
-                  K.Kraken_common_types.StrategyState.create_top_of_book_orders
-                    ~symbol ~qty ~cmd_buffer ~section
-                    ~get_precisions_fn:(K.Kraken_common_types.StrategyState.get_precisions K.Kraken_incoming_data.get_precisions)
+              let fill_event = {
+                Event.src = "kraken";
+                symbol = order.order_symbol;
+                order_id;
+                side = (match order.side with Some Buy -> `Buy | Some Sell -> `Sell | None -> `Buy);
+                qty = qty;
+                price = price;
+                ts = Unix.time () |> Int64.of_float;
+              } in
+              Kraken.Kraken_balances.handle_fill_event fill_event >>= fun () ->
+              sync_open_orders () >>= fun () ->
+              refresh_usd_balance () >>= fun () ->
+
+              if not (Hashtbl.mem open_orders order_id) then (
+                info_f ~section "Order %s completely filled" order_id >>= fun () ->
+
+                if order.side = Some Core.Buy then (
+                  create_initial_order runtime_cfg symbol cmd_buffer
+                ) else (
+                  Lwt.return_unit
                 )
+              ) else (
+                debug_f ~section "Order %s partially filled, order still exists" order_id >>= fun () ->
+                Lwt.return_unit
+              )
           | None ->
               warning_f ~section "Fill event for unknown order %s, attempting to create orders anyway" order_id >>= fun () ->
-              (K.Kraken_common_types.StrategyState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
-              K.Kraken_common_types.StrategyState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
+              sync_open_orders () >>= fun () ->
+              refresh_usd_balance () >>= fun () ->
               create_initial_order runtime_cfg symbol cmd_buffer
         ) else (
           debug_f ~section "Fill event for %s not in orderbook symbols, ignoring" symbol >>= fun () ->
@@ -120,17 +301,15 @@ module State = struct
               | Some order_client_id when String.equal order_client_id client_id ->
                   Some (order.order_symbol, order.side)
               | _ -> acc
-            ) (K.Kraken_common_types.StrategyState.open_orders) None in
+            ) open_orders None in
             
             (match symbol_and_side_opt with
             | Some (symbol, side) when List.mem symbol symbols ->
                 info_f ~section "Order %s cancelled/rejected for %s, side=%s"
                   order_id symbol
                   (match side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown") >>= fun () ->
-                
-                (* Only create new orders if it was a buy order that was cancelled/rejected *)
                 if side = Some Core.Buy then (
-                  (K.Kraken_common_types.StrategyState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
+                  sync_open_orders () >>= fun () ->
                   create_initial_order runtime_cfg symbol cmd_buffer
                 ) else (
                   Lwt.return_unit
@@ -143,17 +322,14 @@ module State = struct
               if String.equal order.order_id order_id then
                 Some order
               else acc
-            ) (K.Kraken_common_types.StrategyState.open_orders) None in
+            ) open_orders None in
 
             (match order_opt with
             | Some order when List.mem order.order_symbol symbols ->
                 info_f ~section "Order %s fully filled (Ack confirmation) for %s, side=%s"
                   order_id order.order_symbol
                   (match order.side with Some Buy -> "Buy" | Some Sell -> "Sell" | None -> "Unknown") >>= fun () ->
-
-                (K.Kraken_common_types.StrategyState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
-
-                (* Only create new orders if it was a buy order that was filled *)
+                sync_open_orders () >>= fun () ->
                 if order.side = Some Core.Buy then (
                   create_initial_order runtime_cfg order.order_symbol cmd_buffer
                 ) else (
@@ -168,17 +344,44 @@ module State = struct
             Lwt.return_unit)
     | _ -> Lwt.return_unit
 
+  (** Load existing orders and initialize state for orderbook symbols *)
+  let initialize_orders (runtime_cfg : Config.runtime_cfg) =
+    let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
+      match asset.strategy with
+      | Config.GMM -> Some asset.symbol
+      | _ -> None
+    ) runtime_cfg.assets in
+    let exchange_orders = K.Kraken_incoming_data.get_all_open_orders () in
+    Hashtbl.clear open_orders;
+    let log_promises = Hashtbl.fold (fun order_id (order : K.Kraken_common_types.order) promises ->
+      let log_promise =
+        if List.mem order.order_symbol orderbook_symbols then (
+          Hashtbl.replace open_orders order_id order;
+          info_f ~section "Loaded existing order %s for %s" order_id order.order_symbol
+        ) else
+          Lwt.return_unit
+      in
+      log_promise :: promises
+    ) exchange_orders [] in
+    Lwt.join log_promises >>= fun () ->
+    info_f ~section "Initialized %d open orders from exchange" (Hashtbl.length open_orders)
+
+  (** Store latest price tick data *)
+  let update_price (tick : Event.tick) =
+    Hashtbl.replace price_info tick.symbol tick;
+    State.update_global_price tick.symbol tick.current_price;
+    Lwt.return_unit
 end
 
 (** Start the top-level market making strategy *)
 let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) ~tick_buffer ~cmd_buffer ~exec_buffer =
   info_f ~section "Starting greedy market making strategy" >>= fun () ->
 
-  (K.Kraken_common_types.StrategyState.wait_for_snapshot (fun () -> K.Kraken_incoming_data.wait_for_snapshot ())) () >>= fun () ->
-  (K.Kraken_common_types.StrategyState.wait_for_instruments (fun () -> K.Kraken_incoming_data.wait_for_instruments ())) () >>= fun () ->
+  K.Kraken_incoming_data.wait_for_snapshot () >>= fun () ->
+  K.Kraken_incoming_data.wait_for_instruments () >>= fun () ->
 
-  K.Kraken_common_types.StrategyState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
-  K.Kraken_common_types.StrategyState.initialize_orders runtime_cfg Config.GMM (fun () -> K.Kraken_incoming_data.get_all_open_orders ()) >>= fun () ->
+  State.refresh_usd_balance () >>= fun () ->
+  State.initialize_orders runtime_cfg >>= fun () ->
 
   let orderbook_symbols = List.filter_map (fun (asset: Config.asset_cfg) ->
     match asset.strategy with
@@ -189,32 +392,30 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   info_f ~section
     "Starting orderbook strategy for symbols: [%s]" (String.concat ", " orderbook_symbols) >>= fun () ->
 
-  (* Register event-driven execution processor *)
-  let process_execution event =
-    State.handle_execution runtime_cfg cmd_buffer orderbook_symbols event
+  let rec execution_loop () =
+    Ringbuffer.pop exec_buffer >>= fun event ->
+    State.handle_execution runtime_cfg cmd_buffer orderbook_symbols event >>= fun () ->
+    execution_loop ()
   in
-  
-  Ringbuffer.create_consumer exec_buffer ~name:"greedy_mm_execution" ~processor:process_execution;
 
   let balance_refresh_interval = 15.0 in
   let rec balance_loop () =
     Lwt_unix.sleep balance_refresh_interval >>= fun () ->
-    K.Kraken_common_types.StrategyState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
+    State.refresh_usd_balance () >>= fun () ->
     balance_loop ()
   in
 
-  (* Register event-driven tick processor *)
-  let process_tick (tick : Event.tick) =
+  let rec tick_loop () =
+    Ringbuffer.pop tick_buffer >>= fun (tick : Event.tick) ->
     (if List.mem tick.symbol orderbook_symbols then (
-      K.Kraken_common_types.StrategyState.update_price tick >>= fun () ->
-      (K.Kraken_common_types.StrategyState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
+      State.update_price tick >>= fun () ->
+      State.sync_open_orders () >>= fun () ->
       State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
       State.create_initial_order runtime_cfg tick.symbol cmd_buffer
     ) else (
       Lwt.return_unit
-    ))
+    )) >>= fun () ->
+    tick_loop ()
   in
-  
-  Ringbuffer.create_consumer tick_buffer ~name:"greedy_mm_tick" ~processor:process_tick;
 
-  balance_loop () 
+  Lwt.join [execution_loop (); tick_loop (); balance_loop ()] 
