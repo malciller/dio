@@ -32,6 +32,10 @@ let wait_for_instruments () = instruments_loaded
 let instrument_precisions : (string, (int * int)) Hashtbl.t = Hashtbl.create 16
 let instrument_data : (string, Kraken_common_types.pair_data) Hashtbl.t = Hashtbl.create 256
 
+(** Order tracking tables. *)
+let all_open_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.create 256
+let pending_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.create 64
+
 let get_precisions symbol : (int * int) option = Hashtbl.find_opt instrument_precisions symbol
 let get_instrument symbol : Kraken_common_types.pair_data option = Hashtbl.find_opt instrument_data symbol
 
@@ -54,6 +58,15 @@ let float_to_qty ~scale f =
 let safe_string json key default = JsonUtil.(member key json |> to_string_option |> Option.value ~default)
 let safe_float json key default = JsonUtil.(member key json |> to_float_option |> Option.value ~default)
 let debug_log msg = Lwt_log_core.debug ~section msg
+
+(** Parse order side strings to internal representation. *)
+let parse_order_side = function
+  | "buy" | "BUY" -> Some Core.Buy
+  | "sell" | "SELL" -> Some Core.Sell
+  | side when String.length side > 0 ->
+      Lwt_log_core.warning ~section (Printf.sprintf "Unknown order side: %s" side) |> ignore;
+      None
+  | _ -> None
 
 (** Global trading state reference. *)
 let state : State.t ref = ref State.initial
@@ -84,22 +97,23 @@ let redact_token_in_json_string (json_str : string) : string =
 (** Limit overly large payload logging to prevent runaway logs *)
 let truncate_payload_for_log ?(max_len = 2048) (payload : string) : string =
   let len = String.length payload in
+  let sanitized =
+    if String.exists (fun c -> c = '\\') payload then (
+      let buf = Bytes.create len in
+      String.iteri (fun i c ->
+        match c with
+        | '\\' -> Bytes.set buf i ' '
+        | _ -> Bytes.set buf i c
+      ) payload;
+      Bytes.unsafe_to_string buf
+    ) else
+      payload
+  in
   if len <= max_len then
-    payload
+    sanitized
   else
-    let truncated = String.sub payload 0 max_len in
+    let truncated = String.sub sanitized 0 max_len in
     Printf.sprintf "%s... [truncated %d bytes]" truncated (len - max_len)
-
-(** Parse Kraken order side string to internal representation. *)
-let parse_order_side = function
-  | "buy" -> Some Core.Buy
-  | "sell" -> Some Core.Sell
-  | _ -> None
-
-(** Order state tracking: confirmed open orders and pending submissions. *)
-let all_open_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
-let pending_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.create 16
-
 (** Format order information for logging. *)
 let format_order_log (order : Kraken_common_types.order) action =
   Printf.sprintf "[ORDER %s] ID: %s, Symbol: %s, Side: %s, Status: %s, Price: %.8f"
