@@ -398,11 +398,12 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   info_f ~section
     "Starting orderbook strategy for symbols: [%s]" (String.concat ", " orderbook_symbols) >>= fun () ->
 
-  let rec execution_loop () =
-    Ringbuffer.pop exec_buffer >>= fun event ->
-    State.handle_execution runtime_cfg cmd_buffer orderbook_symbols event >>= fun () ->
-    execution_loop ()
+  (* Register event-driven execution processor *)
+  let process_execution event =
+    State.handle_execution runtime_cfg cmd_buffer orderbook_symbols event
   in
+  
+  Ringbuffer.create_consumer exec_buffer ~name:"valley_mm_execution" ~processor:process_execution;
 
   let balance_refresh_interval = 15.0 in
   let rec balance_loop () =
@@ -411,8 +412,8 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
     balance_loop ()
   in
 
-  let rec tick_loop () =
-    Ringbuffer.pop tick_buffer >>= fun (tick : Event.tick) ->
+  (* Register event-driven tick processor *)
+  let process_tick (tick : Event.tick) =
     (if List.mem tick.symbol orderbook_symbols then (
       SharedState.update_price tick >>= fun () ->
       (SharedState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
@@ -420,8 +421,9 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
       State.manage_orders runtime_cfg tick.symbol cmd_buffer
     ) else (
       Lwt.return_unit
-    )) >>= fun () ->
-    tick_loop ()
+    ))
   in
+  
+  Ringbuffer.create_consumer tick_buffer ~name:"valley_mm_tick" ~processor:process_tick;
 
-  Lwt.join [execution_loop (); tick_loop (); balance_loop ()] 
+  balance_loop () 

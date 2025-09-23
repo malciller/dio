@@ -87,10 +87,7 @@ module KrakenHandler = struct
     );
     Lwt.return_unit
 
-  let rec process_kraken_commands cfg exec_buffer () =
-    let queue_pop_start = Unix.gettimeofday () in
-    Ringbuffer.pop kraken_cmd_queue >>= fun cmd ->
-    let queue_pop_duration = Unix.gettimeofday () -. queue_pop_start in
+  let process_kraken_command cfg exec_buffer cmd =
     let cmd_processing_start = Unix.gettimeofday () in
     
     (* Log command details before routing *)
@@ -124,35 +121,37 @@ module KrakenHandler = struct
     
     (* Record comprehensive Kraken handler timing *)
     Lwt.async (fun () ->
-      Telemetry.record_timer ["router"; "kraken"] "queue_pop_duration" queue_pop_duration >>= fun () ->
       Telemetry.record_timer ["router"; "kraken"] "logging_duration" logging_duration >>= fun () ->
       Telemetry.record_timer ["router"; "kraken"] "api_call_duration" kraken_api_duration >>= fun () ->
       Telemetry.record_timer ["router"; "kraken"] "total_processing_duration" total_cmd_duration
-      (* Removed queue_depth_after_processing gauge - non-duration metric *)
     );
     
-    process_kraken_commands cfg exec_buffer ()
+    Lwt.return_unit
+
+  let process_kraken_commands cfg exec_buffer () =
+    (* Register event-driven processor for kraken commands *)
+    Ringbuffer.create_consumer kraken_cmd_queue ~name:"kraken_processor" 
+      ~processor:(process_kraken_command cfg exec_buffer);
+    
+    Lwt.async (fun () -> 
+      Lwt_log_core.info_f ~section:(Lwt_log_core.Section.make "engine.router.kraken")
+        "Started event-driven Kraken command processor"
+    );
+    
+    (* Keep kraken handler alive indefinitely - never resolve *)
+    fst (Lwt.wait ())
 end
 
-(** Initialize router with command and execution buffers *)
+(** Initialize router with event-driven command processing *)
 let start cfg ~cmd_buffer ~exec_buffer =
   Lwt.async (KrakenHandler.process_kraken_commands cfg exec_buffer);
-  let rec cmd_loop () =
+  
+  (* Create event-driven command processor *)
+  let process_command cmd =
+    let total_processing_start = Unix.gettimeofday () in
     let cache_cleanup_start = Unix.gettimeofday () in
     OrderCache.cleanup ();
     let cache_cleanup_duration = Unix.gettimeofday () -. cache_cleanup_start in
-    
-    let cmd_buffer_pop_start = Unix.gettimeofday () in
-    Ringbuffer.pop cmd_buffer >>= fun cmd ->
-    let cmd_buffer_pop_duration = Unix.gettimeofday () -. cmd_buffer_pop_start in
-    
-    let total_processing_start = Unix.gettimeofday () in
-    
-    (* Record buffer and cache timing *)
-    Lwt.async (fun () ->
-      Telemetry.record_timer ["router"] "cmd_buffer_pop_duration" cmd_buffer_pop_duration >>= fun () ->
-      Telemetry.record_timer ["router"] "cache_cleanup_duration" cache_cleanup_duration
-    );
     
     let dedup_check_start = Unix.gettimeofday () in
     if OrderCache.is_duplicate cmd then (
@@ -168,7 +167,7 @@ let start cfg ~cmd_buffer ~exec_buffer =
           | Add { client_id; _ } -> client_id
           | Amend { order_id; _ } -> order_id
           | Cancel { order_id; _ } -> order_id) >>= fun () ->
-      cmd_loop ()
+      Lwt.return_unit
     ) else (
       let dedup_check_duration = Unix.gettimeofday () -. dedup_check_start in
       
@@ -199,53 +198,50 @@ let start cfg ~cmd_buffer ~exec_buffer =
       info_f ~section:(Lwt_log_core.Section.make "engine.router")
         "Routing command: %s" cmd_str >>= fun () ->
       let logging_duration = Unix.gettimeofday () -. logging_start in
-      (match cmd with
+      
+      match cmd with
       | Add { dst; _ } | Amend { dst; _ } | Cancel { dst; _ } ->
-          let handle_cmd () =
-            let routing_start = Unix.gettimeofday () in
-            match dst with
-            | "kraken" ->
-                let kraken_handler_start = Unix.gettimeofday () in
-                KrakenHandler.handle_order cfg exec_buffer cmd >>= fun () ->
-                let kraken_handler_duration = Unix.gettimeofday () -. kraken_handler_start in
-                let routing_duration = Unix.gettimeofday () -. routing_start in
-                let total_duration = Unix.gettimeofday () -. total_processing_start in
-                
-                (* Record comprehensive timing metrics *)
-                Lwt.async (fun () ->
-                  Telemetry.record_timer ["router"] "duplicate_check_duration" dedup_check_duration >>= fun () ->
-                  Telemetry.record_timer ["router"] "logging_duration" logging_duration >>= fun () ->
-                  Telemetry.record_timer ["router"] "kraken_handler_duration" kraken_handler_duration >>= fun () ->
-                  Telemetry.record_timer ["router"] "routing_duration" routing_duration >>= fun () ->
-                  Telemetry.record_timer ["router"] "total_command_processing_duration" total_duration >>= fun () ->
-                  (* Per-command-type timing breakdown *)
-                  Telemetry.record_timer ["router"; cmd_type] "processing_duration" total_duration >>= fun () ->
-                  Telemetry.record_timer ["router"; cmd_type] "kraken_handler_duration" kraken_handler_duration
-                );
-                Lwt.return_unit
-            | _ ->
-                let total_duration = Unix.gettimeofday () -. total_processing_start in
-                Lwt.async (fun () ->
-                  Telemetry.record_timer ["router"] "unknown_exchange_duration" total_duration >>= fun () ->
-                  Telemetry.record_gauge ["router"] "unknown_exchange_count" 1.0
-                );
-                error_f ~section:(Lwt_log_core.Section.make "engine.router")
-                  "Unknown exchange: %s" dst >>= fun () ->
-                Lwt.return_unit
-          in
-          Lwt.async (fun () ->
-            Lwt.catch handle_cmd (fun ex ->
-              let error_duration = Unix.gettimeofday () -. total_processing_start in
+          let routing_start = Unix.gettimeofday () in
+          (match dst with
+          | "kraken" ->
+              let kraken_handler_start = Unix.gettimeofday () in
+              KrakenHandler.handle_order cfg exec_buffer cmd >>= fun () ->
+              let kraken_handler_duration = Unix.gettimeofday () -. kraken_handler_start in
+              let routing_duration = Unix.gettimeofday () -. routing_start in
+              let total_duration = Unix.gettimeofday () -. total_processing_start in
+              
+              (* Record comprehensive timing metrics *)
               Lwt.async (fun () ->
-                Telemetry.record_timer ["router"] "command_error_duration" error_duration >>= fun () ->
-                Telemetry.record_gauge ["router"] "command_error_count" 1.0
+                Telemetry.record_timer ["router"] "cache_cleanup_duration" cache_cleanup_duration >>= fun () ->
+                Telemetry.record_timer ["router"] "duplicate_check_duration" dedup_check_duration >>= fun () ->
+                Telemetry.record_timer ["router"] "logging_duration" logging_duration >>= fun () ->
+                Telemetry.record_timer ["router"] "kraken_handler_duration" kraken_handler_duration >>= fun () ->
+                Telemetry.record_timer ["router"] "routing_duration" routing_duration >>= fun () ->
+                Telemetry.record_timer ["router"] "total_command_processing_duration" total_duration >>= fun () ->
+                (* Per-command-type timing breakdown *)
+                Telemetry.record_timer ["router"; cmd_type] "processing_duration" total_duration >>= fun () ->
+                Telemetry.record_timer ["router"; cmd_type] "kraken_handler_duration" kraken_handler_duration
+              );
+              Lwt.return_unit
+          | _ ->
+              let total_duration = Unix.gettimeofday () -. total_processing_start in
+              Lwt.async (fun () ->
+                Telemetry.record_timer ["router"] "unknown_exchange_duration" total_duration
               );
               error_f ~section:(Lwt_log_core.Section.make "engine.router")
-                "Unhandled exception in command handler: %s" (Printexc.to_string ex) >>= fun () ->
-              Lwt.return_unit
-            )
-          );
-          cmd_loop ()
-      )
-    ) in
-  cmd_loop ()
+                "Unknown exchange: %s" dst
+          )
+    )
+  in
+  
+  (* Register event-driven command processor *)
+  Ringbuffer.create_consumer cmd_buffer ~name:"router" ~processor:process_command;
+  
+  Lwt.async (fun () ->
+    Lwt_log_core.info_f ~section:(Lwt_log_core.Section.make "engine.router")
+      "Started event-driven router with command buffer consumer"
+  );
+  
+  (* Keep router alive indefinitely - never resolve *)
+  fst (Lwt.wait ())
+

@@ -3,6 +3,7 @@
         (* brings Engine.Ringbuffer into scope *)
 
 open Dio_types
+open Lwt.Infix
 
 let test_buffer_push_pop _switch () =
   let buffer = Ringbuffer.create 4 in
@@ -30,11 +31,24 @@ let test_buffer_push_pop _switch () =
   
   Alcotest.(check int) "len=2" 2 (Ringbuffer.length buffer);
 
-  let%lwt t1 = Ringbuffer.pop buffer in
-  Alcotest.(check string) "pop1" "BTC/USD" t1.symbol;
-
-  let%lwt t2 = Ringbuffer.pop buffer in
-  Alcotest.(check string) "pop2" "ETH/USD" t2.symbol;
+  (* Use try_pop since we know items are available *)
+  Ringbuffer.try_pop buffer >>= fun t1_opt ->
+  (match t1_opt with
+  | Some t1 -> 
+      Alcotest.(check string) "pop1" "BTC/USD" t1.symbol;
+      Lwt.return_unit
+  | None -> 
+      Alcotest.fail "Expected first tick"
+  ) >>= fun () ->
+  
+  Ringbuffer.try_pop buffer >>= fun t2_opt ->
+  (match t2_opt with
+  | Some t2 ->
+      Alcotest.(check string) "pop2" "ETH/USD" t2.symbol;
+      Lwt.return_unit
+  | None -> 
+      Alcotest.fail "Expected second tick"
+  ) >>= fun () ->
 
   Alcotest.(check bool) "empty" true (Ringbuffer.is_empty buffer);
   Lwt.return_unit

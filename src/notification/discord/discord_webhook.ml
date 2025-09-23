@@ -226,8 +226,7 @@ let balance_scheduler (balance_fetcher: Config.engine_config -> (string, float) 
   schedule_next ()
 
 (** Background worker that processes queued notifications and sends them to Discord *)
-let rec worker () =
-  Ringbuffer.pop message_queue >>= fun payload ->
+let process_message payload =
   (match Sys.getenv_opt "DISCORD_WEBHOOK_URL" with
   | None -> 
       if not !logged_no_url then (
@@ -258,8 +257,14 @@ let rec worker () =
       (fun exn ->
         error_f ~section "Exception sending Discord notification: %s" (Printexc.to_string exn) >>= fun () ->
         Lwt.return_unit
-      )) >>= fun () ->
-  worker ()
+      ))
+
+let worker () =
+  (* Register event-driven processor for discord messages *)
+  Ringbuffer.create_consumer message_queue ~name:"discord_sender" ~processor:process_message;
+  
+  Lwt.async (fun () -> info ~section "Started event-driven Discord webhook worker");
+  Lwt.return_unit
 
 (** Initialize the Discord notification system with worker and balance scheduler threads (idempotent) *)
 let start (balance_fetcher: Config.engine_config -> (string, float) Hashtbl.t Lwt.t) (cfg: Config.engine_config) =

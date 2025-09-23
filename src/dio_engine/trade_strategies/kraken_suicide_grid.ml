@@ -614,14 +614,15 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   info_f ~section
     "Starting grid strategy for symbols: [%s]" (String.concat ", " grid_symbols) >>= fun () ->
 
-  let rec execution_loop () =
-    Ringbuffer.pop exec_buffer >>= fun event ->
-    State.handle_execution runtime_cfg cmd_buffer grid_symbols event >>= fun () ->
-    execution_loop ()
+  (* Register event-driven execution processor *)
+  let process_execution event =
+    State.handle_execution runtime_cfg cmd_buffer grid_symbols event
   in
+  
+  Ringbuffer.create_consumer exec_buffer ~name:"suicide_grid_execution" ~processor:process_execution;
 
-  let rec tick_loop () =
-    Ringbuffer.pop tick_buffer >>= fun (tick : Event.tick) ->
+  (* Register event-driven tick processor *)
+  let process_tick (tick : Event.tick) =
     (if List.mem tick.symbol grid_symbols then (
       let (should_update, _bid_changed, _ask_changed) =
         match State.get_price tick.symbol with
@@ -649,8 +650,10 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
         let current_price_for_verify = Float.of_string (Primitives.Price.to_string tick.current_price) in
         State.verify_grid_spacing runtime_cfg tick.symbol cmd_buffer current_price_for_verify
       ) else Lwt.return_unit
-    ) else Lwt.return_unit) >>= fun () ->
-    tick_loop ()
+    ) else Lwt.return_unit) 
   in
+  
+  Ringbuffer.create_consumer tick_buffer ~name:"suicide_grid_tick" ~processor:process_tick;
 
-  Lwt.join [execution_loop (); tick_loop ()]
+  (* Keep the strategy alive indefinitely - never resolve *)
+  fst (Lwt.wait ())

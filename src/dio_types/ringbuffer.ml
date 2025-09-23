@@ -83,10 +83,12 @@ let is_empty q = q.head = q.tail
   !telemetry_record_gauge ["ringbuffer"; q.name] "depth" (Float.of_int depth) >>= fun () ->
   !telemetry_record_gauge ["ringbuffer"; q.name] "fill_percentage" fill_pct *)
 
-(** Adds an element to the ringbuffer. Blocks if buffer is full.
-    Thread-safe and signals waiting consumers when data becomes available. *)
-let push q v =
+(** Event-driven callback system *)
+type 'a consumer_callback = 'a -> unit Lwt.t
+
+let push_with_callback q v callback =
   Lwt_mutex.with_lock q.mutex (fun () ->
+    
     let rec wait_if_full () =
       if is_full q then (
         let wait_start_time = Unix.gettimeofday () in
@@ -99,50 +101,128 @@ let push q v =
         Lwt.return_unit
     in
     wait_if_full () >>= fun () ->
+    
     q.buf.(q.head land q.mask) <- Some v;
     q.head <- q.head + 1;
     Lwt_condition.signal q.not_empty ();
 
-    (* Removed non-duration metrics - depth and fill_percentage gauges *)
-
-    Lwt_log_core.debug_f ~section "Pushed item to ringbuffer %s, signaling not_empty." q.name |> Lwt.ignore_result;
+    Lwt_log_core.debug_f ~section "Pushed item to ringbuffer %s, triggering callback." q.name |> Lwt.ignore_result;
+    
+    (* Immediately trigger callback with the item *)
+    Lwt.async (fun () ->
+      Lwt.catch (fun () -> callback v) (fun exn ->
+        Lwt_log_core.error_f ~section "Callback error in ringbuffer %s: %s" 
+          q.name (Printexc.to_string exn)
+      )
+    );
+    
     Lwt.return_unit
   )
 
-(** Removes and returns the oldest element from the ringbuffer. Blocks if buffer is empty.
-    Thread-safe and signals waiting producers when space becomes available. *)
-let pop q =
-  let start_time = Unix.gettimeofday () in
+(** Non-blocking consumer registration - processes items as they arrive *)
+let create_consumer q ~name ~processor =
+  let consumer_name = q.name ^ "_" ^ name ^ "_consumer" in
+  let rec consume_loop () =
+    Lwt.catch (fun () ->
+      Lwt_mutex.with_lock q.mutex (fun () ->
+        if is_empty q then
+          (* Wait for data to arrive *)
+          Lwt_condition.wait ~mutex:q.mutex q.not_empty
+        else
+          Lwt.return_unit
+      ) >>= fun () ->
+      
+      (* Process all available items *)
+      let rec drain_and_process count =
+        Lwt_mutex.with_lock q.mutex (fun () ->
+          if is_empty q then
+            Lwt.return_none
+          else
+            let idx = q.tail land q.mask in
+            match q.buf.(idx) with
+            | None -> Lwt.return_none
+            | Some v ->
+                q.buf.(idx) <- None;
+                q.tail <- q.tail + 1;
+                Lwt_condition.signal q.not_full ();
+                Lwt.return_some v
+        ) >>= function
+        | None -> (* Empty buffer *)
+            Lwt.return count
+        | Some item ->
+            let process_start = Unix.gettimeofday () in
+            processor item >>= fun () ->
+            let process_duration = Unix.gettimeofday () -. process_start in
+            
+            (* Record processing metrics *)
+            Lwt.async (fun () ->
+              !telemetry_record_timer ["ringbuffer"; q.name; consumer_name] "item_processing_duration" process_duration
+            );
+            
+            drain_and_process (count + 1)
+      in
+      
+      let batch_start = Unix.gettimeofday () in
+      drain_and_process 0 >>= fun items_processed ->
+      let batch_duration = Unix.gettimeofday () -. batch_start in
+      
+      if items_processed > 0 then
+        Lwt.async (fun () ->
+          !telemetry_record_timer ["ringbuffer"; q.name; consumer_name] "batch_processing_duration" batch_duration >>= fun () ->
+          !telemetry_record_counter ["ringbuffer"; q.name; consumer_name] "items_processed" items_processed >>= fun () ->
+          if items_processed > 1 then
+            !telemetry_record_timer ["ringbuffer"; q.name; consumer_name] "per_item_avg_duration" 
+              (batch_duration /. Float.of_int items_processed)
+          else
+            Lwt.return_unit
+        );
+      
+      consume_loop ()
+    ) (fun exn ->
+      Lwt_log_core.error_f ~section "Consumer %s error: %s" consumer_name (Printexc.to_string exn) >>= fun () ->
+      (* Brief pause before retrying to avoid tight error loops *)
+      Lwt_unix.sleep 0.1 >>= fun () ->
+      consume_loop ()
+    )
+  in
+  
+  (* Start the consumer asynchronously *)
+  Lwt.async consume_loop;
+  Lwt.async (fun () -> Lwt_log_core.info_f ~section "Started event-driven consumer: %s" consumer_name);
+  ()
+
+(** Non-blocking pop that returns None if buffer is empty *)
+let try_pop q =
   Lwt_mutex.with_lock q.mutex (fun () ->
-    let rec wait_if_empty () =
-      if is_empty q then (
-        let wait_start_time = Unix.gettimeofday () in
-        Lwt_log_core.debug_f ~section "Ringbuffer %s empty, waiting to pop." q.name >>= fun () ->
-        Lwt_condition.wait ~mutex:q.mutex q.not_empty >>= fun () ->
-        let wait_duration = Unix.gettimeofday () -. wait_start_time in
-        Lwt.async (fun () -> !telemetry_record_timer ["ringbuffer"; q.name] "buffer_empty_wait_duration" wait_duration);
-        wait_if_empty ()
-      ) else
-        Lwt.return_unit
-    in
-    wait_if_empty () >>= fun () ->
-    let idx = q.tail land q.mask in
-    match q.buf.(idx) with
-    | None ->
-        (* This should never happen due to wait_if_empty logic above *)
-        Lwt_log_core.error_f ~section "Ringbuffer.pop: Impossible state reached - encountered None at index %d while buffer expected to be non-empty." idx >>= fun () ->
-        Lwt.fail (Failure "Ringbuffer.pop: Impossible state reached")
-    | Some v ->
-        q.buf.(idx) <- None;
-        q.tail <- q.tail + 1;
-        Lwt_condition.signal q.not_full ();
-
-    (* Record timing metrics for performance analysis - simplified *)
-    let duration = Unix.gettimeofday () -. start_time in
-    Lwt.async (fun () ->
-      !telemetry_record_timer ["ringbuffer"; q.name] "pop_duration" duration
-    );
-
-        Lwt_log_core.debug_f ~section "Popped item from ringbuffer %s, signaling not_full." q.name |> Lwt.ignore_result;
-        Lwt.return v
+    if is_empty q then
+      Lwt.return_none
+    else
+      let idx = q.tail land q.mask in
+      match q.buf.(idx) with
+      | None -> 
+          Lwt_log_core.error_f ~section "Ringbuffer.try_pop: Impossible state - None at non-empty index %d." idx >>= fun () ->
+          Lwt.return_none
+      | Some v ->
+          q.buf.(idx) <- None;
+          q.tail <- q.tail + 1;
+          Lwt_condition.signal q.not_full ();
+          Lwt.return_some v
   )
+
+(** Pop with timeout - returns None if timeout occurs *)
+let pop_with_timeout q timeout_seconds =
+  let timeout_promise = Lwt_unix.sleep timeout_seconds >>= fun () -> Lwt.return_none in
+  let poll_promise = 
+    let rec poll_loop () =
+      try_pop q >>= function
+      | Some v -> Lwt.return_some v
+      | None -> 
+          Lwt_unix.sleep 0.01 >>= fun () ->  (* Brief pause between polls *)
+          poll_loop ()
+    in
+    poll_loop ()
+  in
+  Lwt.pick [timeout_promise; poll_promise]
+
+(** Direct push without callback (maintains compatibility) *)
+let push q v = push_with_callback q v (fun _ -> Lwt.return_unit)

@@ -183,8 +183,7 @@ let handle_balance_update data =
   )
 
 (** Process balance updates from ringbuffer in FIFO order *)
-let process_balance_update_from_queue () =
-  Ringbuffer.pop balance_update_queue >>= fun (asset, item) ->
+let process_balance_update_from_queue (asset, item) =
   Lwt_mutex.with_lock balance_mutex (fun () ->
     let open Yojson.Safe.Util in
     debug_f ~section "Processing balance update for %s from ringbuffer" asset >>= fun () ->
@@ -269,8 +268,7 @@ let process_balance_update_from_queue () =
   )
 
 (** Process fill events from ringbuffer and create transaction records *)
-let process_fill_event_from_queue () =
-  Ringbuffer.pop fill_event_queue >>= fun fill ->
+let process_fill_event_from_queue fill =
   Lwt_mutex.with_lock balance_mutex (fun () ->
     let open Event in
     debug_f ~section "Processing fill event for %s from ringbuffer" fill.symbol >>= fun () ->
@@ -300,16 +298,15 @@ let process_fill_event_from_queue () =
 
 (** Start background processors for balance updates and fill events *)
 let start_balance_update_processor () =
-  let rec balance_loop () =
-    process_balance_update_from_queue () >>= fun () ->
-    balance_loop ()
-  in
-  let rec fill_loop () =
-    process_fill_event_from_queue () >>= fun () ->
-    fill_loop ()
-  in
-  Lwt.async balance_loop;
-  Lwt.async fill_loop
+  (* Register event-driven processors *)
+  Ringbuffer.create_consumer balance_update_queue ~name:"balance_processor" 
+    ~processor:process_balance_update_from_queue;
+  
+  Ringbuffer.create_consumer fill_event_queue ~name:"fill_processor" 
+    ~processor:process_fill_event_from_queue;
+  
+  Lwt.async (fun () -> info ~section "Started event-driven balance update and fill event processors");
+  ()
 
 (** Route WebSocket messages to appropriate balance handlers *)
 let handle_balances_message msg =

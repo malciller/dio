@@ -574,7 +574,9 @@ let monitor_order_fill exec_buffer target_client_id timeout =
       Lwt.return None  (* Timeout *)
     else (
       Lwt.catch (fun () ->
-        Lwt_unix.with_timeout 0.5 (fun () -> Ringbuffer.pop exec_buffer) >>= fun exec_event ->
+        Ringbuffer.pop_with_timeout exec_buffer 0.5 >>= function
+        | None -> Lwt.return (Some (0.0, 0.0, "timeout", None))
+        | Some exec_event ->
         (match exec_event with
          | Core.Fill { client_id; qty; price; _ } when client_id = target_client_id ->
              let filled_qty = Primitives.Qty.to_string qty |> float_of_string in

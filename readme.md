@@ -80,11 +80,14 @@ Edit `_config.json` (example):
   - B - Balance Widget
   - A - Asset Widget: Compact when Balance Widget open/Expanded when Balance Widget minimized
   - L - Log Widget
+  - T - Telemetry
+
 ####  Compact Asset View
 ![Dio Dashboard](.github/readme/dashboard_collapsed.png) 
 
 #### Expanded Asset View
 ![Dio Dashboard](.github/readme/dashboard_expanded.png)
+
 ## Notification
 ### Balance Updates
 ![Balances](.github/readme/balances.png)
