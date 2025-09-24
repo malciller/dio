@@ -67,12 +67,41 @@ let start ~(feed_initializer_fn : unit -> unit Lwt.t)
     ~(cmd_buffer: Core.order_cmd Ringbuffer.t)
     (runtime_cfg : Config.runtime_cfg)
     (core_cfg : Config.engine_config) =
-  let feed_fut = supervise "feed" feed_initializer_fn in
+  
+    let feed_fut = supervise "feed" feed_initializer_fn in
+  
   let grid_strat_fut = supervise "grid_strategy" (fun () -> grid_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
+  
   let orderbook_strat_fut = supervise "orderbook_strategy" (fun () -> orderbook_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
+  
   let vmm_strat_fut = supervise "vmm_strategy" (fun () -> vmm_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
+  
   let arbitrage_strat_fut = supervise "arbitrage_strategy" (fun () -> arbitrage_strategy.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer) in
+  
   let router_fut = supervise "router" (fun () -> router.start core_cfg ~cmd_buffer ~exec_buffer) in
+  
+  let fee_cache_symbols =
+    core_cfg.Config.symbols
+    |> List.map String.uppercase_ascii
+    |> List.sort_uniq String.compare
+  in
+  let fee_cache_fut =
+    supervise "fee_cache" (fun () ->
+      let rec loop () =
+        (match fee_cache_symbols with
+        | [] -> Lwt.return_unit
+        | symbols ->
+            Lwt_log_core.debug
+              ~section:(Lwt_log_core.Section.make "engine.supervisor.fee_cache")
+              (Printf.sprintf "Refreshing Kraken fee cache for %d symbol(s)" (List.length symbols))
+            >>= fun () ->
+            Kraken.Kraken_fee_cache.ensure_pairs core_cfg symbols)
+        >>= fun () ->
+        Lwt_unix.sleep 900.0 >>= loop
+      in
+      loop ()
+    )
+  in
   (** Fetches and aggregates all account balances from Kraken.
 
       Combines spot, earn, and liquid staking balances into a single
@@ -94,4 +123,4 @@ let start ~(feed_initializer_fn : unit -> unit Lwt.t)
   let discord_webhook_fut = supervise "discord_webhook" (fun () -> Discord_webhook.start balance_fetcher core_cfg) in
 
   Lwt_log_core.info ~section:(Lwt_log_core.Section.make "engine.supervisor") "Starting all components under supervision..." >>= fun () ->
-  Lwt.join [feed_fut; grid_strat_fut; orderbook_strat_fut; vmm_strat_fut; arbitrage_strat_fut; router_fut; discord_webhook_fut]
+  Lwt.join [feed_fut; grid_strat_fut; orderbook_strat_fut; vmm_strat_fut; arbitrage_strat_fut; router_fut; discord_webhook_fut; fee_cache_fut]

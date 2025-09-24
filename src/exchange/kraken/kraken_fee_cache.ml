@@ -25,14 +25,14 @@ type fee_info = {
 
 let fee_cache : (string, fee_info) Hashtbl.t = Hashtbl.create 128
 
-let cache_ttl_seconds = infinity 
-let backoff_seconds = 60.0    
+let cache_ttl_seconds = infinity  (** Fee cache entries persist until explicitly refreshed *)
+let backoff_seconds = 60.0      (** Wait before retry when rate-limited *)
 
 type pair_metadata = {
   canonical_pair: string;
   friendly_aliases: string list;
   fallback_maker: float option;
-  fallback_taker: float option;
+  fallback_taker: float option; 
 }
 
 let pair_metadata_by_friendly : (string, pair_metadata) Hashtbl.t = Hashtbl.create 256
