@@ -128,22 +128,23 @@ let update_asset_balance asset delta =
       asset current_balance new_balance delta
   )
 
-let get_fee_rate pair_symbol is_maker =
-  let pair = String.uppercase_ascii pair_symbol in
-  match Kraken.Kraken_incoming_data.get_instrument pair with
-  | Some instrument ->
-      (* Use actual fee data from API if available *)
-      if is_maker then
-        Option.value instrument.maker_fee ~default:0.004  (* Default maker fee *)
-      else
-        Option.value instrument.taker_fee ~default:0.004  (* Default taker fee *)
-  | None ->
-      Lwt.async (fun () ->
-        Lwt_log_core.error_f ~section "No instrument data for %s, cannot determine fee rate" pair
-      );
-      0.004  (* Conservative default fee rate *)
+let default_maker_fee = 0.004
+let default_taker_fee = 0.004
 
-let update_symbol_edges symbol =
+let get_fee_rate ~is_maker pair_symbol : float Lwt.t =
+  let pair = String.uppercase_ascii pair_symbol in
+  match Kraken.Kraken_fee_cache.get_fee_rate pair ~is_maker with
+  | Some fee -> Lwt.return fee
+  | None ->
+      let default = if is_maker then default_maker_fee else default_taker_fee in
+      match Kraken.Kraken_fee_cache.fallback_fee_of pair ~is_maker with
+      | Some fee -> Lwt.return fee
+      | None ->
+          warning_f ~section "Fee cache miss for %s (maker=%b); defaulting to %.4f"
+            pair is_maker default >>= fun () ->
+          Lwt.return default
+
+let update_symbol_edges _cfg symbol =
   match Kraken.Kraken_orderbook.get_orderbook symbol with
   | None ->
       debug_f ~section "No orderbook data for %s during update" symbol >>= fun () ->
@@ -155,7 +156,8 @@ let update_symbol_edges symbol =
       | top_bid :: _, top_ask :: _ ->
           let bid_price = top_bid.price in
           let ask_price = top_ask.price in
-          let fee_rate = get_fee_rate symbol false (* taker fee for arbitrage *) in
+          (* When we SELL base->quote (use bid), we pay taker fees; BUY leg uses ask and taker fees as well. *)
+          get_fee_rate ~is_maker:false symbol >>= fun fee_rate ->
 
           let base_to_quote_edge = {
             from_asset = base_asset;
@@ -201,7 +203,7 @@ let update_symbol_edges symbol =
           Lwt.return_unit
 
 (** Initialize exchange rate graph for arbitrage detection *)
-let initialize_cached_graph symbols =
+let initialize_cached_graph cfg symbols =
   if !graph_initialized then Lwt.return_unit else
 
   info_f ~section "Initializing cached exchange graph" >>= fun () ->
@@ -211,13 +213,13 @@ let initialize_cached_graph symbols =
 
   Lwt_list.iter_s (fun symbol ->
     Hashtbl.replace dirty_symbols symbol true;
-    update_symbol_edges symbol
+    update_symbol_edges cfg symbol
   ) symbols >>= fun () ->
 
   graph_initialized := true;
   Lwt.return_unit
 
-let update_changed_edges symbols =
+let update_changed_edges cfg symbols =
   List.iter (fun symbol ->
     match Kraken.Kraken_orderbook.get_orderbook symbol with
     | Some _ -> Hashtbl.replace dirty_symbols symbol true
@@ -226,7 +228,7 @@ let update_changed_edges symbols =
 
   let dirty_list = Hashtbl.fold (fun symbol _ acc -> symbol :: acc) dirty_symbols [] in
   if List.length dirty_list > 0 then
-    Lwt_list.iter_s update_symbol_edges dirty_list >>= fun () ->
+    Lwt_list.iter_s (update_symbol_edges cfg) dirty_list >>= fun () ->
     Lwt.return_unit
   else
     Lwt.return_unit
@@ -805,16 +807,16 @@ let active_cycles = ref 0
 let cycles_mutex = Lwt_mutex.create ()
 
 (** Start triangular arbitrage trading strategy *)
-let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config)
+let start (runtime_cfg : Config.runtime_cfg) (core_cfg : Config.engine_config)
     ~tick_buffer:_ ~cmd_buffer ~exec_buffer =
 
   init_default_balances ();
   let active_symbols = List.map (fun (asset: Config.asset_cfg) -> asset.symbol) runtime_cfg.assets in
   Kraken.Kraken_incoming_data.wait_for_instruments () >>= fun () ->
-  initialize_cached_graph active_symbols >>= fun () ->
+  initialize_cached_graph core_cfg active_symbols >>= fun () ->
 
   let rec arbitrage_loop () =
-    update_changed_edges active_symbols >>= fun () ->
+    update_changed_edges core_cfg active_symbols >>= fun () ->
 
     let graph = get_cached_graph () in
 

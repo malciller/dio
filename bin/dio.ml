@@ -10,6 +10,7 @@ open Conduit_lwt_unix
 open Dio_types
 open Lwt_log_core
 
+
 (** Flag to determine if running in dashboard mode *)
 let mode_dash = ref false
 
@@ -91,8 +92,8 @@ let setup_logging () =
   default := default_logger;
 
   (** Additional section-specific log level rules can be added here *)
-    (*Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; ;
-    Lwt_log.add_rule "dio.main" Debug;*) 
+    (*Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; ;*)
+
 
   
   ()
@@ -202,7 +203,7 @@ let specs = [
  * Orchestrates the complete startup sequence:
  * 1. Load and validate configuration
  * 2. Retrieve Kraken authentication token
- * 3. Initialize balance WebSocket feeds
+ * 3. Initialize balance WebSocket feeds and fee cache
  * 4. Configure trading strategies and router
  * 5. Start the main engine loop
  *)
@@ -249,13 +250,31 @@ let start_engine_logic () : unit Lwt.t =
           ) >>= fun auth_token_opt ->
 
           let core_cfg = { core_cfg with auth_token = auth_token_opt } in
-          Lwt.return_unit >>= fun () ->
 
           (** Initialize balance monitoring if authentication succeeded *)
           (match auth_token_opt with
           | Some token -> Kraken.Kraken_balances.initialize_ws_balances_feed core_cfg token
           | None -> ());
-          Lwt.return_unit >>= fun () ->
+
+          let fee_pairs =
+            runtime_cfg.assets
+            |> List.map (fun (asset : Config.asset_cfg) -> asset.symbol)
+            |> List.sort_uniq String.compare
+          in
+          let normalized_pairs = List.map String.uppercase_ascii fee_pairs in
+
+          debug_f ~section:config_section "Prefetching maker/taker fees for %d symbol(s)" (List.length normalized_pairs) >>= fun () ->
+          Kraken.Kraken_fee_cache.ensure_pairs core_cfg normalized_pairs >>= fun () ->
+          let combined_pairs = List.combine fee_pairs normalized_pairs in
+          Lwt_list.iter_s (fun (pair, symbol) ->
+            let maker_opt = Kraken.Kraken_fee_cache.get_fee_rate symbol ~is_maker:true in
+            let taker_opt = Kraken.Kraken_fee_cache.get_fee_rate symbol ~is_maker:false in
+            debug_f ~section:config_section
+              "[Fee Cache] %s (normalized %s) maker=%s taker=%s"
+              pair symbol
+              (match maker_opt with Some fee -> Printf.sprintf "%.6f" fee | None -> "missing")
+              (match taker_opt with Some fee -> Printf.sprintf "%.6f" fee | None -> "missing")
+          ) combined_pairs >>= fun () ->
 
           (** Configure trading strategy implementations *)
           let grid_strategy : Core.grid_strategy = {

@@ -23,7 +23,7 @@ module State = struct
   let buy_order_targets : (string, Primitives.Price.t) Hashtbl.t = Hashtbl.create 16
   let inventory_tracker : (string, float) Hashtbl.t = Hashtbl.create 16
   let fill_qty_tracker : (string, float) Hashtbl.t = Hashtbl.create 16
-  let fee_rates : (string, float) Hashtbl.t = Hashtbl.create 16
+  let maker_fee_cache : (string, float) Hashtbl.t = Hashtbl.create 16
 
   (** Update asset balance from exchange *)
   let refresh_asset_balance symbol =
@@ -40,20 +40,24 @@ module State = struct
       warning_f ~section "No instrument data for %s, cannot refresh balance." symbol >>= fun () ->
       Lwt.return_unit
 
-  (** Get fee rate for a given symbol *)
-  let get_fee_rate symbol =
-    match Hashtbl.find_opt fee_rates symbol with
+  (** Get maker fee rate for a given symbol *)
+  let get_maker_fee symbol =
+    let normalized_symbol = String.uppercase_ascii symbol in
+    match Hashtbl.find_opt maker_fee_cache normalized_symbol with
     | Some fee -> fee
     | None ->
-      match K.Kraken_incoming_data.get_instrument symbol with
-      | Some instrument ->
-        let fee = instrument.maker_fee |> Option.value ~default:0.002 in
-        info_f ~section "Fee for %s: %.6f" symbol fee |> ignore;
-        Hashtbl.add fee_rates symbol fee;
+        let fee =
+          match Kraken.Kraken_fee_cache.get_fee_rate normalized_symbol ~is_maker:true with
+          | Some cached -> cached
+          | None ->
+              (match Kraken.Kraken_fee_cache.fallback_fee_of normalized_symbol ~is_maker:true with
+              | Some fallback -> fallback
+              | None ->
+                  warning_f ~section "Missing maker fee for %s, defaulting to 0.002" symbol |> ignore;
+                  0.002)
+        in
+        Hashtbl.replace maker_fee_cache normalized_symbol fee;
         fee
-      | None ->
-        info_f ~section "No instrument data for %s, using default fee: 0.002" symbol |> ignore;
-        0.002 (* Conservative default fee rate *)
 
 
   (** Get real-time inventory for symbol *)
@@ -99,7 +103,7 @@ module State = struct
               match SharedState.get_price symbol with
               | Some tick ->
                 let top_ask_price_float = Float.of_string (Primitives.Price.to_string tick.ask) in
-                let asset_fee = get_fee_rate symbol in
+                let asset_fee = get_maker_fee symbol in
                 let profit_threshold = runtime_cfg.profit_threshold_pct /. 100.0 in
 
                 let buy_price_float = top_ask_price_float *. (1.0 -. ((2.0 *. asset_fee) +. profit_threshold)) in
@@ -199,7 +203,7 @@ module State = struct
         (match open_buy_orders with
         | [(_order_id, order)] ->
           let top_ask_price_float = Float.of_string (Primitives.Price.to_string tick.ask) in
-          let asset_fee = get_fee_rate tick.symbol in
+          let asset_fee = get_maker_fee tick.symbol in
           let profit_threshold = runtime_cfg.profit_threshold_pct /. 100.0 in
 
           let new_buy_price_float = top_ask_price_float *. (1.0 -. ((2.0 *. asset_fee) +. profit_threshold)) in

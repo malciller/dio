@@ -1,3 +1,4 @@
+
 (**
  * Kraken WebSocket Feed Handler
  *
@@ -38,6 +39,16 @@ let pending_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.cre
 
 let get_precisions symbol : (int * int) option = Hashtbl.find_opt instrument_precisions symbol
 let get_instrument symbol : Kraken_common_types.pair_data option = Hashtbl.find_opt instrument_data symbol
+
+
+(** Retrieve cached fee information, fetching from REST if needed. *)
+  let get_fee_rates cfg symbol ~is_maker =
+    let normalized_symbol = String.uppercase_ascii symbol in
+    match Kraken_fee_cache.get_fee_rate normalized_symbol ~is_maker with
+  | Some rate -> Lwt.return_some rate
+  | None ->
+      Kraken_fee_cache.ensure_pairs cfg [normalized_symbol] >>= fun () ->
+      Lwt.return (Kraken_fee_cache.get_fee_rate normalized_symbol ~is_maker)
 
 let get_price_precision symbol : int option =
   match Hashtbl.find_opt instrument_precisions symbol with
@@ -368,7 +379,7 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                   end
               | Some "heartbeat" ->
                   Lwt.return_unit
-              | Some "instrument" ->
+          | Some "instrument" ->
                   begin match Kraken_common_types.instrument_response_of_yojson json with
                   | Ok { type_ = msg_type_str; data = { pairs; _ }; _ } when msg_type_str = "snapshot" || msg_type_str = "update"->
                       Lwt_list.iter_s
@@ -378,8 +389,20 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                               Hashtbl.replace instrument_precisions pair.symbol (pair.price_precision, pair.qty_precision);
                               Hashtbl.replace instrument_data pair.symbol pair
                             in
+                            let symbol = pair.symbol in
+                            let normalized_symbol = String.uppercase_ascii symbol in
+                            Kraken_fee_cache.ensure_pairs cfg [normalized_symbol] >>= fun () ->
+                            let maker_opt = Kraken_fee_cache.get_fee_rate normalized_symbol ~is_maker:true in
+                            let taker_opt = Kraken_fee_cache.get_fee_rate normalized_symbol ~is_maker:false in
+                            let merged_pair =
+                              { pair with
+                                maker_fee = (match maker_opt with Some fee -> Some fee | None -> pair.maker_fee);
+                                taker_fee = (match taker_opt with Some fee -> Some fee | None -> pair.taker_fee);
+                              }
+                            in
+                            Hashtbl.replace instrument_data symbol merged_pair;
                             Lwt_log_core.debug ~section
-                              (Printf.sprintf "Stored instrument data for %s" pair.symbol)
+                              (Printf.sprintf "Stored instrument data for %s" symbol)
                           else
                             Lwt.return_unit)
                         pairs

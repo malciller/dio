@@ -816,7 +816,26 @@ let initial_state = {
      StringSet.elements !keyset
    in
  
-   let balance_info_list_lwt = Lwt_list.fold_left_s (fun acc asset ->
+  let default_maker_fee = 0.004 in
+  let maker_fee_for_symbol symbol =
+    let normalized_symbol = String.uppercase_ascii symbol in
+    let fee =
+      match Kraken.Kraken_fee_cache.get_fee_rate normalized_symbol ~is_maker:true with
+      | Some fee -> fee
+      | None ->
+          (match Kraken.Kraken_incoming_data.get_instrument normalized_symbol with
+           | Some inst -> Option.value inst.maker_fee ~default:default_maker_fee
+           | None -> default_maker_fee)
+    in
+    let () =
+      Lwt.async (fun () ->
+        Lwt_log_core.warning_f ~section "maker_fee_for_symbol %s returns fee: %.8f" normalized_symbol fee
+      )
+    in
+    fee
+  in
+
+  let balance_info_list_lwt = Lwt_list.fold_left_s (fun acc asset ->
      let price_usd_lwt =
        if asset = "USD" then Lwt.return_some 1.0
        else
@@ -870,58 +889,59 @@ let initial_state = {
  
         if raw_accumulated_balance < 0.0 then
           Lwt.async (fun () ->
-            let msg =
-              (Printf.sprintf "%s negative accumulated value detected! total_balance=%.8f, qty_on_sell_orders=%.8f, raw_accumulated_balance=%.8f"
-                asset total_balance qty_on_sell_orders raw_accumulated_balance)
-            in
-            Lwt_log_core.error ~section:(Lwt_log_core.Section.make "dashboard") msg
+            Lwt_log_core.error_f ~section
+              "%s negative accumulated value detected! total_balance=%.8f, qty_on_sell_orders=%.8f, raw_accumulated_balance=%.8f"
+              asset total_balance qty_on_sell_orders raw_accumulated_balance
           );
 
         let accumulated_balance = max 0.0 raw_accumulated_balance in
 
         (* Debug balance calculations for problematic assets *)
-        let _ = if asset = "USDG" || asset = "EURR" then
-          Lwt.ignore_result (
-            Lwt_log_core.debug ~section:(Lwt_log_core.Section.make "dashboard")
-              (Printf.sprintf "%s BALANCE DEBUG: spot=%.8f, earn=%.8f, liquid=%.8f, total=%.8f, on_sell=%.8f, accumulated=%.8f, price=%.4f"
-                asset spot_balance earn_balance liquid_balance total_balance qty_on_sell_orders accumulated_balance price_usd)
-          )
+        let _ =
+          if asset = "USDG" || asset = "EURR" then
+            Lwt_log_core.debug_f ~section
+              "%s BALANCE DEBUG: spot=%.8f, earn=%.8f, liquid=%.8f, total=%.8f, on_sell=%.8f, accumulated=%.8f, price=%.4f"
+              asset spot_balance earn_balance liquid_balance total_balance qty_on_sell_orders accumulated_balance price_usd
+            |> Lwt.ignore_result
+          else
+            ()
         in
 
         let pnl_accumulated_balance = accumulated_balance in
         let accumulated_value_usd =
-       
           if asset = "USD" then 0.0
-          (* Other assets show accumulated value at current price *)
           else accumulated_balance *. price_usd in
- 
- 
+
+        let open_sell_orders =
+          Hashtbl.fold (fun _ (order : Kraken.Kraken_common_types.order) acc ->
+            let base_of_order =
+              match String.split_on_char '/' order.order_symbol with
+              | base :: _ -> Some base
+              | _ -> None
+            in
+            match base_of_order with
+            | Some base when base = asset && order.side = Some Core.Sell ->
+                order :: acc
+            | _ ->
+                acc
+          ) open_orders []
+        in
+
+        let unrealized_value_on_orders, highest_net_sell_price =
+          List.fold_left (fun (unreal_acc, max_price) (o:Kraken.Kraken_common_types.order) ->
+            let fee_rate = maker_fee_for_symbol o.order_symbol in
+            let net_price = o.limit_price *. (1.0 -. fee_rate) in
+            let net_value = o.qty *. net_price in
+            (unreal_acc +. net_value, max max_price net_price)
+          ) (0.0, 0.0) open_sell_orders
+        in
+
         (* Calculate unrealized value based on pending sell orders *)
         let unrealized_value_usd =
-          let open_sell_orders =
-            Hashtbl.fold (fun _ (order : Kraken.Kraken_common_types.order) acc ->
-              let base_of_order =
-                match String.split_on_char '/' order.order_symbol with
-                | base :: _ -> Some base
-                | _ -> None
-              in
-              match base_of_order with
-              | Some base when base = asset && order.side = Some Core.Sell ->
-                  order :: acc
-              | _ ->
-                  acc
-            ) open_orders []
-          in
-          let unrealized_value_on_orders = List.fold_left (fun acc (o:Kraken.Kraken_common_types.order) -> acc +. (o.qty *. o.limit_price)) 0.0 open_sell_orders in
-          let highest_sell_price = List.fold_left (fun max_p (o:Kraken.Kraken_common_types.order) -> max max_p o.limit_price) 0.0 open_sell_orders in
-
           let unrealized_value_accumulated =
             if open_sell_orders <> [] then
-              (* Accumulated balance valued at the highest pending sell order price *)
-              (* Represents the worst-case exit price if market drops to sell order levels *)
-              accumulated_balance *. highest_sell_price
+              accumulated_balance *. highest_net_sell_price
             else
-              (* If no sell orders, use current accumulated value *)
               accumulated_value_usd
           in
 
@@ -929,7 +949,6 @@ let initial_state = {
             unrealized_value_on_orders +. unrealized_value_accumulated
           in
 
-          (* Special case: USD uses current total value as unrealized value *)
           if asset = "USD" then total_value_usd else total_unrealized
         in
  
@@ -1426,12 +1445,13 @@ in
        Lwt_stream.get (Notty_lwt.Term.events term_instance) >>= function
        | Some event -> handle_event event >>= input_loop
        | None ->
-           Lwt_log_core.info ~section:(Lwt_log_core.Section.make "dashboard") "Input event stream closed." >>= fun () ->
+          Lwt_log_core.info ~section "Input event stream closed." >>= fun () ->
            on_quit ()
      )
      (fun ex ->
-       Lwt_log_core.error ~section:(Lwt_log_core.Section.make "dashboard")
-         (Printf.sprintf "Error in dashboard input handling: %s. Stopping input loop." (Printexc.to_string ex))
+       Lwt_log_core.error_f ~section
+         "Error in dashboard input handling: %s. Stopping input loop."
+         (Printexc.to_string ex)
        >>= fun () -> on_quit ()
      )
    in

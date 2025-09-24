@@ -4,6 +4,7 @@
  (modules
   kraken_common_types
   kraken_balances
+  kraken_fee_cache
   kraken_generate_auth_token
   kraken_incoming_data
   kraken_outgoing_data
