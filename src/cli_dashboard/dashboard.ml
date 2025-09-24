@@ -127,11 +127,15 @@
  
  
  (* ─── helpers ─────────────────────────────────────────────── *)
- let fmt_runtime start =
-   let secs = int_of_float (Unix.gettimeofday () -. start) in
-   Printf.sprintf "%02d:%02d:%02d"
-     (secs / 3600) (secs mod 3600 / 60) (secs mod 60)
- 
+let fmt_runtime start =
+  let secs = int_of_float (Unix.gettimeofday () -. start) in
+  Printf.sprintf "%02d:%02d:%02d"
+    (secs / 3600) (secs mod 3600 / 60) (secs mod 60)
+
+let fmt_current_time ts =
+  let tm = Unix.localtime ts in
+  Printf.sprintf "%02d:%02d:%02d" tm.tm_hour tm.tm_min tm.tm_sec
+
  let get_term_dimensions () =
    match Notty_unix.winsize Unix.stdout with
    | Some (w, h) -> (h, w)
@@ -424,37 +428,39 @@
    unrealized_value_usd: float;      (** Unrealized P&L from pending orders *)
  }
  
- (** Dashboard UI state for rendering and user interaction *)
- type dashboard_state = {
-   show_logs: bool;                  (** Whether to display system logs panel *)
-   frame: int;                       (** Animation frame counter for blinking effects *)
-   balances: balance_info list;      (** Current portfolio balances *)
-   show_balances: bool;              (** Whether to display balances panel *)
-   show_assets: bool;                (** Whether to display assets section *)
-   show_telemetry: bool;             (** Whether to display telemetry panel *)
-   active_assets: string list;       (** Cached list of actively traded assets *)
-   order_data: (string, (float * float) list * (float * float) list) Hashtbl.t;
+(** Dashboard UI state for rendering and user interaction *)
+type dashboard_state = {
+  show_logs: bool;                  (** Whether to display system logs panel *)
+  frame: int;                       (** Animation frame counter for blinking effects *)
+  balances: balance_info list;      (** Current portfolio balances *)
+  show_balances: bool;              (** Whether to display balances panel *)
+  show_assets: bool;                (** Whether to display assets section *)
+  show_telemetry: bool;             (** Whether to display telemetry panel *)
+  active_assets: string list;       (** Cached list of actively traded assets *)
+  order_data: (string, (float * float) list * (float * float) list) Hashtbl.t;
                                    (** Cached order book data: asset -> (buy_orders, sell_orders) *)
-   term_dimensions: int * int;       (** Cached terminal dimensions (height, width) *)
-   cached_logs: string list;         (** Recent system logs to prevent excessive polling *)
-   last_log_count: int;              (** Previous log count to detect new entries *)
-   telemetry_stats: (string * Dio_types.Telemetry_types.metric_stats) list;
- }
+  term_dimensions: int * int;       (** Cached terminal dimensions (height, width) *)
+  cached_logs: string list;         (** Recent system logs to prevent excessive polling *)
+  last_log_count: int;              (** Previous log count to detect new entries *)
+  telemetry_stats: (string * Dio_types.Telemetry_types.metric_stats) list;
+  should_quit: bool;                (** Whether the dashboard should exit *)
+}
  
- let initial_state = {
-   show_logs = true;
-   frame = 0;
-   balances = [];
-   show_balances = true;
-   show_assets = true;
-   show_telemetry = false;
-   active_assets = [];
-   order_data = Hashtbl.create 16;
-   term_dimensions = (24, 80);  (* Default dimensions *)
-   cached_logs = [];
-   last_log_count = 0;
-   telemetry_stats = [];
- }
+let initial_state = {
+  show_logs = true;
+  frame = 0;
+  balances = [];
+  show_balances = true;
+  show_assets = true;
+  show_telemetry = false;
+  active_assets = [];
+  order_data = Hashtbl.create 16;
+  term_dimensions = (24, 80);  (* Default dimensions *)
+  cached_logs = [];
+  last_log_count = 0;
+  telemetry_stats = [];
+  should_quit = false;
+}
  
  let rec intersperse sep = function
    | [] -> []
@@ -886,8 +892,6 @@
         let accumulated_value_usd =
        
           if asset = "USD" then 0.0
-          (* Stablecoins (except USD) can have accumulated value, but for display purposes we show 0 *)
-          else if is_stablecoin asset then 0.0
           (* Other assets show accumulated value at current price *)
           else accumulated_balance *. price_usd in
  
@@ -914,6 +918,7 @@
           let unrealized_value_accumulated =
             if open_sell_orders <> [] then
               (* Accumulated balance valued at the highest pending sell order price *)
+              (* Represents the worst-case exit price if market drops to sell order levels *)
               accumulated_balance *. highest_sell_price
             else
               (* If no sell orders, use current accumulated value *)
@@ -1234,15 +1239,19 @@
     else 0
   in
  
+ let now_for_logs = Unix.time () in
  let logs_section_image =
-   if not state.show_logs || logs_height <= 0 then I.void 0 0
-   else
-     let logs_header_text = I.hcat [
-       I.string (style_logs_accent_text ++ A.st A.bold) "System Logs ";
-       I.string style_neutral_text "(";
-       I.string style_success_text (string_of_int (List.length state.cached_logs));
-       I.string style_neutral_text " entries)"
-     ] in
+  if not state.show_logs || logs_height <= 0 then I.void 0 0
+  else
+    let logs_header_text = I.hcat [
+      I.string (style_logs_accent_text ++ A.st A.bold) "System Logs ";
+      I.string style_neutral_text "[";
+      I.string style_success_text (fmt_current_time now_for_logs);
+      I.string style_neutral_text " UTC] ";
+      I.string style_neutral_text "(";
+      I.string style_success_text (string_of_int (List.length state.cached_logs));
+      I.string style_neutral_text " entries)"
+    ] in
      let logs_header_img =
        I.hcat [
          I.string style_header_border "┏━"; logs_header_text;
@@ -1341,6 +1350,7 @@ in
          state := { !state with show_logs = not !state.show_logs };
          Lwt.return_unit
      | `Key (`ASCII 'q', []) | `Key (`ASCII 'Q', []) ->
+         state := { !state with should_quit = true };
          on_quit ()
      | `Key (`ASCII 'b', []) | `Key (`ASCII 'B', []) ->
          state := { !state with show_balances = not !state.show_balances };
@@ -1387,37 +1397,42 @@ in
  
    (* Use mutex to prevent race conditions during state updates *)
    Lwt_mutex.with_lock state_mutex (fun () ->
-     state := { !state with frame = new_frame; balances; active_assets; order_data; term_dimensions; cached_logs; last_log_count; telemetry_stats };
+     state := { !state with frame = new_frame; balances; active_assets; order_data; term_dimensions; cached_logs; last_log_count; telemetry_stats; should_quit = !state.should_quit };
      Lwt.return_unit
    ) >>= fun () ->
- 
-   (* Initialize transaction history on first tick if balances are available *)
-   (if new_frame = 1 && balances <> [] then
-     Kraken.Kraken_balances.initialize_transaction_history ()
-   else
+
+   (* Check if we should quit *)
+   if !state.should_quit then
      Lwt.return_unit
-   ) >>= fun () ->
- 
-   (* Render with mutex protection *)
-   Lwt_mutex.with_lock state_mutex (fun () ->
-     Notty_lwt.Term.image term_instance (render !state)
-   ) >>= fun () ->
-   Lwt.pause () >>= fun () ->
-   let sleep_time = 1.0 in
-   Lwt_unix.sleep sleep_time >>= tick
+   else (
+     (* Initialize transaction history on first tick if balances are available *)
+     (if new_frame = 1 && balances <> [] then
+       Kraken.Kraken_balances.initialize_transaction_history ()
+     else
+       Lwt.return_unit
+     ) >>= fun () ->
+
+     (* Render with mutex protection *)
+     Lwt_mutex.with_lock state_mutex (fun () ->
+       Notty_lwt.Term.image term_instance (render !state)
+     ) >>= fun () ->
+     Lwt.pause () >>= fun () ->
+     let sleep_time = 1.0 in
+     Lwt_unix.sleep sleep_time >>= tick
+   )
    in
    let rec input_loop () =
      Lwt.catch (fun () ->
        Lwt_stream.get (Notty_lwt.Term.events term_instance) >>= function
        | Some event -> handle_event event >>= input_loop
-       | None -> 
+       | None ->
            Lwt_log_core.info ~section:(Lwt_log_core.Section.make "dashboard") "Input event stream closed." >>= fun () ->
-           on_quit () 
+           on_quit ()
      )
-     (fun ex -> 
-       Lwt_log_core.error ~section:(Lwt_log_core.Section.make "dashboard") 
+     (fun ex ->
+       Lwt_log_core.error ~section:(Lwt_log_core.Section.make "dashboard")
          (Printf.sprintf "Error in dashboard input handling: %s. Stopping input loop." (Printexc.to_string ex))
-       >>= fun () -> on_quit () 
+       >>= fun () -> on_quit ()
      )
    in
    Lwt.async tick;

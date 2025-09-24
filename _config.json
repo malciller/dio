@@ -59,18 +59,6 @@
       "qty": "10.0",
       "min_usd_balance": "1000.0",
       "strategy": "GMM"
-    },
-    {
-      "symbol": "USDT/USD",
-      "qty": "100.0",
-      "max_exposure": "100.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "USDC/USD",
-      "qty": "100.0",
-      "max_exposure": "100.0",
-      "strategy": "VMM"
     }
   ],
   "queues_cap": 1000,

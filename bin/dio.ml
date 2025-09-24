@@ -91,8 +91,8 @@ let setup_logging () =
   default := default_logger;
 
   (** Additional section-specific log level rules can be added here *)
-    (*Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; 
-    Lwt_log.add_rule "engine.strategy.kraken.GMM" Info;*) 
+    (*Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; ;*) 
+    Lwt_log.add_rule "dio.main" Debug;
 
   
   ()
@@ -329,8 +329,13 @@ let main () =
     (** Callback for dashboard-initiated shutdown *)
     let dashboard_on_quit () =
       if not !cleanup_initiated then (
-        Lwt_main.run (info_f ~section "Dashboard requested exit. Signaling main loop...");
+        Printf.eprintf "DEBUG: Dashboard quit requested\n%!";
+        Lwt.async (fun () ->
+          info_f ~section "Dashboard requested exit. Signaling main loop..."
+        );
+        Printf.eprintf "DEBUG: Waking up quit promise\n%!";
         Lwt.wakeup_later resolve_quit ();
+        Printf.eprintf "DEBUG: Quit promise woken up\n%!";
       );
       Lwt.return_unit
     in
@@ -354,7 +359,7 @@ let main () =
     (** Handle SIGINT for graceful shutdown *)
     let _sighandler_id = Lwt_unix.on_signal Sys.sigint (fun _signum ->
         if not !cleanup_initiated then (
-          Lwt_main.run (info_f ~section "SIGINT received, initiating exit...");
+          Lwt.async (fun () -> info_f ~section "SIGINT received, initiating exit...");
           Lwt.wakeup_later resolve_quit ();
         )
       )
@@ -362,22 +367,30 @@ let main () =
 
     (** Main event loop: wait for shutdown signal then cleanup *)
     Lwt_main.run (
+      Printf.eprintf "DEBUG: Waiting for quit promise\n%!";
       quit_promise >>= fun () ->
+      Printf.eprintf "DEBUG: Quit promise resolved, starting cleanup\n%!";
       if not !cleanup_initiated then (
         cleanup_initiated := true;
-        Lwt_main.run (info_f ~section "Main loop exiting, performing final cleanup...");
-        Lwt.cancel !final_engine_promise_ref;
+        Printf.eprintf "DEBUG: Skipping engine cancellation for now\n%!";
+        Printf.eprintf "DEBUG: Releasing terminal\n%!";
         (match !term_instance_ref with
-        | Some ti -> Notty_lwt.Term.release ti
-        | None -> Lwt.return_unit)
-        >>= fun () ->
-          Lwt_main.run (info_f ~section "Cleanup complete. Exiting application.");
-          Lwt.return_unit
+        | Some ti ->
+            Notty_lwt.Term.release ti >>= fun () ->
+            Printf.eprintf "DEBUG: Terminal released\n%!";
+            Lwt.return_unit
+        | None ->
+            Printf.eprintf "DEBUG: No terminal to release\n%!";
+            Lwt.return_unit
+        ) >>= fun () ->
+        Printf.eprintf "DEBUG: Cleanup complete, returning\n%!";
+        Lwt.return_unit
       ) else (
-        Lwt_main.run (info_f ~section "Cleanup already handled or in progress. Exiting application.");
+        Printf.eprintf "DEBUG: Cleanup already handled\n%!";
         Lwt.return_unit
       )
     );
+    Printf.eprintf "DEBUG: Lwt_main.run finished\n%!";
 
   end else
 
