@@ -91,8 +91,8 @@ let setup_logging () =
   default := default_logger;
 
   (** Additional section-specific log level rules can be added here *)
-    (*Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; ;*) 
-    Lwt_log.add_rule "dio.main" Debug;
+    (*Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; ;
+    Lwt_log.add_rule "dio.main" Debug;*) 
 
   
   ()
@@ -329,13 +329,10 @@ let main () =
     (** Callback for dashboard-initiated shutdown *)
     let dashboard_on_quit () =
       if not !cleanup_initiated then (
-        Printf.eprintf "DEBUG: Dashboard quit requested\n%!";
         Lwt.async (fun () ->
           info_f ~section "Dashboard requested exit. Signaling main loop..."
         );
-        Printf.eprintf "DEBUG: Waking up quit promise\n%!";
         Lwt.wakeup_later resolve_quit ();
-        Printf.eprintf "DEBUG: Quit promise woken up\n%!";
       );
       Lwt.return_unit
     in
@@ -367,30 +364,21 @@ let main () =
 
     (** Main event loop: wait for shutdown signal then cleanup *)
     Lwt_main.run (
-      Printf.eprintf "DEBUG: Waiting for quit promise\n%!";
       quit_promise >>= fun () ->
-      Printf.eprintf "DEBUG: Quit promise resolved, starting cleanup\n%!";
       if not !cleanup_initiated then (
         cleanup_initiated := true;
-        Printf.eprintf "DEBUG: Skipping engine cancellation for now\n%!";
-        Printf.eprintf "DEBUG: Releasing terminal\n%!";
         (match !term_instance_ref with
         | Some ti ->
             Notty_lwt.Term.release ti >>= fun () ->
-            Printf.eprintf "DEBUG: Terminal released\n%!";
             Lwt.return_unit
         | None ->
-            Printf.eprintf "DEBUG: No terminal to release\n%!";
             Lwt.return_unit
         ) >>= fun () ->
-        Printf.eprintf "DEBUG: Cleanup complete, returning\n%!";
         Lwt.return_unit
       ) else (
-        Printf.eprintf "DEBUG: Cleanup already handled\n%!";
         Lwt.return_unit
       )
     );
-    Printf.eprintf "DEBUG: Lwt_main.run finished\n%!";
 
   end else
 

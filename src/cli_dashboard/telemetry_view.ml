@@ -122,10 +122,10 @@ let render_header max_width =
   let separator = I.string (A.fg (A.gray 10)) (String.make separator_length '-') in
   I.vcat [title; headers; separator]
 
-(** Sort metrics alphabetically for display *)
-let sort_metrics_alphabetically stats =
-  List.sort (fun (name1, _) (name2, _) ->
-    String.compare name1 name2
+(** Sort metrics by p99 value (highest to lowest) for display *)
+let sort_metrics_by_p99_descending stats =
+  List.sort (fun (_, stats1) (_, stats2) ->
+    Float.compare stats2.p99 stats1.p99  (* Higher p99 first *)
   ) stats
 
 (** Main telemetry panel rendering function *)
@@ -133,7 +133,7 @@ let render_telemetry_panel _width _height =
   Lwt.catch (fun () ->
     Telemetry.get_all_stats () >>= fun all_stats ->
 
-    let sorted_stats = sort_metrics_alphabetically all_stats in
+    let sorted_stats = sort_metrics_by_p99_descending all_stats in
     
     (* Show all metrics without limit *)
     let displayed_stats = sorted_stats in
@@ -158,7 +158,7 @@ let render_telemetry_panel _width _height =
 
 (** Pure rendering of telemetry panel given pre-fetched stats (avoids Lwt in UI render path) *)
 let render_telemetry_panel_preloaded _width _height (all_stats : (string * Dio_types.Telemetry_types.metric_stats) list) =
-  let sorted_stats = sort_metrics_alphabetically all_stats in
+  let sorted_stats = sort_metrics_by_p99_descending all_stats in
   (* Show all metrics without limit *)
   let displayed_stats = sorted_stats in
 

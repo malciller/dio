@@ -61,6 +61,6 @@
       "strategy": "GMM"
     }
   ],
-  "queues_cap": 1000,
+  "queues_cap": 500,
   "profit_threshold_pct": 0.0010
 }
