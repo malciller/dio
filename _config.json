@@ -10,7 +10,7 @@
     {
       "symbol": "PAXG/USD",
       "qty": "0.0029",
-      "grid_interval": "0.41",
+      "grid_interval": "0.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
