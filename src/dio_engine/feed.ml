@@ -109,7 +109,7 @@ module Kraken_ws : WS with type config = Config.engine_config = struct
   type config = Config.engine_config
 
   let start ?runtime_cfg cfg ~on_tick : unit Lwt.t =
-    (Kraken.Kraken_incoming_data.start ?runtime_cfg cfg ~on_tick : unit Lwt.t)
+    (Kraken.Kraken_incoming_data.start_market_data ?runtime_cfg cfg ~on_tick : unit Lwt.t)
 
   let start_executions cfg ~on_execution : unit Lwt.t =
     (Kraken.Kraken_incoming_data.start_executions cfg ~on_execution : unit Lwt.t)

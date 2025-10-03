@@ -41,15 +41,6 @@ let get_precisions symbol : (int * int) option = Hashtbl.find_opt instrument_pre
 let get_instrument symbol : Kraken_common_types.pair_data option = Hashtbl.find_opt instrument_data symbol
 
 
-(** Retrieve cached fee information, fetching from REST if needed. *)
-  let get_fee_rates cfg symbol ~is_maker =
-    let normalized_symbol = String.uppercase_ascii symbol in
-    match Kraken_fee_cache.get_fee_rate normalized_symbol ~is_maker with
-  | Some rate -> Lwt.return_some rate
-  | None ->
-      Kraken_fee_cache.ensure_pairs cfg [normalized_symbol] >>= fun () ->
-      Lwt.return (Kraken_fee_cache.get_fee_rate normalized_symbol ~is_maker)
-
 let get_price_precision symbol : int option =
   match Hashtbl.find_opt instrument_precisions symbol with
   | Some (price_prec, _) -> Some price_prec
@@ -67,7 +58,7 @@ let float_to_qty ~scale f =
 
 (** Safe JSON value extraction with defaults. *)
 let safe_string json key default = JsonUtil.(member key json |> to_string_option |> Option.value ~default)
-let safe_float json key default = JsonUtil.(member key json |> to_float_option |> Option.value ~default)
+
 let debug_log msg = Lwt_log_core.debug ~section msg
 
 (** Parse order side strings to internal representation. *)
@@ -105,26 +96,7 @@ let redact_token_in_json_string (json_str : string) : string =
   with
   | _ -> json_str
 
-(** Limit overly large payload logging to prevent runaway logs *)
-let truncate_payload_for_log ?(max_len = 2048) (payload : string) : string =
-  let len = String.length payload in
-  let sanitized =
-    if String.exists (fun c -> c = '\\') payload then (
-      let buf = Bytes.create len in
-      String.iteri (fun i c ->
-        match c with
-        | '\\' -> Bytes.set buf i ' '
-        | _ -> Bytes.set buf i c
-      ) payload;
-      Bytes.unsafe_to_string buf
-    ) else
-      payload
-  in
-  if len <= max_len then
-    sanitized
-  else
-    let truncated = String.sub sanitized 0 max_len in
-    Printf.sprintf "%s... [truncated %d bytes]" truncated (len - max_len)
+(** Note: Log message truncation is now handled globally in the logging setup (bin/dio.ml) *)
 (** Format order information for logging. *)
 let format_order_log (order : Kraken_common_types.order) action =
   Printf.sprintf "[ORDER %s] ID: %s, Symbol: %s, Side: %s, Status: %s, Price: %.8f"
@@ -137,18 +109,6 @@ let format_order_log (order : Kraken_common_types.order) action =
      | Core.Rejected -> "Rejected"
     )
     order.limit_price
-
-(** Log all currently open orders for debugging. *)
-let log_open_orders () =
-  let orders = Hashtbl.to_seq_values all_open_orders |> List.of_seq in
-  debug_log (Printf.sprintf "Open orders (%d):" (List.length orders)) >>= fun () ->
-  Lwt_list.iter_s (fun (order: Kraken_common_types.order) ->
-    debug_log (format_order_log order "OPEN")
-  ) orders
-
-(** Handle order cancellation events. *)
-let handle_order_cancellation order_id symbol =
-  debug_log (Printf.sprintf "[ORDER CANCELLATION] Handling cancellation for %s %s" order_id symbol)
 
 (** Data conversion utilities for Kraken to internal format mapping. *)
 
@@ -198,27 +158,6 @@ let kraken_status_to_core_state status : Core.order_state =
       Lwt_log_core.warning ~section (Printf.sprintf "Unhandled Kraken order status: %s, mapping to Rejected" status) |> ignore;
       Rejected
 
-(** Convert execution report to internal market event representation. *)
-let execution_report_to_market_event (report : Kraken_common_types.execution_report) : Core.market_event option =
-  let order_id = report.order_id in
-  let client_id = "kraken:" ^ order_id in
-  let ts = kraken_ts_to_core_ts report.timestamp in
-  let state = kraken_status_to_core_state report.order_status in
-  let symbol_opt = report.symbol in
-  let price_prec, qty_prec = match symbol_opt with Some sym -> Option.value (get_precisions sym) ~default:(8,8) | None -> (8,8) in
-
-  match report.exec_type, report.last_qty, report.last_price, kraken_side_to_core_side report.side, symbol_opt with
-  | ("trade" | "filled"), Some qty_f, Some price_f, Some side, Some symbol when qty_f > 0.0 ->
-      begin try
-        let price = float_to_price ~scale:price_prec price_f in
-        let qty = float_to_qty ~scale:qty_prec qty_f in
-        Some (Core.Fill { symbol; order_id; client_id; price; qty; side; ts })
-      with ex ->
-        Lwt_log_core.error ~section (Printf.sprintf "Failed to convert Fill data for order %s: %s" order_id (Printexc.to_string ex)) |> ignore;
-        Some (Core.Ack { order_id; client_id; state; ts })
-      end
-  | _ ->
-      Some (Core.Ack { order_id; client_id; state; ts })
 
 (** WebSocket connection establishment with DNS resolution and TLS setup. *)
 let connect (cfg : Config.engine_config) is_auth =
@@ -317,8 +256,7 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                 Lwt_log_core.debug ~section (Printf.sprintf "Subscription successful (req_id=%s, channel=%s)" req_id channel)
               else
                 let error_msg = Option.value error ~default:"unknown error" in
-                let payload = truncate_payload_for_log frame.content in
-                Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s. Payload: %s" req_id error_msg payload)
+                Lwt_log_core.error ~section (Printf.sprintf "Subscription failed (req_id=%s): %s. Payload: %s" req_id error_msg frame.content)
           | _ ->
               (* Handle data messages by channel *)
               match JsonUtil.(member "channel" json |> to_string_option) with
@@ -360,22 +298,18 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                           on_tick event_tick
                       ) ticker_list
                   | Ok _ ->
-                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
-                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected ticker data format: %s" payload)
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected ticker data format: %s" frame.content)
                   | Error err ->
-                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
-                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse ticker: %s. Payload: %s" err payload)
+                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse ticker: %s. Payload: %s" err frame.content)
                   end
               | Some "status" ->
                   begin match Kraken_common_types.status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
                       Lwt_log_core.debug ~section "Received valid status message"
                   | Ok _ ->
-                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
-                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected status data format: %s" payload)
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unexpected status data format: %s" frame.content)
                   | Error err ->
-                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
-                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s. Payload: %s" err payload)
+                      Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s. Payload: %s" err frame.content)
                   end
               | Some "heartbeat" ->
                   Lwt.return_unit
@@ -471,18 +405,15 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                       Lwt.return_unit
                   )
               | Some unknown_channel ->
-                  let payload = truncate_payload_for_log ~max_len:1024 frame.content in
                   Lwt_log_core.warning ~section
-                    (Printf.sprintf "Received unhandled channel '%s': %s" unknown_channel payload)
+                    (Printf.sprintf "Received unhandled channel '%s': %s" unknown_channel frame.content)
               | None ->
-                  let payload = truncate_payload_for_log ~max_len:1024 frame.content in
                   Lwt_log_core.warning ~section
-                    (Printf.sprintf "Missing or invalid channel in message: %s" payload)
+                    (Printf.sprintf "Missing or invalid channel in message: %s" frame.content)
         )
         (fun ex ->
-          let payload = truncate_payload_for_log frame.content in
           Lwt_log_core.error ~section
-            (Printf.sprintf "Error processing text frame: %s. Payload: %s" (Printexc.to_string ex) payload)
+            (Printf.sprintf "Error processing text frame: %s. Payload: %s" (Printexc.to_string ex) frame.content)
           >>= fun () ->
           Lwt.return_unit)
   | Frame.Opcode.Ping ->
@@ -497,7 +428,7 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
         (Printf.sprintf "Received unhandled opcode: %s" (Frame.Opcode.to_string opcode))
 
 (** Process individual order state updates from executions channel messages. *)
-let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engine_config) (context_msg_type : string) =
+  let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engine_config) (context_msg_type : string) =
   (* context_msg_type is "snapshot" or "update", for logging context *)
   let order_id = safe_string order_json "order_id" "" in
   let item_exec_type = safe_string order_json "exec_type" "" in
@@ -546,11 +477,9 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
       in
       (match Hashtbl.find_opt all_open_orders order_id with
       | Some existing_order ->
-          let symbol = existing_order.order_symbol in
           Hashtbl.remove all_open_orders order_id;
           debug_log (format_order_log existing_order ("CANCELED" ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
-          handle_order_cancellation order_id symbol >>= fun () ->
-          log_open_orders ()
+          Lwt.return_unit
       | None -> 
           if not was_in_pending_and_stat_handled then
             Lwt_log_core.debug ~section (Printf.sprintf "[ORDER CANCELED UNKNOWN] ID: %s not found in open or pending." order_id)
@@ -572,7 +501,7 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
       | Some existing_order ->
           Hashtbl.remove all_open_orders order_id;
           debug_log (format_order_log existing_order (String.uppercase_ascii item_exec_type ^ (if context_msg_type = "snapshot" then " (Snapshot)" else ""))) >>= fun () ->
-          log_open_orders ()
+          Lwt.return_unit
       | None -> 
           if not was_in_pending_and_stat_handled then
             Lwt_log_core.debug ~section (Printf.sprintf "[ORDER %s UNKNOWN] ID: %s not found in open or pending." (String.uppercase_ascii item_exec_type) order_id)
@@ -625,14 +554,15 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
             order_id; client_id = userref_opt; order_symbol = symbol;
             side = side_opt; status; limit_price; qty;
           } in
-          let* log_msg_lwt =
-            let suffix = if context_msg_type = "snapshot" then " (Snapshot)" else "" in
+          let suffix = if context_msg_type = "snapshot" then " (Snapshot)" else "" in
+          let%lwt () =
             match item_exec_type with
             | "pending_new" ->
                 Hashtbl.replace pending_orders order_id order;
                 Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order is pending_new: Calling inc_pending for %s (%s)" order.order_symbol context_msg_type) >>= fun () ->
                 state := inc_pending order.order_symbol !state; 
-                Lwt.return (format_order_log order ("PENDING" ^ suffix))
+                debug_log (format_order_log order ("PENDING" ^ suffix)) >>= fun () ->
+                Lwt.return_unit
             | "new" ->
                 let was_pending_internally = Hashtbl.mem pending_orders order_id in
                 Hashtbl.replace all_open_orders order_id order;
@@ -646,7 +576,8 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
                 Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Order is new/open on exchange: Calling inc_pending for %s (%s)" order.order_symbol context_msg_type) |> Lwt.ignore_result;
                 state := inc_pending order.order_symbol !state;
 
-                Lwt.return (format_order_log order ("NEW" ^ suffix))
+                debug_log (format_order_log order ("NEW" ^ suffix)) >>= fun () ->
+                Lwt.return_unit
             | "trade" ->
                 Lwt_log_core.debug ~section (Printf.sprintf "[StatsUpdate] Calling inc_trades for %s" order.order_symbol) >>= fun () -> (* Added Log *)
                 state := inc_trades order.order_symbol !state;
@@ -666,7 +597,8 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
                        Hashtbl.replace all_open_orders order_id updated_order;
                        let log_msg = Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Remaining qty: %.8f)" suffix last_qty_val order.order_symbol last_price_val remaining_qty in
                        Lwt_log_core.debug ~section log_msg >>= fun () ->
-                       Lwt.return log_msg
+                       debug_log log_msg >>= fun () ->
+                       Lwt.return_unit
                    | None ->
                        (* This case should ideally not be hit frequently if snapshots are processed correctly,
                           but as a fallback, we'll create a new open order record with the remaining quantity if provided. *)
@@ -678,10 +610,13 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
                          Hashtbl.replace all_open_orders order_id new_open_order;
                          let log_msg = Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (Created new open order with remaining qty: %.8f)" suffix last_qty_val order.order_symbol last_price_val remaining_qty in
                          Lwt_log_core.debug ~section log_msg >>= fun () ->
-                         Lwt.return log_msg
+                         debug_log log_msg >>= fun () ->
+                         Lwt.return_unit
                        else
                          Lwt_log_core.error ~section (Printf.sprintf "[TRADE ERROR] No existing order found for trade event %s and no remaining qty provided." order_id) >>= fun () ->
-                         Lwt.return (Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (ERROR: No existing order found)" suffix last_qty_val order.order_symbol last_price_val))
+                         let log_msg = Printf.sprintf "[ORDER PARTIAL FILL%s] %f %s at %.2f (ERROR: No existing order found)" suffix last_qty_val order.order_symbol last_price_val in
+                         debug_log log_msg >>= fun () ->
+                         Lwt.return_unit)
                 else
                   (* Check if it was pending before moving *)
                   let was_pending = Hashtbl.mem pending_orders order_id in
@@ -690,13 +625,21 @@ let process_execution_order_item_state (order_json : Json.t) (cfg : Config.engin
                   if was_pending then state := dec_pending order.order_symbol !state;
                   let log_msg = Printf.sprintf "[ORDER FILL%s] %f %s at %.2f (Order now terminal)" suffix last_qty_val order.order_symbol last_price_val in
                   Lwt_log_core.debug ~section log_msg >>= fun () ->
-                  Lwt.return log_msg
-            | "amended" -> Hashtbl.replace all_open_orders order_id order; Lwt.return (format_order_log order ("AMENDED" ^ suffix))
-            | "restated" | "status" -> Hashtbl.replace all_open_orders order_id order; Lwt.return (format_order_log order ((String.uppercase_ascii item_exec_type) ^ suffix))
-            | _ -> Lwt.return (format_order_log order (("UPDATE (" ^ item_exec_type ^ ")" ) ^ suffix))
+                  debug_log log_msg >>= fun () ->
+                  Lwt.return_unit
+            | "amended" -> 
+                Hashtbl.replace all_open_orders order_id order; 
+                debug_log (format_order_log order ("AMENDED" ^ suffix)) >>= fun () ->
+                Lwt.return_unit
+            | "restated" | "status" -> 
+                Hashtbl.replace all_open_orders order_id order; 
+                debug_log (format_order_log order ((String.uppercase_ascii item_exec_type) ^ suffix)) >>= fun () ->
+                Lwt.return_unit
+            | _ -> 
+                debug_log (format_order_log order (("UPDATE (" ^ item_exec_type ^ ")" ) ^ suffix)) >>= fun () ->
+                Lwt.return_unit
           in
-          debug_log log_msg_lwt >>= fun () ->
-          if List.mem item_exec_type ["new"; "amended"; "restated"; "status"; "pending_new"] then log_open_orders () else Lwt.return_unit
+          Lwt.return_unit
       else
         Lwt.return_unit 
 
@@ -714,7 +657,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
               let error_opt = JsonUtil.(member "error" json |> to_string_option) in
               let req_id_str = Option.map string_of_int req_id_opt |> Option.value ~default:"N/A" in
               if not success then
-                let redacted_payload = frame.content |> redact_token_in_json_string |> truncate_payload_for_log in
+                let redacted_payload = frame.content |> redact_token_in_json_string in
                 let err_msg = Option.value error_opt ~default:("unknown error, payload: " ^ redacted_payload) in
                 Lwt_log_core.error ~section (Printf.sprintf "Auth subscription failed (req_id=%s): %s" req_id_str err_msg)
               else
@@ -814,39 +757,29 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
                       ) else Lwt.return_unit
 
                   | Some other_type ->
-                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
-                      Lwt_log_core.warning ~section (Printf.sprintf "Unknown execution message type: %s. Payload: %s" other_type payload)
+                      Lwt_log_core.warning ~section (Printf.sprintf "Unknown execution message type: %s. Payload: %s" other_type frame.content)
                   | None ->
-                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
-                      Lwt_log_core.warning ~section (Printf.sprintf "Message type is missing in execution message. Payload: %s" payload)
+                      Lwt_log_core.warning ~section (Printf.sprintf "Message type is missing in execution message. Payload: %s" frame.content)
                   end
               | Some "status" -> 
                   begin match Kraken_common_types.status_response_of_yojson json with
                   | Ok { data = [_status]; _ } ->
                       Lwt.return_unit
                   | Ok _ ->
-                      let payload = truncate_payload_for_log ~max_len:1024 frame.content in
-
-
-
-                    
-                      Lwt_log_core.warning ~section ("Unexpected status data format: " ^ payload)
+                      Lwt_log_core.warning ~section ("Unexpected status data format: " ^ frame.content)
                   | Error err ->
                       Lwt_log_core.error ~section (Printf.sprintf "Failed to parse status: %s" err)
                   end
               | Some "heartbeat" ->
                   Lwt.return_unit
               | Some "" | None ->
-                  let payload = truncate_payload_for_log frame.content in
-                  Lwt_log_core.warning ~section (Printf.sprintf "Auth message with empty or missing channel: %s" payload)
+                  Lwt_log_core.warning ~section (Printf.sprintf "Auth message with empty or missing channel: %s" frame.content)
               | Some other_channel ->
-                  let payload = truncate_payload_for_log frame.content in
-                  Lwt_log_core.warning ~section (Printf.sprintf "Unhandled public channel: %s. Content: %s" other_channel payload)
+                  Lwt_log_core.warning ~section (Printf.sprintf "Unhandled public channel: %s. Content: %s" other_channel frame.content)
         )
         (fun ex ->
-          let payload = truncate_payload_for_log frame.content in
           Lwt_log_core.error ~section
-            (Printf.sprintf "Exception in auth handler: %s. Payload: %s" (Printexc.to_string ex) payload) >>= fun () ->
+            (Printf.sprintf "Exception in auth handler: %s. Payload: %s" (Printexc.to_string ex) frame.content) >>= fun () ->
           Lwt.return_unit
         )
   | Frame.Opcode.Ping ->
@@ -867,7 +800,7 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
 let get_all_open_orders () : (string, Kraken_common_types.order) Hashtbl.t = all_open_orders
 
 (** Public market data feed: connects to ticker, instrument, and orderbook channels. *)
-let start ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
+let start_market_data ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
   let rec loop conn =
     Lwt.catch
       (fun () ->

@@ -16,21 +16,21 @@
     },
     {
       "symbol": "ETH/USD",
-      "qty": "0.0025", 
+      "qty": "0.003", 
       "grid_interval": "0.75",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "SOL/USD",
-      "qty": "0.05",
+      "qty": "0.06",
       "grid_interval": "0.75",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "ADA/USD",
-      "qty": "13.0",
+      "qty": "15.0",
       "grid_interval": "0.75",
       "sell_mult": "0.999",
       "strategy": "Grid"
@@ -45,19 +45,19 @@
     {
       "symbol": "USDG/USD",
       "qty": "100.0",
-      "min_usd_balance": "800.0",
+      "min_usd_balance": "600.0",
       "strategy": "GMM"
     },
     {
       "symbol": "USDR/USD",
       "qty": "10.0",
-      "min_usd_balance": "1000.0",
+      "min_usd_balance": "1500.0",
       "strategy": "GMM"
     },
     {
       "symbol": "EURR/USD",
       "qty": "10.0",
-      "min_usd_balance": "1000.0",
+      "min_usd_balance": "1500.0",
       "strategy": "GMM"
     }
   ],

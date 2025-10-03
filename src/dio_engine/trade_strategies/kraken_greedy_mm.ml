@@ -62,6 +62,29 @@ module State = struct
         acc
     ) open_orders 0.0
 
+  type top_price_info = {
+    bid_price : Primitives.Price.t;
+    ask_price : Primitives.Price.t;
+    bid_str : string;
+    ask_str : string;
+    price_prec : int;
+    qty_prec : int;
+  }
+
+  let get_precisions_or_default symbol =
+    match K.Kraken_incoming_data.get_precisions symbol with
+    | Some (price_prec, qty_prec) -> (price_prec, qty_prec)
+    | None -> (8, 8)
+
+  let get_top_prices symbol : top_price_info option =
+    match K.Kraken_orderbook.get_top_of_book symbol with
+    | Some (best_bid, best_ask) ->
+        let price_prec, qty_prec = get_precisions_or_default symbol in
+        let bid_price = Primitives.Price.of_string_exn ~scale:price_prec best_bid.price_str in
+        let ask_price = Primitives.Price.of_string_exn ~scale:price_prec best_ask.price_str in
+        Some { bid_price; ask_price; bid_str = best_bid.price_str; ask_str = best_ask.price_str; price_prec; qty_prec }
+    | None -> None
+
   (** Create exchange-compliant order with proper formatting *)
   let create_order ~symbol ~side ~price ~qty =
     match K.Kraken_incoming_data.get_precisions symbol with
@@ -124,9 +147,11 @@ module State = struct
                       let clean_qty = floor (available_balance *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
                       info_f ~section "Found %.8f of %s to sell before pausing (spot: %.8f, liquid: %.8f). Clean qty: %.8f"
                         available_balance base_currency spot_bal liquid_bal clean_qty >>= fun () ->
-                      (match get_price symbol with
-                      | Some tick ->
-                          let sell_price = tick.ask in
+                      (match K.Kraken_orderbook.get_best_bid_ask symbol with
+                      | Some (_, ask_price_float) ->
+                          let price_prec = instrument.price_precision in
+                          let sell_price_str = Printf.sprintf "%.*f" price_prec ask_price_float in
+                          let sell_price = Primitives.Price.of_string_exn ~scale:price_prec sell_price_str in
                           let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
                           let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
                           let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
@@ -138,7 +163,7 @@ module State = struct
                               error_f ~section "Failed to create final sell order for %s." symbol
                           )
                       | None ->
-                          warning_f ~section "No price info for %s, cannot place final sell order." symbol
+                          warning_f ~section "No orderbook data for %s, cannot place final sell order." symbol
                       )
                     ) else (
                       info_f ~section "No remaining tradeable asset balance for %s to sell. Pausing." base_currency
@@ -147,12 +172,10 @@ module State = struct
                     warning_f ~section "No instrument data for %s, cannot place final sell order." symbol
 
               ) else (
-                match get_price symbol with
-                | Some tick ->
-                    let buy_price = tick.bid in
-                    let sell_price = tick.ask in
-                    let buy_order = create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty in
-                    let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:asset_cfg.qty in
+                match get_top_prices symbol with
+                | Some top_price_info ->
+                    let buy_order = create_order ~symbol ~side:Buy ~price:top_price_info.bid_price ~qty:asset_cfg.qty in
+                    let sell_order = create_order ~symbol ~side:Sell ~price:top_price_info.ask_price ~qty:asset_cfg.qty in
                     (match buy_order, sell_order with
                     | Some buy_cmd, Some sell_cmd ->
                         info_f ~section "Successfully created both orders for %s, pushing to buffer" symbol >>= fun () ->
@@ -170,7 +193,7 @@ module State = struct
                         error_f ~section "Failed to create both orders for %s" symbol >>= fun () ->
                         Lwt.return_unit)
                 | None ->
-                    warning_f ~section "No price info for %s" symbol
+                    warning_f ~section "No orderbook data for %s" symbol
               )
           | None -> 
               warning_f ~section "min_usd_balance not configured for %s" symbol
@@ -199,40 +222,39 @@ module State = struct
         (match open_buy_orders with
         | [(_order_id, order)] ->
             debug_f ~section "Processing single buy order %s for %s" order.order_id tick.symbol >>= fun () ->
-            let top_bid_price = tick.bid in
-            let order_price_float = order.limit_price in
-            let top_bid_price_float = Float.of_string (Primitives.Price.to_string top_bid_price) in
-            
-            let price_diff = abs_float (order_price_float -. top_bid_price_float) in
-            let price_diff_pct = if order_price_float > 0.0 then price_diff /. order_price_float else 0.0 in
+            (match get_top_prices tick.symbol with
+            | Some top_price_info ->
+                let now = Unix.gettimeofday () in
+                let last_amend = Hashtbl.find_opt last_amend_time order.order_id |> Option.value ~default:0.0 in
+                let time_since_last_amend = now -. last_amend in
 
-            if price_diff_pct > 0.0001 then ( (* 0.01% threshold *)
-              let now = Unix.gettimeofday () in
-              let last_amend = Hashtbl.find_opt last_amend_time order.order_id |> Option.value ~default:0.0 in
-              let time_since_last_amend = now -. last_amend in
+                let current_price_str = Printf.sprintf "%.*f" top_price_info.price_prec order.limit_price in
 
-              if time_since_last_amend >= amend_cooldown then (
-                info_f ~section "Prices differ, creating amend command for order %s (%.8f -> %.8f)"
-                  order.order_id order_price_float top_bid_price_float >>= fun () ->
-                let amend_cmd = Core.Amend {
-                  dst = "kraken";
-                  order_id = order.order_id;
-                  symbol = order.order_symbol;
-                  new_price = top_bid_price;
-                  new_qty = Primitives.Qty.of_string_exn ~scale:8 (Printf.sprintf "%.8f" order.qty);
-                  ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
-                } in
-                Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
-                Hashtbl.replace last_amend_time order.order_id now;
-                info_f ~section "Amending order %s to new price %s" order.order_id (Primitives.Price.to_string top_bid_price)
-              ) else (
-                debug_f ~section "Skipping amend for order %s - cooldown active (%.1fs remaining)"
-                  order.order_id (amend_cooldown -. time_since_last_amend)
-              )
-            ) else (
-              debug_f ~section "Order %s price %.8f matches top bid %.8f within threshold, no amendment needed"
-                order.order_id order_price_float top_bid_price_float >>= fun () ->
-              Lwt.return_unit
+                if String.equal current_price_str top_price_info.bid_str then (
+                  debug_f ~section "Order %s already at top bid %s"
+                    order.order_id top_price_info.bid_str >>= fun () ->
+                  Lwt.return_unit
+                ) else if time_since_last_amend >= amend_cooldown then (
+                  info_f ~section "Amending order %s from %s to top bid %s"
+                    order.order_id current_price_str top_price_info.bid_str >>= fun () ->
+                  let amend_cmd = Core.Amend {
+                    dst = "kraken";
+                    order_id = order.order_id;
+                    symbol = order.order_symbol;
+                    new_price = top_price_info.bid_price;
+                    new_qty = Primitives.Qty.of_string_exn ~scale:top_price_info.qty_prec (Printf.sprintf "%.*f" top_price_info.qty_prec order.qty);
+                    ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+                  } in
+                  Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+                  Hashtbl.replace last_amend_time order.order_id now;
+                  info_f ~section "Amend queued for %s to price %s"
+                    order.order_id top_price_info.bid_str
+                ) else (
+                  debug_f ~section "Skipping amend for order %s - cooldown active (%.1fs remaining)"
+                    order.order_id (amend_cooldown -. time_since_last_amend)
+                )
+            | None ->
+                warning_f ~section "No orderbook data for %s, cannot adjust buy order" tick.symbol
             )
         | [] ->
             debug_f ~section "No open buy orders found for %s" tick.symbol >>= fun () ->

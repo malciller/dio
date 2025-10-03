@@ -9,7 +9,7 @@ open Dio_types.Core
 
 (** Ringbuffer telemetry interface for this module *)
 module RingbufferTelemetryInterface = struct
-  let set_functions = Ringbuffer.TelemetryInterface.set_functions [@@warning "-32"]
+  let set_functions = Ringbuffer.TelemetryInterface.set_functions
 end
 
 

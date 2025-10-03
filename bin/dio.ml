@@ -20,6 +20,32 @@ let section = Section.make "dio.main"
 let config_section = Section.make "dio.config"
 
 (**
+ * Truncate overly large log messages to prevent runaway logs.
+ *
+ * Sanitizes backslashes and truncates messages exceeding max_len.
+ * Applied globally to all log output.
+ *)
+let truncate_log_message ?(max_len = 2048) (message : string) : string =
+  let len = String.length message in
+  let sanitized =
+    if String.exists (fun c -> c = '\\') message then (
+      let buf = Bytes.create len in
+      String.iteri (fun i c ->
+        match c with
+        | '\\' -> Bytes.set buf i ' '
+        | _ -> Bytes.set buf i c
+      ) message;
+      Bytes.unsafe_to_string buf
+    ) else
+      message
+  in
+  if len <= max_len then
+    sanitized
+  else
+    let truncated = String.sub sanitized 0 max_len in
+    Printf.sprintf "%s... [truncated %d bytes]" truncated (len - max_len)
+
+(**
  * Configure logging system with appropriate output handlers.
  *
  * In dashboard mode, routes logs through the dashboard interface.
@@ -43,6 +69,8 @@ let setup_logging () =
             Lwt.return_unit
           else if List.length messages > 0 then
             let first_message_string = List.hd messages in
+            (** Truncate message to prevent runaway logs *)
+            let truncated_message = truncate_log_message first_message_string in
             let timestamp =
               let tm = Unix.localtime (Unix.time ()) in
               Printf.sprintf "%02d:%02d:%02d"
@@ -55,7 +83,7 @@ let setup_logging () =
                 timestamp
                 (Section.name section)
                 (string_of_level level)
-                first_message_string
+                truncated_message
             in
             Dashboard.Stats.add_dashboard_log formatted_message;
             Lwt.return_unit
@@ -69,6 +97,8 @@ let setup_logging () =
           ~output:(fun section level messages ->
             if List.length messages > 0 then
               let first_message_string = List.hd messages in
+              (** Truncate message to prevent runaway logs *)
+              let truncated_message = truncate_log_message first_message_string in
               let timestamp =
                 let tm = Unix.localtime (Unix.time ()) in
                 Printf.sprintf "%02d:%02d:%02d"
@@ -81,7 +111,7 @@ let setup_logging () =
                   timestamp
                   (Section.name section)
                   (string_of_level level)
-                  first_message_string
+                  truncated_message
               in
               Lwt_io.printf "%s\n" formatted_message
             else
@@ -93,7 +123,7 @@ let setup_logging () =
 
   (** Additional section-specific log level rules can be added here *)
     (*Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; ;*)
-
+    (*Lwt_log.add_rule "engine.strategy.kraken.GMM" Debug;*)
 
   
   ()
