@@ -815,8 +815,8 @@ let start_market_data ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
             Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Close ()) >>= fun _ ->
             Lwt.return_unit)
           (fun _ -> Lwt.return_unit) >>= fun () ->
-        (* Re-throw the exception so Feed.start's retry loop will handle it *)
-        Lwt.fail (Failure (Printexc.to_string exn)))
+        (* Re-raise original exception to avoid recursive Failure wrapping *)
+        Lwt.fail exn)
   in
   connect cfg false >>= fun conn ->
   let subscribe_ticker_msg = make_subscribe_message ~req_id:1 cfg `Ticker in
@@ -859,8 +859,8 @@ let start_executions (cfg : Config.engine_config) ~on_execution =
                 Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Close ()) >>= fun _ ->
                 Lwt.return_unit)
               (fun _ -> Lwt.return_unit) >>= fun () ->
-            (* Re-throw the exception so Feed.start_executions's retry loop will handle it *)
-            Lwt.fail (Failure (Printexc.to_string ex))
+            (* Re-raise original exception to avoid recursive Failure wrapping *)
+            Lwt.fail ex
           )
       in
       Lwt.catch 
@@ -878,5 +878,6 @@ let start_executions (cfg : Config.engine_config) ~on_execution =
         )
         (fun ex -> 
           Lwt_log_core.error_f ~section "Failed to connect/subscribe to auth endpoint: %s" (Printexc.to_string ex) >>= fun () ->
-          Lwt.fail (Failure (Printexc.to_string ex))
+          (* Re-raise original exception to avoid recursive Failure wrapping *)
+          Lwt.fail ex
         )
