@@ -808,36 +808,40 @@ let start_market_data ?runtime_cfg (cfg : Config.engine_config) ~on_tick =
         handle_public_frame conn cfg frame ~on_tick >>= fun () ->
         loop conn)
       (fun exn ->
-        Lwt_log_core.error_f ~section "Error in public feed read loop: %s" (Printexc.to_string exn) >>= fun () ->
         (* Send a close frame if possible, but don't wait for it to complete *)
         Lwt.catch
           (fun () -> 
             Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Close ()) >>= fun _ ->
             Lwt.return_unit)
           (fun _ -> Lwt.return_unit) >>= fun () ->
-        (* Re-raise original exception to avoid recursive Failure wrapping *)
+        (* Re-raise to exit loop and trigger reconnection *)
         Lwt.fail exn)
   in
-  connect cfg false >>= fun conn ->
-  let subscribe_ticker_msg = make_subscribe_message ~req_id:1 cfg `Ticker in
-  let subscribe_instrument_msg = make_subscribe_message ~req_id:3 cfg `Instrument in 
-  Websocket_lwt_unix.write conn subscribe_ticker_msg >>= fun () ->
-  Websocket_lwt_unix.write conn subscribe_instrument_msg >>= fun () -> 
-  
-  (* Subscribe to book channels for orderbook symbols *)
-  (match runtime_cfg with
-   | Some runtime_cfg ->
-     let orderbook_symbols = get_orderbook_symbols runtime_cfg in
-     if List.length orderbook_symbols > 0 then (
-       let subscribe_book_msg = make_subscribe_message ~req_id:4 cfg (`Book orderbook_symbols) in
-       Websocket_lwt_unix.write conn subscribe_book_msg >>= fun () ->
-       Lwt_log_core.info ~section (Printf.sprintf "Subscribed to book channel for %d symbols" (List.length orderbook_symbols))
-     ) else
-       Lwt.return_unit
-   | None -> Lwt.return_unit
-  ) >>= fun () ->
-  
-  loop conn
+  Lwt.catch
+    (fun () ->
+      connect cfg false >>= fun conn ->
+      let subscribe_ticker_msg = make_subscribe_message ~req_id:1 cfg `Ticker in
+      let subscribe_instrument_msg = make_subscribe_message ~req_id:3 cfg `Instrument in 
+      Websocket_lwt_unix.write conn subscribe_ticker_msg >>= fun () ->
+      Websocket_lwt_unix.write conn subscribe_instrument_msg >>= fun () -> 
+      
+      (* Subscribe to book channels for orderbook symbols *)
+      (match runtime_cfg with
+       | Some runtime_cfg ->
+         let orderbook_symbols = get_orderbook_symbols runtime_cfg in
+         if List.length orderbook_symbols > 0 then (
+           let subscribe_book_msg = make_subscribe_message ~req_id:4 cfg (`Book orderbook_symbols) in
+           Websocket_lwt_unix.write conn subscribe_book_msg >>= fun () ->
+           Lwt_log_core.info ~section (Printf.sprintf "Subscribed to book channel for %d symbols" (List.length orderbook_symbols))
+         ) else
+           Lwt.return_unit
+       | None -> Lwt.return_unit
+      ) >>= fun () ->
+      
+      loop conn)
+    (fun exn ->
+      Lwt_log_core.error_f ~section "Public feed connection error: %s" (Printexc.to_string exn) >>= fun () ->
+      Lwt.fail exn)
 
 (** Authenticated order execution feed: connects to private executions channel. *)
 let start_executions (cfg : Config.engine_config) ~on_execution =
@@ -852,14 +856,11 @@ let start_executions (cfg : Config.engine_config) ~on_execution =
             loop conn
           )
           (fun ex -> 
-            Lwt_log_core.error_f ~section "Error in auth feed read loop: %s" (Printexc.to_string ex) >>= fun () ->
-            (* Send a close frame if possible, but don't wait for it to complete *)
             Lwt.catch
               (fun () -> 
                 Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Close ()) >>= fun _ ->
                 Lwt.return_unit)
               (fun _ -> Lwt.return_unit) >>= fun () ->
-            (* Re-raise original exception to avoid recursive Failure wrapping *)
             Lwt.fail ex
           )
       in
@@ -877,7 +878,6 @@ let start_executions (cfg : Config.engine_config) ~on_execution =
           loop conn
         )
         (fun ex -> 
-          Lwt_log_core.error_f ~section "Failed to connect/subscribe to auth endpoint: %s" (Printexc.to_string ex) >>= fun () ->
-          (* Re-raise original exception to avoid recursive Failure wrapping *)
+          Lwt_log_core.error_f ~section "Auth feed connection error: %s" (Printexc.to_string ex) >>= fun () ->
           Lwt.fail ex
         )
