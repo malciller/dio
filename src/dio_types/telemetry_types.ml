@@ -8,6 +8,8 @@ type telemetry_config = {
   enable_detailed_histograms: bool;       (** Whether to collect detailed histograms *)
   enable_incremental_stats: bool;         (** Whether to maintain incremental statistics *)
   export_interval_seconds: float option; (** Optional export interval *)
+  sampling_rate: float;                   (** Sample rate (0.0-1.0), 0.01 = 1% sampling *)
+  disable_hot_path_metrics: bool;         (** Disable metrics in hot paths (ringbuffer item processing) *)
 }
 
 (** Default telemetry configuration *)
@@ -18,6 +20,20 @@ let default_config = {
   enable_detailed_histograms = false;
   enable_incremental_stats = true;
   export_interval_seconds = None;
+  sampling_rate = 1.0; (* 100% sampling by default *)
+  disable_hot_path_metrics = false;
+}
+
+(** Production telemetry configuration with aggressive sampling *)
+let production_config = {
+  enabled = true;
+  max_metrics_per_key = 500;
+  stats_window_seconds = 300.0;
+  enable_detailed_histograms = false;
+  enable_incremental_stats = true;
+  export_interval_seconds = None;
+  sampling_rate = 0.01; (* 1% sampling *)
+  disable_hot_path_metrics = true; (* Disable hot path metrics *)
 }
 
 (** Phantom types for type-safe metric definitions *)

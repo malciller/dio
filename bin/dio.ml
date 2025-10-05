@@ -14,6 +14,9 @@ open Lwt_log_core
 (** Flag to determine if running in dashboard mode *)
 let mode_dash = ref false
 
+(** Flag to enable production telemetry optimizations (1% sampling, disabled hot paths) *)
+let production_mode = ref false
+
 (** Main application logging section *)
 let section = Section.make "dio.main"
 (** Configuration-specific logging section *)
@@ -224,7 +227,8 @@ let your_other_args = []
 
 (** Command line argument specifications *)
 let specs = [
-  ("--dashboard", Arg.Set mode_dash, " Run Dashboard")
+  ("--dashboard", Arg.Set mode_dash, " Run Dashboard");
+  ("--production", Arg.Set production_mode, " Enable production telemetry optimizations (1% sampling, disabled hot paths)");
 ] @ your_other_args
 
 (**
@@ -360,6 +364,14 @@ let main () =
   (** Initialize telemetry system *)
   Lwt_main.run (
     info ~section "Initializing telemetry system" >>= fun () ->
+    (if !production_mode then (
+      info ~section "Enabling production telemetry mode (1% sampling, disabled hot paths)" >>= fun () ->
+      Telemetry.set_config Dio_types.Telemetry_types.production_config;
+      Lwt.return_unit
+    ) else (
+      info ~section "Using default telemetry configuration" >>= fun () ->
+      Lwt.return_unit
+    )) >>= fun () ->
     Telemetry.init ()
   );
 

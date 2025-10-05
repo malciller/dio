@@ -150,35 +150,17 @@ let create_consumer q ~name ~processor =
         ) >>= function
         | None -> Lwt.return count
         | Some item ->
-            let process_start = Unix.gettimeofday () in
             processor item >>= fun () ->
-            let process_duration = Unix.gettimeofday () -. process_start in
-
-            (* Record processing metrics *)
-            Lwt.async (fun () ->
-              !telemetry_record_timer ["ringbuffer"; q.name; consumer_name]
-                "item_processing_duration" process_duration
-            );
-
             drain_and_process (count + 1)
       in
 
-      let batch_start = Unix.gettimeofday () in
       drain_and_process 0 >>= fun items_processed ->
-      let batch_duration = Unix.gettimeofday () -. batch_start in
 
+      (* Only record counter for items processed - cheap and useful *)
       if items_processed > 0 then
         Lwt.async (fun () ->
-          !telemetry_record_timer ["ringbuffer"; q.name; consumer_name]
-            "batch_processing_duration" batch_duration >>= fun () ->
           !telemetry_record_counter ["ringbuffer"; q.name; consumer_name]
-            "items_processed" items_processed >>= fun () ->
-          if items_processed > 1 then
-            !telemetry_record_timer ["ringbuffer"; q.name; consumer_name]
-              "per_item_avg_duration"
-              (batch_duration /. Float.of_int items_processed)
-          else
-            Lwt.return_unit
+            "items_processed" items_processed
         );
 
       consume_loop ()

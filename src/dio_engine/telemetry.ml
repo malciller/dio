@@ -8,9 +8,24 @@ let metrics_store : (string, metric_entry) Hashtbl.t = Hashtbl.create 256
 let metrics_mutex = Lwt_mutex.create ()
 let config_ref = ref default_config
 
+(** Sampling state - uses simple counter for fast sampling decision *)
+let sample_counter = ref 0
+
+(** Fast sampling check - returns true if this call should be sampled *)
+let should_sample () =
+  if !config_ref.sampling_rate >= 1.0 then true
+  else if !config_ref.sampling_rate <= 0.0 then false
+  else begin
+    incr sample_counter;
+    let threshold = int_of_float (1.0 /. !config_ref.sampling_rate) in
+    (!sample_counter mod threshold) = 0
+  end
+
 (** Configuration management *)
 let get_config () = !config_ref
-let set_config cfg = config_ref := cfg
+let set_config cfg = 
+  config_ref := cfg;
+  sample_counter := 0 (* Reset sampling counter when config changes *)
 
 (** Generate composite key from component path and metric name *)
 let make_key component_path name =
@@ -102,24 +117,33 @@ let add_value_to_entry (entry: metric_entry) value timestamp =
   (* Update incremental statistics *)
   update_incremental_stats entry
 
-(** Record a typed metric (internal function) *)
+(** Record a typed metric (internal function) with sampling *)
 let record_typed_metric (component: component_path) name value () : unit Lwt.t =
-  if not !config_ref.enabled then Lwt.return_unit else
+  (* Fast path: check if telemetry is enabled and if we should sample *)
+  if not !config_ref.enabled || not (should_sample ()) then 
+    Lwt.return_unit 
+  else
+    Lwt_mutex.with_lock metrics_mutex (fun () ->
+      let key = make_key component name in
+      let timestamp = Unix.gettimeofday () in
 
-  Lwt_mutex.with_lock metrics_mutex (fun () ->
-    let key = make_key component name in
-    let timestamp = Unix.gettimeofday () in
+      match Hashtbl.find_opt metrics_store key with
+      | Some entry ->
+          add_value_to_entry entry value timestamp;
+          Lwt.return_unit
+      | None ->
+          let new_entry = metric_to_entry component name value timestamp in
+          Hashtbl.add metrics_store key new_entry;
+          update_incremental_stats new_entry;
+          Lwt.return_unit
+    )
 
-    match Hashtbl.find_opt metrics_store key with
-    | Some entry ->
-        add_value_to_entry entry value timestamp;
-        Lwt.return_unit
-    | None ->
-        let new_entry = metric_to_entry component name value timestamp in
-        Hashtbl.add metrics_store key new_entry;
-        update_incremental_stats new_entry;
-        Lwt.return_unit
-  )
+(** Record a hot-path metric - can be completely disabled for production *)
+let record_hot_path_metric (component: component_path) name value () : unit Lwt.t =
+  if !config_ref.disable_hot_path_metrics then 
+    Lwt.return_unit
+  else
+    record_typed_metric component name value ()
 
 (** Type-safe metric recording functions *)
 let record_counter component name delta =
@@ -138,6 +162,13 @@ let record_histogram component name values =
     (* For non-detailed mode, record only summary statistics *)
     let avg = List.fold_left (+.) 0.0 values /. Float.of_int (List.length values) in
     record_gauge component name avg
+
+(** Hot-path optimized metric recording functions - can be completely disabled *)
+let record_timer_hot_path component name duration =
+  record_hot_path_metric component name (Timer_val duration) ()
+
+let record_counter_hot_path component name delta =
+  record_hot_path_metric component name (Counter_val (Int64.of_int delta)) ()
 
 (** Batch multiple metrics recording for better performance *)
 let record_batch_metrics metrics =
