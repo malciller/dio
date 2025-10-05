@@ -99,6 +99,35 @@ module State = struct
           let current_inventory = get_current_inventory symbol in
 
           if current_inventory < max_exposure then (
+            (* First, check if we have inventory that needs sell orders *)
+            let open_sell_qty = SharedState.get_open_sell_order_qty symbol in
+            let qty_to_sell = current_inventory -. open_sell_qty in
+            
+            info_f ~section "manage_orders for %s: current_inventory=%.8f, open_sell_qty=%.8f, qty_to_sell=%.8f"
+              symbol current_inventory open_sell_qty qty_to_sell >>= fun () ->
+            
+            (if qty_to_sell > 0.000001 then (
+              (* Round down to qty_precision to exclude dust fractions *)
+              let clean_qty = floor (qty_to_sell *. 10.0 ** float_of_int instrument.qty_precision) /. (10.0 ** float_of_int instrument.qty_precision) in
+              (match SharedState.get_price symbol with
+              | Some tick ->
+                let sell_price = tick.ask in (* Sell at top of book *)
+                let sell_qty_obj = Primitives.Qty.of_string_exn ~scale:instrument.qty_precision
+                  (Printf.sprintf "%.*f" instrument.qty_precision clean_qty) in
+                (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty_obj with
+                | Some sell_cmd ->
+                  Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                  info_f ~section "Placed sell order for existing inventory %s: %.8f (clean: %.8f) at %s"
+                    symbol qty_to_sell clean_qty (Primitives.Price.to_string sell_price)
+                | None ->
+                  error_f ~section "Failed to create sell order for existing inventory %s" symbol)
+              | None ->
+                warning_f ~section "No price info for %s, cannot place sell order for existing inventory" symbol)
+            ) else (
+              Lwt.return_unit
+            )) >>= fun () ->
+            
+            (* Then, place buy orders if needed *)
             if not has_buy then (
               match SharedState.get_price symbol with
               | Some tick ->
@@ -402,6 +431,11 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   info_f ~section
     "Starting orderbook strategy for symbols: [%s]" (String.concat ", " orderbook_symbols) >>= fun () ->
 
+  (* Initialize asset balances for all symbols *)
+  Lwt_list.iter_s (fun symbol ->
+    State.refresh_asset_balance symbol
+  ) orderbook_symbols >>= fun () ->
+
   (* Register event-driven execution processor *)
   let process_execution event =
     State.handle_execution runtime_cfg cmd_buffer orderbook_symbols event
@@ -413,6 +447,10 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   let rec balance_loop () =
     Lwt_unix.sleep balance_refresh_interval >>= fun () ->
     SharedState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
+    (* Refresh asset balances for all symbols *)
+    Lwt_list.iter_s (fun symbol ->
+      State.refresh_asset_balance symbol
+    ) orderbook_symbols >>= fun () ->
     balance_loop ()
   in
 
