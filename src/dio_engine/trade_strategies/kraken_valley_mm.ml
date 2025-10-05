@@ -280,6 +280,10 @@ module State = struct
     ) fill_qty_tracker;
     List.iter (Hashtbl.remove fill_qty_tracker) !to_remove;
     
+    (* Refresh balances before checking inventory *)
+    SharedState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
+    refresh_asset_balance symbol >>= fun () ->
+    
     (* Check if we can resume placing buy orders *)
     let current_inventory = get_current_inventory symbol in
     info_f ~section "After sell fill, current inventory for %s: %.8f" symbol current_inventory >>= fun () ->
@@ -368,6 +372,8 @@ module State = struct
               warning_f ~section "Fill event for unknown order %s, attempting to create orders anyway" order_id >>= fun () ->
               (* If we can't find the order, we can't determine its side, so we'll be conservative and create orders *)
               (SharedState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
+              SharedState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
+              refresh_asset_balance symbol >>= fun () ->
               manage_orders runtime_cfg symbol cmd_buffer
         ) else (
           debug_f ~section "Fill event for %s not in orderbook symbols, ignoring" symbol >>= fun () ->
@@ -399,6 +405,8 @@ module State = struct
                 (* Only create new orders if it was a buy order that was cancelled/rejected *)
                 if side = Some Core.Buy then (
                   (SharedState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
+                  SharedState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
+                  refresh_asset_balance symbol >>= fun () ->
                   manage_orders runtime_cfg symbol cmd_buffer
                 ) else (
                   Lwt.return_unit
@@ -443,23 +451,15 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   
   Ringbuffer.create_consumer exec_buffer ~name:"valley_mm_execution" ~processor:process_execution;
 
-  let balance_refresh_interval = 15.0 in
-  let rec balance_loop () =
-    Lwt_unix.sleep balance_refresh_interval >>= fun () ->
-    SharedState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
-    (* Refresh asset balances for all symbols *)
-    Lwt_list.iter_s (fun symbol ->
-      State.refresh_asset_balance symbol
-    ) orderbook_symbols >>= fun () ->
-    balance_loop ()
-  in
-
   (* Register event-driven tick processor *)
   let process_tick (tick : Event.tick) =
     (if List.mem tick.symbol orderbook_symbols then (
       SharedState.update_price tick >>= fun () ->
       (SharedState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
       State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
+      (* Refresh balances event-driven before order placement decisions *)
+      SharedState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
+      State.refresh_asset_balance tick.symbol >>= fun () ->
       State.manage_orders runtime_cfg tick.symbol cmd_buffer
     ) else (
       Lwt.return_unit
@@ -468,4 +468,5 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   
   Ringbuffer.create_consumer tick_buffer ~name:"valley_mm_tick" ~processor:process_tick;
 
-  balance_loop () 
+  (* Keep strategy running *)
+  Lwt.return_unit 
