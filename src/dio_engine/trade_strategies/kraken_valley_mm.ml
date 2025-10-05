@@ -457,7 +457,6 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
       SharedState.update_price tick >>= fun () ->
       (SharedState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
       State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
-      (* Refresh balances event-driven before order placement decisions *)
       SharedState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
       State.refresh_asset_balance tick.symbol >>= fun () ->
       State.manage_orders runtime_cfg tick.symbol cmd_buffer
@@ -468,5 +467,4 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   
   Ringbuffer.create_consumer tick_buffer ~name:"valley_mm_tick" ~processor:process_tick;
 
-  (* Keep strategy running *)
-  Lwt.return_unit 
+  fst (Lwt.wait ()) 
