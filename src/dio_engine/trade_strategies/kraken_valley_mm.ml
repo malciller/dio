@@ -99,35 +99,7 @@ module State = struct
           let current_inventory = get_current_inventory symbol in
 
           if current_inventory < max_exposure then (
-            (* First, check if we have inventory that needs sell orders *)
-            let open_sell_qty = SharedState.get_open_sell_order_qty symbol in
-            let qty_to_sell = current_inventory -. open_sell_qty in
-            
-            info_f ~section "manage_orders for %s: current_inventory=%.8f, open_sell_qty=%.8f, qty_to_sell=%.8f"
-              symbol current_inventory open_sell_qty qty_to_sell >>= fun () ->
-            
-            (if qty_to_sell > 0.000001 then (
-              (* Round down to qty_precision to exclude dust fractions *)
-              let clean_qty = floor (qty_to_sell *. 10.0 ** float_of_int instrument.qty_precision) /. (10.0 ** float_of_int instrument.qty_precision) in
-              (match SharedState.get_price symbol with
-              | Some tick ->
-                let sell_price = tick.ask in (* Sell at top of book *)
-                let sell_qty_obj = Primitives.Qty.of_string_exn ~scale:instrument.qty_precision
-                  (Printf.sprintf "%.*f" instrument.qty_precision clean_qty) in
-                (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty_obj with
-                | Some sell_cmd ->
-                  Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                  info_f ~section "Placed sell order for existing inventory %s: %.8f (clean: %.8f) at %s"
-                    symbol qty_to_sell clean_qty (Primitives.Price.to_string sell_price)
-                | None ->
-                  error_f ~section "Failed to create sell order for existing inventory %s" symbol)
-              | None ->
-                warning_f ~section "No price info for %s, cannot place sell order for existing inventory" symbol)
-            ) else (
-              Lwt.return_unit
-            )) >>= fun () ->
-            
-            (* Then, place buy orders if needed *)
+            (* Place buy orders if needed *)
             if not has_buy then (
               match SharedState.get_price symbol with
               | Some tick ->
@@ -166,7 +138,7 @@ module State = struct
                 warning_f ~section "No price info for %s, cannot place buy order." symbol
             ) else Lwt.return_unit
           ) else (
-            (* Max exposure reached - cancel buy orders and place consolidated sell *)
+            (* Max exposure reached - cancel buy orders *)
             let open_buy_orders = Hashtbl.fold (fun order_id (order: K.Kraken_common_types.order) acc ->
               if String.equal order.order_symbol symbol && order.side = Some Core.Buy then
                 (order_id, order) :: acc
@@ -174,7 +146,7 @@ module State = struct
                 acc
             ) SharedState.open_orders [] in
 
-            (* Cancel all buy orders first *)
+            (* Cancel all buy orders *)
             Lwt_list.iter_s (fun (order_id, _) ->
               let cancel_cmd = Core.Cancel {
                 dst = "kraken";
@@ -182,32 +154,7 @@ module State = struct
               } in
               Ringbuffer.push cmd_buffer cancel_cmd >>= fun () ->
               info_f ~section "Max exposure reached. Cancelling buy order %s for %s" order_id symbol
-            ) open_buy_orders >>= fun () ->
-
-            (* Place consolidated sell order for available inventory *)
-            let open_sell_qty = SharedState.get_open_sell_order_qty symbol in
-            let qty_to_sell = current_inventory -. open_sell_qty in
-
-            if qty_to_sell > 0.000001 then ( (* Basic dust filter *)
-              (* Round down to qty_precision to exclude dust fractions *)
-              let clean_qty = floor (qty_to_sell *. 10.0 ** float_of_int instrument.qty_precision) /. (10.0 ** float_of_int instrument.qty_precision) in
-              (match SharedState.get_price symbol with
-              | Some tick ->
-                let sell_price = tick.ask in (* Sell at top of book *)
-                let sell_qty_obj = Primitives.Qty.of_string_exn ~scale:instrument.qty_precision
-                  (Printf.sprintf "%.*f" instrument.qty_precision clean_qty) in
-                (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty_obj with
-                | Some sell_cmd ->
-                  Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                  info_f ~section "Max exposure reached. Placed consolidated sell order for %s: %.8f (clean: %.8f) at %s"
-                    symbol qty_to_sell clean_qty (Primitives.Price.to_string sell_price)
-                | None ->
-                  error_f ~section "Failed to create consolidated sell order for %s" symbol)
-              | None ->
-                warning_f ~section "No price info for %s, cannot place consolidated sell order" symbol)
-            ) else (
-              Lwt.return_unit
-            )
+            ) open_buy_orders
           )
         | None ->
           warning_f ~section "No instrument data for %s" symbol)
