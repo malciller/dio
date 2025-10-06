@@ -20,7 +20,6 @@ let section = Lwt_log_core.Section.make "engine.strategy.kraken.VMM"
 module State = struct
   (* Local data structures for VMM strategy *)
   let asset_balances : (string, float) Hashtbl.t = Hashtbl.create 16
-  let buy_order_targets : (string, Primitives.Price.t) Hashtbl.t = Hashtbl.create 16
   let inventory_tracker : (string, float) Hashtbl.t = Hashtbl.create 16
   let fill_qty_tracker : (string, float) Hashtbl.t = Hashtbl.create 16
   let maker_fee_cache : (string, float) Hashtbl.t = Hashtbl.create 16
@@ -99,7 +98,7 @@ module State = struct
           let current_inventory = get_current_inventory symbol in
 
           if current_inventory < max_exposure then (
-            (* Place buy orders if needed *)
+            (* Place both buy and sell orders if no buy order exists *)
             if not has_buy then (
               match SharedState.get_price symbol with
               | Some tick ->
@@ -108,34 +107,34 @@ module State = struct
                 let profit_threshold = runtime_cfg.profit_threshold_pct /. 100.0 in
 
                 let buy_price_float = top_ask_price_float *. (1.0 -. ((2.0 *. asset_fee) +. profit_threshold)) in
-                let target_sell_price_float = buy_price_float *. (1.0 +. ((2.0 *. asset_fee) +. profit_threshold)) in
-
                 let buy_price = Primitives.Price.of_string_exn ~scale:instrument.price_precision (Printf.sprintf "%.*f" instrument.price_precision buy_price_float) in
-                let target_sell_price = Primitives.Price.of_string_exn ~scale:instrument.price_precision (Printf.sprintf "%.*f" instrument.price_precision target_sell_price_float) in
+                let sell_price = tick.ask in (* Sell at top of book *)
 
                 let order_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
                 let order_cost = buy_price_float *. order_qty_float in
 
                 if SharedState.get_usd_balance () >= order_cost then (
+                  (* Place buy order *)
                   (match create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty with
                   | Some buy_cmd ->
-                    (match buy_cmd with
-                    | Core.Add order_data ->
-                      Hashtbl.add buy_order_targets order_data.client_id target_sell_price;
-                      Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
-                      info_f ~section "Placed new buy order for %s at %s. Target sell: %s"
-                        symbol
-                        (Primitives.Price.to_string buy_price)
-                        (Primitives.Price.to_string target_sell_price)
-                    | _ -> Lwt.return_unit)
+                    Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
+                    info_f ~section "Placed buy order for %s at %s" symbol (Primitives.Price.to_string buy_price)
                   | None ->
-                    error_f ~section "Failed to create buy order for %s" symbol)
+                    error_f ~section "Failed to create buy order for %s" symbol) >>= fun () ->
+                  
+                  (* Place sell order *)
+                  (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:asset_cfg.qty with
+                  | Some sell_cmd ->
+                    Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                    info_f ~section "Placed sell order for %s at %s" symbol (Primitives.Price.to_string sell_price)
+                  | None ->
+                    error_f ~section "Failed to create sell order for %s" symbol)
                 ) else (
                   warning_f ~section "Insufficient USD balance to place buy order for %s. Required: %.2f, Available: %.2f"
                     symbol order_cost (SharedState.get_usd_balance ())
                 )
               | None ->
-                warning_f ~section "No price info for %s, cannot place buy order." symbol
+                warning_f ~section "No price info for %s, cannot place orders." symbol
             ) else Lwt.return_unit
           ) else (
             (* Max exposure reached - cancel buy orders *)
@@ -183,19 +182,12 @@ module State = struct
           let profit_threshold = runtime_cfg.profit_threshold_pct /. 100.0 in
 
           let new_buy_price_float = top_ask_price_float *. (1.0 -. ((2.0 *. asset_fee) +. profit_threshold)) in
-          let new_target_sell_price_float = new_buy_price_float *. (1.0 +. ((2.0 *. asset_fee) +. profit_threshold)) in
-
           let new_buy_price = Primitives.Price.of_string_exn ~scale:instrument.price_precision (Printf.sprintf "%.*f" instrument.price_precision new_buy_price_float) in
-          let new_target_sell_price = Primitives.Price.of_string_exn ~scale:instrument.price_precision (Printf.sprintf "%.*f" instrument.price_precision new_target_sell_price_float) in
 
           SharedState.amend_order_with_callback
             ~order ~new_price:new_buy_price ~cmd_buffer ~section
             ~qty_precision:instrument.qty_precision
-            ~post_amend_callback:(fun () ->
-              Hashtbl.replace buy_order_targets order.order_id new_target_sell_price;
-              info_f ~section "Updated target sell price for order %s to %s"
-                order.order_id (Primitives.Price.to_string new_target_sell_price)
-            )
+            ~post_amend_callback:(fun () -> Lwt.return_unit)
         | [] -> Lwt.return_unit
         | _ ->
           debug_f ~section "Multiple buy orders for %s, skipping adjustment." tick.symbol
@@ -209,15 +201,14 @@ module State = struct
     update_inventory symbol (-.qty_float);
     info_f ~section "Sell fill: Updated inventory for %s by -%.8f" symbol qty_float >>= fun () ->
     
-    (* Clean up target price records for this quantity *)
+    (* Clean up fill quantity tracker for this quantity *)
     let remaining_qty = ref qty_float in
     let to_remove = ref [] in
     Hashtbl.iter (fun target_order_id stored_qty ->
       if !remaining_qty > 0.0 then (
         if stored_qty <= !remaining_qty then (
           remaining_qty := !remaining_qty -. stored_qty;
-          to_remove := target_order_id :: !to_remove;
-          Hashtbl.remove buy_order_targets target_order_id
+          to_remove := target_order_id :: !to_remove
         ) else (
           let new_qty = stored_qty -. !remaining_qty in
           Hashtbl.replace fill_qty_tracker target_order_id new_qty;
@@ -280,10 +271,19 @@ module State = struct
                   update_inventory symbol qty_float;
                   info_f ~section "Buy fill: Updated inventory for %s by +%.8f" symbol qty_float >>= fun () ->
                   
-                  match Hashtbl.find_opt buy_order_targets order.order_id with
-                  | Some target_sell_price ->
-                    (* Store fill quantity for this target price *)
+                  (* Calculate target sell price dynamically based on actual fill price *)
+                  (match K.Kraken_incoming_data.get_instrument symbol with
+                  | Some instrument ->
+                    let buy_price_float = Float.of_string (Primitives.Price.to_string price) in
+                    let asset_fee = get_maker_fee symbol in
+                    let profit_threshold = runtime_cfg.profit_threshold_pct /. 100.0 in
+                    let target_sell_price_float = buy_price_float *. (1.0 +. ((2.0 *. asset_fee) +. profit_threshold)) in
+                    let target_sell_price = Primitives.Price.of_string_exn ~scale:instrument.price_precision 
+                      (Printf.sprintf "%.*f" instrument.price_precision target_sell_price_float) in
+                    
+                    (* Store fill quantity for tracking *)
                     Hashtbl.replace fill_qty_tracker order.order_id qty_float;
+                    
                     (match SharedState.get_price symbol with
                     | Some tick ->
                       let current_top_ask_price = tick.ask in
@@ -296,14 +296,16 @@ module State = struct
                       (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:qty with
                       | Some sell_cmd ->
                         Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                        info_f ~section "Buy order %s filled. Placed sell order for %s at %s"
-                          order_id symbol (Primitives.Price.to_string sell_price)
+                        info_f ~section "Buy order %s filled at %s. Placed sell order for %s at %s (target: %s)"
+                          order_id (Primitives.Price.to_string price) symbol 
+                          (Primitives.Price.to_string sell_price)
+                          (Primitives.Price.to_string target_sell_price)
                       | None ->
                         error_f ~section "Failed to create sell order for %s after buy fill" symbol)
                     | None ->
                       error_f ~section "No price info for %s, cannot place sell order" symbol)
                   | None ->
-                    warning_f ~section "Could not find target sell price for filled buy order %s" order_id
+                    error_f ~section "No instrument data for %s, cannot calculate target sell price" symbol)
                 ) else if order.side = Some Core.Sell then (
                   (* Sell fill: reduce inventory and cleanup target prices *)
                   let qty_float = Float.of_string (Primitives.Qty.to_string qty) in
@@ -329,12 +331,7 @@ module State = struct
     | Ack { order_id; client_id; state; _ } ->
         (match state with
         | Open ->
-          (match Hashtbl.find_opt buy_order_targets client_id with
-          | Some target_price ->
-            Hashtbl.remove buy_order_targets client_id;
-            Hashtbl.add buy_order_targets order_id target_price;
-            info_f ~section "Ack for buy order %s. Mapped client_id %s to order_id." order_id client_id
-          | None -> Lwt.return_unit)
+          debug_f ~section "Ack for order %s (client_id: %s) - order opened" order_id client_id
         | Canceled | Rejected ->
             let symbol_and_side_opt = Hashtbl.fold (fun _ (order: K.Kraken_common_types.order) acc ->
               match order.client_id with

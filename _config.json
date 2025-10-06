@@ -10,7 +10,7 @@
     {
       "symbol": "PAXG/USD",
       "qty": "0.0029",
-      "grid_interval": "0.5",
+      "grid_interval": "0.625",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
@@ -68,18 +68,6 @@
     },
     {
       "symbol": "USDD/USD",
-      "qty": "10.0",
-      "max_exposure": "200.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "USDT/USD",
-      "qty": "10.0",
-      "max_exposure": "200.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "USDC/USD",
       "qty": "10.0",
       "max_exposure": "200.0",
       "strategy": "VMM"
