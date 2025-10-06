@@ -485,7 +485,7 @@ module State = struct
                   let diff_pct = abs_float (actual_spread_pct_of_mid -. expected_total_spread_pct) in
 
                   if diff_pct <= tolerance_pct then
-                    info_f ~section:verify_section
+                    debug_f ~section:verify_section
                       "Grid Verify [%s]: < Tolerance Threshold."
                       symbol
                   else
@@ -493,7 +493,7 @@ module State = struct
                     let new_target_buy_price_float = min_sell_price_float *. (1.0 -. (expected_total_spread_pct /. 100.0)) in
 
                     if new_target_buy_price_float >= current_market_price_float then
-                      info_f ~section:verify_section
+                      debug_f ~section:verify_section
                       "Grid Verify [%s]: PASSED."
                         symbol
                     else
@@ -525,7 +525,7 @@ module State = struct
                           Lwt.return_unit >>= fun () ->
                           
                           if String.equal existing_price_formatted new_price_formatted then
-                            info_f ~section:verify_section
+                            debug_f ~section:verify_section
                               "Grid Verify [%s]: PASSED."
                               symbol
                           else
@@ -543,7 +543,7 @@ module State = struct
                               (price_diff >= min_price_diff) >>= fun () ->
 
                             if price_diff < min_price_diff then
-                              info_f ~section:verify_section
+                              debug_f ~section:verify_section
                                 "Grid Verify [%s]: SKIPPED (price diff too small)."
                                 symbol
                             else
@@ -572,7 +572,7 @@ module State = struct
                                   symbol
                               )
             else
-              info_f ~section:verify_section
+              warning_f ~section:verify_section
                 "Grid Verify [%s]: Skipping, not enough buy/sell orders to form a grid (Buys: %d, Sells: %d)."
                 symbol (List.length buy_orders) (List.length sell_orders)
         | None ->
@@ -638,7 +638,7 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
       Lwt.return_unit >>= fun () ->
       
       if should_update then (
-        info_f ~section
+        debug_f ~section
           "Processing price update for %s" tick.symbol >>= fun () ->
         State.update_price tick >>= fun () ->
         State.sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->

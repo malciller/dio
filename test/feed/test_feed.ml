@@ -1,5 +1,3 @@
-(* Remove warning suppression *)
-(* [@@@warning "-32-34"] *) 
 
 (* test/feed/test_feed.ml *)
 open Alcotest_lwt

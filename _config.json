@@ -2,7 +2,7 @@
   "assets": [
     {
       "symbol": "BTC/USD",
-      "qty": "0.00075",
+      "qty": "0.000875",
       "grid_interval": "0.5",
       "sell_mult": "0.999",
       "strategy": "Grid"

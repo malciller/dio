@@ -34,7 +34,7 @@ module State = struct
       let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
       let tradeable_balance = spot_bal +. liquid_bal in
       Hashtbl.replace asset_balances base_currency tradeable_balance;
-      info_f ~section "Refreshed %s balance: %.8f" base_currency tradeable_balance
+      debug_f ~section "Refreshed %s balance: %.8f" base_currency tradeable_balance
     | None ->
       warning_f ~section "No instrument data for %s, cannot refresh balance." symbol >>= fun () ->
       Lwt.return_unit
