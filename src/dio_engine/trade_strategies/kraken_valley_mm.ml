@@ -90,54 +90,67 @@ module State = struct
 
     match asset_cfg_opt with
     | Some asset_cfg ->
-      (match asset_cfg.max_exposure with
-      | Some max_exposure_fixed ->
-        let max_exposure = float_of_string (Primitives.Fixed.to_string max_exposure_fixed) in
-        (match K.Kraken_incoming_data.get_instrument symbol with
-        | Some instrument ->
-          let current_inventory = get_current_inventory symbol in
+      (match K.Kraken_incoming_data.get_instrument symbol with
+      | Some instrument ->
+        (* Check both constraints: min_usd_balance and max_exposure *)
+        let check_min_usd_balance = match asset_cfg.min_usd_balance with
+          | Some min_balance ->
+              let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
+              SharedState.get_usd_balance () >= min_balance_float
+          | None -> true
+        in
+        
+        let current_inventory = get_current_inventory symbol in
+        let check_max_exposure = match asset_cfg.max_exposure with
+          | Some max_exposure_fixed ->
+              let max_exposure = float_of_string (Primitives.Fixed.to_string max_exposure_fixed) in
+              current_inventory < max_exposure
+          | None -> true
+        in
+        
+        (* If both checks pass and no buy order exists, place orders *)
+        if check_min_usd_balance && check_max_exposure then (
+          if not has_buy then (
+            match SharedState.get_price symbol with
+            | Some tick ->
+              let top_ask_price_float = Float.of_string (Primitives.Price.to_string tick.ask) in
+              let asset_fee = get_maker_fee symbol in
+              let profit_threshold = runtime_cfg.profit_threshold_pct /. 100.0 in
 
-          if current_inventory < max_exposure then (
-            (* Place both buy and sell orders if no buy order exists *)
-            if not has_buy then (
-              match SharedState.get_price symbol with
-              | Some tick ->
-                let top_ask_price_float = Float.of_string (Primitives.Price.to_string tick.ask) in
-                let asset_fee = get_maker_fee symbol in
-                let profit_threshold = runtime_cfg.profit_threshold_pct /. 100.0 in
+              let buy_price_float = top_ask_price_float *. (1.0 -. ((2.0 *. asset_fee) +. profit_threshold)) in
+              let buy_price = Primitives.Price.of_string_exn ~scale:instrument.price_precision (Printf.sprintf "%.*f" instrument.price_precision buy_price_float) in
+              let sell_price = tick.ask in
 
-                let buy_price_float = top_ask_price_float *. (1.0 -. ((2.0 *. asset_fee) +. profit_threshold)) in
-                let buy_price = Primitives.Price.of_string_exn ~scale:instrument.price_precision (Printf.sprintf "%.*f" instrument.price_precision buy_price_float) in
-                let sell_price = tick.ask in (* Sell at top of book *)
+              let order_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
+              let order_cost = buy_price_float *. order_qty_float in
 
-                let order_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
-                let order_cost = buy_price_float *. order_qty_float in
-
-                if SharedState.get_usd_balance () >= order_cost then (
-                  (* Place buy order *)
-                  (match create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty with
-                  | Some buy_cmd ->
-                    Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
-                    info_f ~section "Placed buy order for %s at %s" symbol (Primitives.Price.to_string buy_price)
-                  | None ->
-                    error_f ~section "Failed to create buy order for %s" symbol) >>= fun () ->
-                  
-                  (* Place sell order *)
-                  (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:asset_cfg.qty with
-                  | Some sell_cmd ->
-                    Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                    info_f ~section "Placed sell order for %s at %s" symbol (Primitives.Price.to_string sell_price)
-                  | None ->
-                    error_f ~section "Failed to create sell order for %s" symbol)
-                ) else (
-                  warning_f ~section "Insufficient USD balance to place buy order for %s. Required: %.2f, Available: %.2f"
-                    symbol order_cost (SharedState.get_usd_balance ())
-                )
-              | None ->
-                warning_f ~section "No price info for %s, cannot place orders." symbol
-            ) else Lwt.return_unit
+              if SharedState.get_usd_balance () >= order_cost then (
+                (match create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty with
+                | Some buy_cmd ->
+                  Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
+                  info_f ~section "Placed buy order for %s at %s" symbol (Primitives.Price.to_string buy_price)
+                | None ->
+                  error_f ~section "Failed to create buy order for %s" symbol) >>= fun () ->
+                
+                (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:asset_cfg.qty with
+                | Some sell_cmd ->
+                  Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                  info_f ~section "Placed sell order for %s at %s" symbol (Primitives.Price.to_string sell_price)
+                | None ->
+                  error_f ~section "Failed to create sell order for %s" symbol)
+              ) else (
+                warning_f ~section "Insufficient USD balance to place buy order for %s. Required: %.2f, Available: %.2f"
+                  symbol order_cost (SharedState.get_usd_balance ())
+              )
+            | None ->
+              warning_f ~section "No price info for %s, cannot place orders." symbol
           ) else (
-            (* Max exposure reached - cancel buy orders *)
+            Lwt.return_unit
+          )
+        ) else (
+          (* At least one constraint is violated *)
+          if not check_max_exposure then (
+            (* Max exposure reached - cancel existing buy orders *)
             let open_buy_orders = Hashtbl.fold (fun order_id (order: K.Kraken_common_types.order) acc ->
               if String.equal order.order_symbol symbol && order.side = Some Core.Buy then
                 (order_id, order) :: acc
@@ -145,20 +158,29 @@ module State = struct
                 acc
             ) SharedState.open_orders [] in
 
-            (* Cancel all buy orders *)
-            Lwt_list.iter_s (fun (order_id, _) ->
-              let cancel_cmd = Core.Cancel {
-                dst = "kraken";
-                order_id;
-              } in
-              Ringbuffer.push cmd_buffer cancel_cmd >>= fun () ->
-              info_f ~section "Max exposure reached. Cancelling buy order %s for %s" order_id symbol
-            ) open_buy_orders
+            if List.length open_buy_orders > 0 then (
+              info_f ~section "Max exposure reached for %s (%.8f). Cancelling %d buy order(s)."
+                symbol current_inventory (List.length open_buy_orders) >>= fun () ->
+              Lwt_list.iter_s (fun (order_id, _) ->
+                let cancel_cmd = Core.Cancel {
+                  dst = "kraken";
+                  order_id;
+                } in
+                Ringbuffer.push cmd_buffer cancel_cmd >>= fun () ->
+                info_f ~section "Cancelled buy order %s for %s" order_id symbol
+              ) open_buy_orders
+            ) else (
+              Lwt.return_unit
+            )
+          ) else (
+            (* Must be min_usd_balance constraint *)
+            info_f ~section "USD balance %.2f is below minimum for %s. Pausing buy orders."
+              (SharedState.get_usd_balance ()) symbol
           )
-        | None ->
-          warning_f ~section "No instrument data for %s" symbol)
+        )
       | None ->
-        warning_f ~section "max_exposure not configured for %s" symbol)
+        warning_f ~section "No instrument data for %s" symbol
+      )
     | None ->
       warning_f ~section "No configuration found for %s" symbol
   (** Adjust buy orders to maintain top-of-book positioning *)

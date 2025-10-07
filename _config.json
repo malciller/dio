@@ -58,17 +58,20 @@
       "symbol": "EURR/USD",
       "qty": "10.0",
       "min_usd_balance": "1500.0",
+      "max_exposure": "200.0",
       "strategy": "GMM"
     },
     {
       "symbol": "EUROP/USD",
       "qty": "10.0",
       "min_usd_balance": "1000.0",
+      "max_exposure": "200.0",
       "strategy": "GMM"
     },
     {
       "symbol": "USDD/USD",
       "qty": "10.0",
+      "min_usd_balance": "1500.0",
       "max_exposure": "200.0",
       "strategy": "VMM"
     }

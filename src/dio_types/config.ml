@@ -93,31 +93,52 @@ let validate_asset_cfg (asset : asset_cfg) : (unit, string) result =
       if asset.min_usd_balance <> None then
         errors := (format_error_message "Asset '%s' (Grid): min_usd_balance is not applicable." asset.symbol) :: !errors
   | GMM ->
+      (* Validate min_usd_balance if provided *)
       (match asset.min_usd_balance with
       | Some min_usd_balance ->
           if not (Fixed.is_non_negative min_usd_balance) then
-            errors := (format_error_message "Asset '%s' (MM): min_usd_balance must be non-negative." asset.symbol) :: !errors
-      | None ->
-          errors := (format_error_message "Asset '%s' (MM): min_usd_balance is required." asset.symbol) :: !errors);
+            errors := (format_error_message "Asset '%s' (GMM): min_usd_balance must be non-negative." asset.symbol) :: !errors
+      | None -> ());
+
+      (* Validate max_exposure if provided *)
+      (match asset.max_exposure with
+      | Some max_exposure ->
+          if not (Fixed.is_non_negative max_exposure) then
+            errors := (format_error_message "Asset '%s' (GMM): max_exposure must be non-negative." asset.symbol) :: !errors
+      | None -> ());
+
+      (* Require at least one of min_usd_balance or max_exposure *)
+      if asset.min_usd_balance = None && asset.max_exposure = None then
+        errors := (format_error_message "Asset '%s' (GMM): at least one of min_usd_balance or max_exposure is required." asset.symbol) :: !errors;
 
       if asset.grid_interval <> None then
-        errors := (format_error_message "Asset '%s' (MM): grid_interval is not applicable." asset.symbol) :: !errors;
+        errors := (format_error_message "Asset '%s' (GMM): grid_interval is not applicable." asset.symbol) :: !errors;
       
       if asset.sell_mult <> None then
-        errors := (format_error_message "Asset '%s' (MM): sell_mult is not applicable." asset.symbol) :: !errors
+        errors := (format_error_message "Asset '%s' (GMM): sell_mult is not applicable." asset.symbol) :: !errors
   | VMM ->
+    (* Validate min_usd_balance if provided *)
+    (match asset.min_usd_balance with
+    | Some min_usd_balance ->
+        if not (Fixed.is_non_negative min_usd_balance) then
+          errors := (format_error_message "Asset '%s' (VMM): min_usd_balance must be non-negative." asset.symbol) :: !errors
+    | None -> ());
+
+    (* Validate max_exposure if provided *)
     (match asset.max_exposure with
       | Some max_exposure ->
         if not (Fixed.is_non_negative max_exposure) then
           errors := (format_error_message "Asset '%s' (VMM): max_exposure must be non-negative." asset.symbol) :: !errors
-      | None ->
-        errors := (format_error_message "Asset '%s' (VMM): max_exposure is required." asset.symbol) :: !errors);
+      | None -> ());
+
+    (* Require at least one of min_usd_balance or max_exposure *)
+    if asset.min_usd_balance = None && asset.max_exposure = None then
+      errors := (format_error_message "Asset '%s' (VMM): at least one of min_usd_balance or max_exposure is required." asset.symbol) :: !errors;
+
     if asset.grid_interval <> None then
       errors := (format_error_message "Asset '%s' (VMM): grid_interval is not applicable." asset.symbol) :: !errors;
     if asset.sell_mult <> None then
-      errors := (format_error_message "Asset '%s' (VMM): sell_mult is not applicable." asset.symbol) :: !errors;
-    if asset.min_usd_balance <> None then
-      errors := (format_error_message "Asset '%s' (VMM): min_usd_balance is not applicable." asset.symbol) :: !errors
+      errors := (format_error_message "Asset '%s' (VMM): sell_mult is not applicable." asset.symbol) :: !errors
   );
 
   if !errors = [] then

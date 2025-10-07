@@ -62,6 +62,17 @@ module State = struct
         acc
     ) open_orders 0.0
 
+  (** Get current inventory for symbol *)
+  let get_current_inventory symbol =
+    match K.Kraken_incoming_data.get_instrument symbol with
+    | Some instrument ->
+      let base_currency = instrument.base in
+      K.Kraken_balances.wait_for_balances () >>= fun (spot_balances, _, liquid_balances, _) ->
+      let spot_bal = Hashtbl.find_opt spot_balances base_currency |> Option.value ~default:0.0 in
+      let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
+      Lwt.return (spot_bal +. liquid_bal)
+    | None -> Lwt.return 0.0
+
   type top_price_info = {
     bid_price : Primitives.Price.t;
     ask_price : Primitives.Price.t;
@@ -120,83 +131,89 @@ module State = struct
       
       match asset_cfg_opt with
       | Some asset_cfg ->
-          (match asset_cfg.min_usd_balance with
-          | Some min_balance ->
-              let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
-              if !usd_balance < min_balance_float then (
-                info_f ~section "USD balance %.2f is below minimum %.2f for %s. Checking for remaining asset balance to sell."
-                  !usd_balance min_balance_float symbol >>= fun () ->
+          (* Check both constraints: min_usd_balance and max_exposure *)
+          let check_min_usd_balance = match asset_cfg.min_usd_balance with
+            | Some min_balance ->
+                let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
+                !usd_balance >= min_balance_float
+            | None -> true
+          in
+          
+          (* For max_exposure check, we need to get current inventory first *)
+          (match asset_cfg.max_exposure with
+          | Some max_exposure_fixed ->
+              let max_exposure = float_of_string (Primitives.Fixed.to_string max_exposure_fixed) in
+              get_current_inventory symbol >>= fun current_inventory ->
+              Lwt.return (current_inventory < max_exposure)
+          | None ->
+              Lwt.return true
+          ) >>= fun check_max_exposure ->
+          
+          (* If both checks pass, place orders *)
+          if check_min_usd_balance && check_max_exposure then (
+            match get_top_prices symbol with
+            | Some top_price_info ->
+                let buy_order = create_order ~symbol ~side:Buy ~price:top_price_info.bid_price ~qty:asset_cfg.qty in
+                let sell_order = create_order ~symbol ~side:Sell ~price:top_price_info.ask_price ~qty:asset_cfg.qty in
+                (match buy_order, sell_order with
+                | Some buy_cmd, Some sell_cmd ->
+                    Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
+                    Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                    info_f ~section "Placed orders for %s" symbol
+                | Some _, None ->
+                    error_f ~section "Failed to create sell order for %s" symbol
+                | None, Some _ ->
+                    error_f ~section "Failed to create buy order for %s" symbol
+                | None, None ->
+                    error_f ~section "Failed to create both orders for %s" symbol)
+            | None ->
+                warning_f ~section "No orderbook data for %s" symbol
+          ) else (
+            (* At least one constraint is violated - try to sell remaining balance if any *)
+            if not check_min_usd_balance then (
+              info_f ~section "USD balance %.2f is below minimum for %s. Checking for remaining asset balance to sell."
+                !usd_balance symbol
+            ) else (
+              info_f ~section "Max exposure reached for %s. Checking for remaining asset balance to sell." symbol
+            ) >>= fun () ->
+            
+            match K.Kraken_incoming_data.get_instrument symbol with
+            | Some instrument ->
+                let base_currency = instrument.base in
+                let qty_prec = instrument.qty_precision in
+                
+                Kraken.Kraken_balances.wait_for_balances () >>= fun (spot_balances, _, liquid_balances, _) ->
+                let spot_bal = Hashtbl.find_opt spot_balances base_currency |> Option.value ~default:0.0 in
+                let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
+                let total_balance = spot_bal +. liquid_bal in
+                let balance_in_orders = get_balance_in_open_orders symbol in
+                let available_balance = total_balance -. balance_in_orders in
 
-                match K.Kraken_incoming_data.get_instrument symbol with
-                | Some instrument ->
-                    let base_currency = instrument.base in
-                    let qty_prec = instrument.qty_precision in
-                    
-                    Kraken.Kraken_balances.wait_for_balances () >>= fun (spot_balances, _, liquid_balances, _) ->
-                    let spot_bal = Hashtbl.find_opt spot_balances base_currency |> Option.value ~default:0.0 in
-                    let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
-                    let total_balance = spot_bal +. liquid_bal in
-                    let balance_in_orders = get_balance_in_open_orders symbol in
-                    let available_balance = total_balance -. balance_in_orders in
-
-                    info_f ~section "Available balance for %s: total=%.8f, in_orders=%.8f, available=%.8f"
-                      base_currency total_balance balance_in_orders available_balance >>= fun () ->
-
-                    if available_balance > 0.00001 then (
-                      (* Round down to qty_precision to exclude dust fractions *)
-                      let clean_qty = floor (available_balance *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
-                      info_f ~section "Found %.8f of %s to sell before pausing (spot: %.8f, liquid: %.8f). Clean qty: %.8f"
-                        available_balance base_currency spot_bal liquid_bal clean_qty >>= fun () ->
-                      (match K.Kraken_orderbook.get_best_bid_ask symbol with
-                      | Some (_, ask_price_float) ->
-                          let price_prec = instrument.price_precision in
-                          let sell_price_str = Printf.sprintf "%.*f" price_prec ask_price_float in
-                          let sell_price = Primitives.Price.of_string_exn ~scale:price_prec sell_price_str in
-                          let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
-                          let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
-                          let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
-                          (match sell_order with
-                          | Some sell_cmd ->
-                              Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                              info_f ~section "Placed final sell order for %s." symbol
-                          | None ->
-                              error_f ~section "Failed to create final sell order for %s." symbol
-                          )
+                if available_balance > 0.00001 then (
+                  let clean_qty = floor (available_balance *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
+                  (match K.Kraken_orderbook.get_best_bid_ask symbol with
+                  | Some (_, ask_price_float) ->
+                      let price_prec = instrument.price_precision in
+                      let sell_price_str = Printf.sprintf "%.*f" price_prec ask_price_float in
+                      let sell_price = Primitives.Price.of_string_exn ~scale:price_prec sell_price_str in
+                      let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
+                      let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
+                      let sell_order = create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty in
+                      (match sell_order with
+                      | Some sell_cmd ->
+                          Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                          info_f ~section "Placed sell order for %s (constraint violation)." symbol
                       | None ->
-                          warning_f ~section "No orderbook data for %s, cannot place final sell order." symbol
+                          error_f ~section "Failed to create sell order for %s." symbol
                       )
-                    ) else (
-                      info_f ~section "No remaining tradeable asset balance for %s to sell. Pausing." base_currency
-                    )
-                | None ->
-                    warning_f ~section "No instrument data for %s, cannot place final sell order." symbol
-
-              ) else (
-                match get_top_prices symbol with
-                | Some top_price_info ->
-                    let buy_order = create_order ~symbol ~side:Buy ~price:top_price_info.bid_price ~qty:asset_cfg.qty in
-                    let sell_order = create_order ~symbol ~side:Sell ~price:top_price_info.ask_price ~qty:asset_cfg.qty in
-                    (match buy_order, sell_order with
-                    | Some buy_cmd, Some sell_cmd ->
-                        info_f ~section "Successfully created both orders for %s, pushing to buffer" symbol >>= fun () ->
-                        Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
-                        info_f ~section "Buy order pushed to buffer for %s" symbol >>= fun () ->
-                        Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                        info_f ~section "Sell order pushed to buffer for %s" symbol
-                    | Some _, None ->
-                        error_f ~section "Failed to create sell order for %s" symbol >>= fun () ->
-                        Lwt.return_unit
-                    | None, Some _ ->
-                        error_f ~section "Failed to create buy order for %s" symbol >>= fun () ->
-                        Lwt.return_unit
-                    | None, None ->
-                        error_f ~section "Failed to create both orders for %s" symbol >>= fun () ->
-                        Lwt.return_unit)
-                | None ->
-                    warning_f ~section "No orderbook data for %s" symbol
-              )
-          | None -> 
-              warning_f ~section "min_usd_balance not configured for %s" symbol
+                  | None ->
+                      warning_f ~section "No orderbook data for %s, cannot place sell order." symbol
+                  )
+                ) else (
+                  Lwt.return_unit
+                )
+            | None ->
+                warning_f ~section "No instrument data for %s, cannot place sell order." symbol
           )
       | None ->
           warning_f ~section "No configuration found for %s" symbol

@@ -41,12 +41,14 @@ Edit `_config.json` (example):
     },
     { "symbol": "USDT/USD",  // Pair to Trade
       "qty": "100.0",  // Base asset amount per trade
-      "min_usd_balance": "500.0",  // Minimum USD balance for this pair and strategy to run
+      "min_usd_balance": "500.0",  // Minimum USD balance for this pair and strategy to run (Optional if max_exposure set)
+      "max_exposure": "500.0",  // Maximum amount of asset to accumulate before pausing strategy (Optional if min_usd_balance set)
       "strategy": "GMM"  // Strategy Name (Grid/GMM/VMM)
      },
          { "symbol": "USDT/USD",  // Pair to Trade
       "qty": "100.0",  // Base asset amount per trade
-      "max_exposure": "500.0",  // Maximum amount of asset to accumulate before pausing strategy
+      "min_usd_balance": "500.0",  // Minimum USD balance for this pair and strategy to run (Optional if max_exposure set)
+      "max_exposure": "500.0",  // Maximum amount of asset to accumulate before pausing strategy (Optional if min_usd_balance set)
       "strategy": "VMM"  // Strategy Name (Grid/GMM/VMM)
      },
   ],
