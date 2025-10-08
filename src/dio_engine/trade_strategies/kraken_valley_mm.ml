@@ -148,7 +148,7 @@ module State = struct
             Lwt.return_unit
           )
         ) else (
-          (* At least one constraint is violated *)
+          (* At least one constraint is violated - cancel buy orders and try to sell remaining balance *)
           if not check_max_exposure then (
             (* Max exposure reached - cancel existing buy orders *)
             let open_buy_orders = Hashtbl.fold (fun order_id (order: K.Kraken_common_types.order) acc ->
@@ -158,7 +158,7 @@ module State = struct
                 acc
             ) SharedState.open_orders [] in
 
-            if List.length open_buy_orders > 0 then (
+            (if List.length open_buy_orders > 0 then (
               info_f ~section "Max exposure reached for %s (%.8f). Cancelling %d buy order(s)."
                 symbol current_inventory (List.length open_buy_orders) >>= fun () ->
               Lwt_list.iter_s (fun (order_id, _) ->
@@ -171,11 +171,58 @@ module State = struct
               ) open_buy_orders
             ) else (
               Lwt.return_unit
-            )
+            )) >>= fun () ->
+            info_f ~section "Max exposure reached for %s. Checking for remaining asset balance to sell." symbol
           ) else (
             (* Must be min_usd_balance constraint *)
-            info_f ~section "USD balance %.2f is below minimum for %s. Pausing buy orders."
+            info_f ~section "USD balance %.2f is below minimum for %s. Checking for remaining asset balance to sell."
               (SharedState.get_usd_balance ()) symbol
+          ) >>= fun () ->
+          
+          (* Check for available balance to place sell order *)
+          (match K.Kraken_incoming_data.get_instrument symbol with
+          | Some instrument ->
+              let base_currency = instrument.base in
+              let qty_prec = instrument.qty_precision in
+              
+              K.Kraken_balances.wait_for_balances () >>= fun (spot_balances, _, liquid_balances, _) ->
+              let spot_bal = Hashtbl.find_opt spot_balances base_currency |> Option.value ~default:0.0 in
+              let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
+              let total_balance = spot_bal +. liquid_bal in
+              
+              (* Get balance already in open sell orders *)
+              let balance_in_orders = Hashtbl.fold (fun _ (order: K.Kraken_common_types.order) acc ->
+                if String.equal order.order_symbol symbol && order.side = Some Core.Sell then
+                  acc +. order.qty
+                else
+                  acc
+              ) SharedState.open_orders 0.0 in
+              
+              let available_balance = total_balance -. balance_in_orders in
+              
+              if available_balance > 0.00001 then (
+                let clean_qty = floor (available_balance *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
+                (match SharedState.get_price symbol with
+                | Some tick ->
+                    let sell_price = tick.ask in
+                    let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
+                    let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
+                    (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty with
+                    | Some sell_cmd ->
+                        Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                        info_f ~section "Placed sell order for remaining %s balance: %.8f (constraint violation)"
+                          symbol clean_qty
+                    | None ->
+                        error_f ~section "Failed to create sell order for remaining %s balance" symbol
+                    )
+                | None ->
+                    warning_f ~section "No price info for %s, cannot place sell order" symbol
+                )
+              ) else (
+                debug_f ~section "No remaining available balance for %s to sell" symbol
+              )
+          | None ->
+              warning_f ~section "No instrument data for %s, cannot place sell order" symbol
           )
         )
       | None ->

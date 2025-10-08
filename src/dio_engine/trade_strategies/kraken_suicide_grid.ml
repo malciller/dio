@@ -450,6 +450,7 @@ module State = struct
             let buy_orders = List.filter (fun (o : K.Kraken_common_types.order) -> o.side = Some Core.Buy) open_orders_for_symbol in
             let sell_orders = List.filter (fun (o : K.Kraken_common_types.order) -> o.side = Some Core.Sell) open_orders_for_symbol in
 
+            (* Case 1: Both buy and sell orders exist - verify grid spacing *)
             if List.length buy_orders > 0 && List.length sell_orders > 0 then
               let highest_buy_order =
                 List.fold_left (fun (acc : K.Kraken_common_types.order) (curr : K.Kraken_common_types.order) ->
@@ -571,9 +572,73 @@ module State = struct
                                   "Grid Verify [%s]: FAILED & AMENDING."
                                   symbol
                               )
+            (* Case 2: Buy orders exist but no sell orders - chase ATH by keeping buy at grid_interval below current price *)
+            else if List.length buy_orders > 0 && List.length sell_orders = 0 then
+              let highest_buy_order =
+                List.fold_left (fun (acc : K.Kraken_common_types.order) (curr : K.Kraken_common_types.order) ->
+                  if curr.limit_price > acc.limit_price then curr else acc
+                ) (List.hd buy_orders) (List.tl buy_orders)
+              in
+              
+              let configured_grid_interval_pct = Float.of_string (Primitives.Fixed.to_string grid_interval) in
+              (* Calculate how far the existing buy order is from current price *)
+              let distance_from_current = current_market_price_float -. highest_buy_order.limit_price in
+              let distance_pct = (distance_from_current /. current_market_price_float) *. 100.0 in
+              
+              (* Only amend if buy order has drifted more than grid_interval away from current price *)
+              if distance_pct <= configured_grid_interval_pct then
+                debug_f ~section:verify_section
+                  "Grid Verify [%s]: No sell orders - buy order within grid_interval (%.4f%% vs %.4f%% target), no action needed."
+                  symbol distance_pct configured_grid_interval_pct
+              else
+                (* Buy order is too far away, amend it to grid_interval below current price *)
+                let target_buy_price_float = current_market_price_float *. (1.0 -. (configured_grid_interval_pct /. 100.0)) in
+                
+                match K.Kraken_incoming_data.get_precisions symbol with
+                | None ->
+                    debug_f ~section:verify_section
+                      "Grid Verify [%s]: No sell orders - cannot get precision to amend." symbol
+                | Some (price_prec, qty_prec) ->
+                    let price_increment = 10.0 ** (-.float_of_int price_prec) in
+                    let min_price_diff = price_increment *. 2.0 in
+                    let price_diff = abs_float (target_buy_price_float -. highest_buy_order.limit_price) in
+                    
+                    if price_diff < min_price_diff then
+                      debug_f ~section:verify_section
+                        "Grid Verify [%s]: No sell orders - price diff too small to amend (%.8f < %.8f)."
+                        symbol price_diff min_price_diff
+                    else
+                      let target_price_formatted = Printf.sprintf "%.*f" price_prec target_buy_price_float in
+                      let new_buy_price_primitive =
+                        Primitives.Price.of_string_exn ~scale:price_prec target_price_formatted
+                      in
+                      let existing_qty_primitive =
+                        Primitives.Qty.of_string_exn ~scale:qty_prec (Printf.sprintf "%.*f" qty_prec highest_buy_order.qty)
+                      in
+                      
+                      if Hashtbl.mem pending_amends highest_buy_order.order_id then
+                        debug_f ~section:verify_section
+                          "Grid Verify [%s]: No sell orders - amend already pending for %s."
+                          symbol highest_buy_order.order_id
+                      else (
+                        Hashtbl.add pending_amends highest_buy_order.order_id (new_buy_price_primitive, existing_qty_primitive);
+                        let amend_cmd = Core.Amend {
+                          dst = "kraken";
+                          order_id = highest_buy_order.order_id;
+                          symbol = symbol;
+                          new_price = new_buy_price_primitive;
+                          new_qty = existing_qty_primitive;
+                          ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float;
+                        } in
+                        Ringbuffer.push cmd_buffer amend_cmd >>= fun () ->
+                        info_f ~section:verify_section
+                          "Grid Verify [%s]: No sell orders - amending buy from %.8f to %.8f (exceeded grid_interval: %.4f%% vs %.4f%%, current price: %.8f)."
+                          symbol highest_buy_order.limit_price target_buy_price_float distance_pct configured_grid_interval_pct current_market_price_float
+                      )
+            (* Case 3: Other configurations - skip *)
             else
-              warning_f ~section:verify_section
-                "Grid Verify [%s]: Skipping, not enough buy/sell orders to form a grid (Buys: %d, Sells: %d)."
+              debug_f ~section:verify_section
+                "Grid Verify [%s]: Skipping - insufficient orders (Buys: %d, Sells: %d)."
                 symbol (List.length buy_orders) (List.length sell_orders)
         | None ->
             warning_f ~section:verify_section

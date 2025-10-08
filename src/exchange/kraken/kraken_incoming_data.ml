@@ -539,7 +539,12 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
           let qty =
             match item_exec_type with
             | "new" -> (match Hashtbl.find_opt pending_orders order_id with Some o -> o.qty | None -> Option.value order_qty_opt ~default:0.0)
-            | "amended" -> (match Hashtbl.find_opt all_open_orders order_id with Some o -> Option.value order_qty_opt ~default:o.qty | None -> Option.value order_qty_opt ~default:0.0)
+            | "amended" ->
+                (* For amended orders, always calculate remaining quantity from cum_qty *)
+                let order_qty_val = Option.value order_qty_opt ~default:0.0 in
+                let cum_qty_val = Option.value cum_qty_opt ~default:0.0 in
+                let rem_qty = order_qty_val -. cum_qty_val in
+                if rem_qty > 0.0 && cum_qty_val > 0.0 then rem_qty else order_qty_val
             | "trade" ->
                 (* Calculate remaining quantity from cum_qty for accuracy *)
                 let order_qty_val = Option.value order_qty_opt ~default:0.0 in
@@ -547,6 +552,7 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                 let rem_qty = order_qty_val -. cum_qty_val in
                 if rem_qty > 0.0 && cum_qty_val > 0.0 then rem_qty else order_qty_val
             | _ ->
+                (* For all other types including snapshots, calculate remaining quantity *)
                 let order_qty_val = Option.value order_qty_opt ~default:0.0 in
                 let cum_qty_val = Option.value cum_qty_opt ~default:0.0 in
                 let rem_qty = order_qty_val -. cum_qty_val in
