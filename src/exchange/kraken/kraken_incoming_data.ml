@@ -418,7 +418,8 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
           Lwt.return_unit)
   | Frame.Opcode.Ping ->
       Lwt_log_core.debug ~section "Received ping" >>= fun () ->
-      Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Pong ())
+      Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Pong ()) >>= fun () ->
+      Lwt.return_unit
   | Frame.Opcode.Pong ->
       Lwt_log_core.debug ~section "Received pong"
   | Frame.Opcode.Close ->
@@ -770,7 +771,8 @@ let handle_auth_frame conn (cfg: Config.engine_config) frame ~on_execution =
           Lwt.return_unit
         )
   | Frame.Opcode.Ping ->
-      Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Pong ())
+      Websocket_lwt_unix.write conn (Frame.create ~opcode:Frame.Opcode.Pong ()) >>= fun () ->
+      Lwt.return_unit
   | Frame.Opcode.Close ->
       Lwt_log_core.info ~section "Received Close frame" >>= fun () ->
       Lwt.return_unit

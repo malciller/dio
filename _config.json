@@ -66,14 +66,63 @@
       "symbol": "EUROP/USD",
       "qty": "10.0",
       "min_usd_balance": "1500.0",
-      "max_exposure": "200.0",
+      "max_exposure": "100.0",
       "strategy": "GMM"
     },
     {
+      "symbol": "USDT/USD",
+      "qty": "100.0",
+      "min_usd_balance": "1000.0",
+      "max_exposure": "100.0",
+      "strategy": "VMM"
+    },
+    {
+      "symbol": "USDC/USD",
+      "qty": "100.0",
+      "min_usd_balance": "1000.0",
+      "max_exposure": "100.0",
+      "strategy": "VMM"
+    },
+    {
+      "symbol": "USD1/USD",
+      "qty": "50.0",
+      "min_usd_balance": "1000.0",
+      "max_exposure": "50.0",
+      "strategy": "VMM"
+    },
+    {
+      "symbol": "PYUSD/USD",
+      "qty": "50.0",
+      "min_usd_balance": "1000.0",
+      "max_exposure": "50.0",
+      "strategy": "VMM"
+    },
+    {
+      "symbol": "DAI/USD",
+      "qty": "50.0",
+      "min_usd_balance": "1000.0",
+      "max_exposure": "50.0",
+      "strategy": "VMM"
+    },
+    {
+      "symbol": "RLUSD/USD",
+      "qty": "50.0",
+      "min_usd_balance": "1000.0",
+      "max_exposure": "50.0",
+      "strategy": "VMM"
+    },
+    {
+      "symbol": "USDS/USD",
+      "qty": "50.0",
+      "min_usd_balance": "1000.0",
+      "max_exposure": "50.0",
+      "strategy": "VMM"
+    },
+    {
       "symbol": "USDD/USD",
-      "qty": "10.0",
-      "min_usd_balance": "1500.0",
-      "max_exposure": "200.0",
+      "qty": "50.0",
+      "min_usd_balance": "1000.0",
+      "max_exposure": "50.0",
       "strategy": "VMM"
     }
   ],
