@@ -315,10 +315,12 @@ let start_engine_logic () : unit Lwt.t =
             start = Kraken_suicide_grid.start
           } in
           let orderbook_strategy : Core.orderbook_strategy = {
-            start = Kraken_greedy_mm.start
+            start = (fun runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer ->
+              Kraken_mm.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer ~strategy_type:Config.GMM)
           } in
           let vmm_strategy : Core.vmm_strategy = {
-            start = Kraken_valley_mm.start
+            start = (fun runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer ->
+              Kraken_mm.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer ~strategy_type:Config.VMM)
           } in
           let arbitrage_strategy : Core.arbitrage_strategy = {
             start = Kraken_arbitrage.start

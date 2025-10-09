@@ -3,9 +3,8 @@
  (public_name dio.engine.strategy)
  (modules
   kraken_suicide_grid
-  kraken_greedy_mm
-  kraken_arbitrage
-  kraken_valley_mm)
+  kraken_mm
+  kraken_arbitrage)
  (libraries
   dio.dio_types
   dio.state
