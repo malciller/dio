@@ -605,10 +605,14 @@ module State = struct
                       match asset_cfg.strategy with
                       | Config.GMM ->
                           (* GMM: refresh balances and potentially resume buy orders *)
-                          handle_sell_fill runtime_cfg cmd_buffer symbol qty_float ~is_vmm:false
+                          Lwt_mutex.with_lock K.Kraken_common_types.order_placement_mutex (fun () ->
+                            handle_sell_fill runtime_cfg cmd_buffer symbol qty_float ~is_vmm:false
+                          )
                       | Config.VMM ->
                           (* VMM: cleanup fill tracker, refresh balances, and potentially resume buy orders *)
-                          handle_sell_fill runtime_cfg cmd_buffer symbol qty_float ~is_vmm:true
+                          Lwt_mutex.with_lock K.Kraken_common_types.order_placement_mutex (fun () ->
+                            handle_sell_fill runtime_cfg cmd_buffer symbol qty_float ~is_vmm:true
+                          )
                       | _ -> Lwt.return_unit
                     ) else (
                       Lwt.return_unit
@@ -622,10 +626,12 @@ module State = struct
               )
           | None ->
               warning_f ~section "Fill event for unknown order %s, attempting to create orders anyway" order_id >>= fun () ->
-              (SharedState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
-              SharedState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
-              refresh_asset_balance symbol >>= fun () ->
-              manage_orders runtime_cfg symbol cmd_buffer
+              Lwt_mutex.with_lock K.Kraken_common_types.order_placement_mutex (fun () ->
+                (SharedState.sync_open_orders (fun () -> K.Kraken_incoming_data.get_all_open_orders ())) () >>= fun () ->
+                SharedState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->
+                refresh_asset_balance symbol >>= fun () ->
+                manage_orders runtime_cfg symbol cmd_buffer
+              )
         ) else (
           debug_f ~section "Fill event for %s not in managed symbols, ignoring" symbol >>= fun () ->
           Lwt.return_unit

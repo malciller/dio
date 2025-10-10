@@ -318,7 +318,9 @@ module State = struct
               if order.side = Some Core.Buy then (
                 info_f ~section
                   "Buy order %s filled, creating new orders for %s" order_id symbol >>= fun () ->
-                create_initial_orders runtime_cfg symbol cmd_buffer
+                Lwt_mutex.with_lock K.Kraken_common_types.order_placement_mutex (fun () ->
+                  create_initial_orders runtime_cfg symbol cmd_buffer
+                )
               ) else (
                 info_f ~section
                   "Sell order %s filled, no action needed" order_id >>= fun () ->
@@ -348,8 +350,10 @@ module State = struct
                 if order.side = Some Core.Buy then (
                   info_f ~section
                     "Buy order %s cancelled/rejected, creating new orders for %s" order_id symbol >>= fun () ->
-                  sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
-                  create_initial_orders runtime_cfg symbol cmd_buffer
+                  Lwt_mutex.with_lock K.Kraken_common_types.order_placement_mutex (fun () ->
+                    sync_open_orders runtime_cfg cmd_buffer () >>= fun () ->
+                    create_initial_orders runtime_cfg symbol cmd_buffer
+                  )
                 ) else (
                   info_f ~section
                     "Sell order %s cancelled/rejected, no action needed" order_id >>= fun () ->
@@ -385,7 +389,9 @@ module State = struct
                 if order.side = Some Core.Buy then (
                   info_f ~section
                     "Buy order %s fully filled, creating new orders for %s" order_id symbol >>= fun () ->
-                  create_initial_orders runtime_cfg symbol cmd_buffer
+                  Lwt_mutex.with_lock K.Kraken_common_types.order_placement_mutex (fun () ->
+                    create_initial_orders runtime_cfg symbol cmd_buffer
+                  )
                 ) else (
                   info_f ~section
                     "Sell order %s fully filled, no action needed" order_id >>= fun () ->
@@ -710,7 +716,9 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
         State.check_and_adjust_orders runtime_cfg cmd_buffer tick >>= fun () ->
         (let has_orders = State.has_buy_order tick.symbol in
         if not has_orders then
-          State.create_initial_orders runtime_cfg tick.symbol cmd_buffer
+          Lwt_mutex.with_lock K.Kraken_common_types.order_placement_mutex (fun () ->
+            State.create_initial_orders runtime_cfg tick.symbol cmd_buffer
+          )
         else
           Lwt.return_unit) >>= fun () ->
         let current_price_for_verify = Float.of_string (Primitives.Price.to_string tick.current_price) in
