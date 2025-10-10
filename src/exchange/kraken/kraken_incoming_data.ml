@@ -39,6 +39,34 @@ let pending_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.cre
 
 let get_precisions symbol : (int * int) option = Hashtbl.find_opt instrument_precisions symbol
 let get_instrument symbol : Kraken_common_types.pair_data option = Hashtbl.find_opt instrument_data symbol
+let get_ordermin symbol : float option =
+  match Hashtbl.find_opt instrument_data symbol with
+  | Some pair_data ->
+      begin match pair_data.ordermin with
+      | Some ordermin ->
+          Lwt_log_core.warning ~section (Printf.sprintf "Retrieved ordermin for %s from WebSocket data: %.8f" symbol ordermin) |> Lwt.ignore_result;
+          Some ordermin
+      | None ->
+          (* Check fee cache as fallback *)
+          let fee_cache_ordermin = Kraken_fee_cache.get_ordermin symbol in
+          match fee_cache_ordermin with
+          | Some ordermin ->
+              Lwt_log_core.warning ~section (Printf.sprintf "Retrieved ordermin for %s from fee cache: %.8f" symbol ordermin) |> Lwt.ignore_result;
+              Some ordermin
+          | None ->
+              Lwt_log_core.warning ~section (Printf.sprintf "No ordermin available for %s (checked both WebSocket and fee cache)" symbol) |> Lwt.ignore_result;
+              None
+      end
+  | None ->
+      (* Check fee cache as fallback *)
+      let fee_cache_ordermin = Kraken_fee_cache.get_ordermin symbol in
+      match fee_cache_ordermin with
+      | Some ordermin ->
+          Lwt_log_core.warning ~section (Printf.sprintf "Retrieved ordermin for %s from fee cache (no WebSocket data): %.8f" symbol ordermin) |> Lwt.ignore_result;
+          Some ordermin
+      | None ->
+          Lwt_log_core.warning ~section (Printf.sprintf "No ordermin available for %s (no WebSocket data and not in fee cache)" symbol) |> Lwt.ignore_result;
+          None
 
 
 let get_price_precision symbol : int option =

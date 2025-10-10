@@ -212,7 +212,7 @@ module State = struct
         let check_min_usd_balance = match asset_cfg.min_usd_balance with
           | Some min_balance ->
               let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
-              SharedState.get_usd_balance () >= min_balance_float
+              SharedState.get_usd_balance () > min_balance_float  (* Strict inequality to prevent hitting exact limit *)
           | None -> true
         in
         
@@ -220,7 +220,7 @@ module State = struct
         let check_max_exposure = match asset_cfg.max_exposure with
           | Some max_exposure_fixed ->
               let max_exposure = float_of_string (Primitives.Fixed.to_string max_exposure_fixed) in
-              current_inventory <= max_exposure
+              current_inventory < max_exposure  (* Strict inequality to prevent hitting exact limit *)
           | None -> true
         in
         
@@ -294,31 +294,44 @@ module State = struct
 
                   if sell_amount > 0.00001 then (
                     let clean_qty = floor (sell_amount *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
-                    (match SharedState.get_price symbol with
-                    | Some tick ->
-                        let sell_price = tick.ask in
-                        let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
-                        let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
-                        (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty with
-                        | Some sell_cmd ->
-                            Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                            info_f ~section "Placed sell order for excess %s inventory: %.8f (max exposure exceeded)"
-                              symbol clean_qty
+                    (* Check minimum order size before placing sell order *)
+                    match K.Kraken_incoming_data.get_ordermin symbol with
+                    | Some min_volume when clean_qty < min_volume ->
+                        warning_f ~section "Cannot place sell order for %s: quantity %.8f is below minimum volume %.8f (max exposure exceeded)"
+                          symbol clean_qty min_volume >>= fun () ->
+                        Lwt.return_unit
+                    | _ ->
+                        (match SharedState.get_price symbol with
+                        | Some tick ->
+                            let sell_price = tick.ask in
+                            let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
+                            let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
+                            (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty with
+                            | Some sell_cmd ->
+                                Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                                info_f ~section "Placed sell order for excess %s inventory: %.8f (max exposure exceeded)"
+                                  symbol clean_qty >>= fun () ->
+                                Lwt.return_unit
+                            | None ->
+                                error_f ~section "Failed to create sell order for excess %s inventory" symbol >>= fun () ->
+                                Lwt.return_unit
+                            )
                         | None ->
-                            error_f ~section "Failed to create sell order for excess %s inventory" symbol
+                            warning_f ~section "No price info for %s, cannot place sell order for excess inventory" symbol >>= fun () ->
+                            Lwt.return_unit
                         )
-                    | None ->
-                        warning_f ~section "No price info for %s, cannot place sell order for excess inventory" symbol
-                    )
                   ) else (
-                    debug_f ~section "No available balance for %s to sell excess inventory" symbol
+                    debug_f ~section "No available balance for %s to sell excess inventory" symbol >>= fun () ->
+                    Lwt.return_unit
                   )
               | None ->
-                  warning_f ~section "No instrument data for %s, cannot place sell order for excess inventory" symbol
+                  warning_f ~section "No instrument data for %s, cannot place sell order for excess inventory" symbol >>= fun () ->
+                  Lwt.return_unit
               )
             ) else (
               info_f ~section "Max exposure exceeded for %s but no excess inventory to sell (%.8f <= %.8f)"
-                symbol current_inventory max_exposure
+                symbol current_inventory max_exposure >>= fun () ->
+              Lwt.return_unit
             )
           ) else (
             (* Must be min_usd_balance constraint - cancel buys and sell remaining asset balance to get more USD *)
@@ -363,32 +376,45 @@ module State = struct
 
                 if available_balance > 0.00001 then (
                   let clean_qty = floor (available_balance *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
-                  (match SharedState.get_price symbol with
-                  | Some tick ->
-                      let sell_price = tick.ask in
-                      let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
-                      let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
-                      (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty with
-                      | Some sell_cmd ->
-                          Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                          info_f ~section "Placed sell order for remaining %s balance: %.8f (min USD balance constraint)"
-                            symbol clean_qty
+                  (* Check minimum order size before placing sell order *)
+                  match K.Kraken_incoming_data.get_ordermin symbol with
+                  | Some min_volume when clean_qty < min_volume ->
+                      warning_f ~section "Cannot place sell order for %s: quantity %.8f is below minimum volume %.8f (min USD balance)"
+                        symbol clean_qty min_volume >>= fun () ->
+                      Lwt.return_unit
+                  | _ ->
+                      (match SharedState.get_price symbol with
+                      | Some tick ->
+                          let sell_price = tick.ask in
+                          let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
+                          let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
+                          (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty with
+                          | Some sell_cmd ->
+                              Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                              info_f ~section "Placed sell order for remaining %s balance: %.8f (min USD balance constraint)"
+                                symbol clean_qty >>= fun () ->
+                              Lwt.return_unit
+                          | None ->
+                              error_f ~section "Failed to create sell order for remaining %s balance" symbol >>= fun () ->
+                              Lwt.return_unit
+                          )
                       | None ->
-                          error_f ~section "Failed to create sell order for remaining %s balance" symbol
+                          warning_f ~section "No price info for %s, cannot place sell order" symbol >>= fun () ->
+                          Lwt.return_unit
                       )
-                  | None ->
-                      warning_f ~section "No price info for %s, cannot place sell order" symbol
-                  )
                 ) else (
-                  debug_f ~section "No remaining available balance for %s to sell" symbol
+                  debug_f ~section "No remaining available balance for %s to sell" symbol >>= fun () ->
+                  Lwt.return_unit
                 )
             | None ->
-                warning_f ~section "No instrument data for %s, cannot place sell order" symbol
+                warning_f ~section "No instrument data for %s, cannot place sell order" symbol >>= fun () ->
+                Lwt.return_unit
             )
           )
         )
     | None ->
-        warning_f ~section "No configuration found for %s" symbol
+        warning_f ~section "No configuration found for %s" symbol >>= fun () ->
+        Lwt.return_unit
 
   (** Adjust buy orders to maintain optimal positioning *)
   let check_and_adjust_orders (runtime_cfg : Config.runtime_cfg) cmd_buffer (tick : Event.tick) =
@@ -471,16 +497,25 @@ module State = struct
     let current_inventory = get_current_inventory symbol in
     info_f ~section "After sell fill, current inventory for %s: %.8f" symbol current_inventory >>= fun () ->
     
-    (* Resume buy orders if inventory dropped below max exposure *)
+    (* Resume buy orders if inventory dropped below max exposure AND min_usd_balance is satisfied *)
     let asset_cfg_opt = SharedState.get_asset_config runtime_cfg symbol in
     (match asset_cfg_opt with
     | Some asset_cfg ->
       (match asset_cfg.max_exposure with
       | Some max_exposure_fixed ->
         let max_exposure = float_of_string (Primitives.Fixed.to_string max_exposure_fixed) in
-        if current_inventory < max_exposure then (
-          info_f ~section "Inventory below max exposure. Resuming buy orders for %s" symbol >>= fun () ->
+        let check_min_usd_balance = match asset_cfg.min_usd_balance with
+          | Some min_balance ->
+              let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
+              SharedState.get_usd_balance () > min_balance_float  (* Strict inequality to prevent hitting exact limit *)
+          | None -> true
+        in
+        if current_inventory < max_exposure && check_min_usd_balance then (
+          info_f ~section "Inventory below max exposure and USD balance sufficient. Resuming buy orders for %s" symbol >>= fun () ->
           manage_orders runtime_cfg symbol cmd_buffer
+        ) else if current_inventory < max_exposure && not check_min_usd_balance then (
+          debug_f ~section "Inventory below max exposure but USD balance insufficient for %s, not resuming" symbol >>= fun () ->
+          Lwt.return_unit
         ) else (
           Lwt.return_unit
         )
