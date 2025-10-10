@@ -58,8 +58,8 @@ let setup_logging () =
   (** Set base log levels for all sections *)
   Lwt_log.add_rule "*" Error;
   Lwt_log.add_rule "*" Warning;
-  Lwt_log.add_rule "*" Info;  
-  (*Lwt_log.add_rule "*" Debug;  *)
+  (*Lwt_log.add_rule "*" Info;  
+  Lwt_log.add_rule "*" Debug;  *)
 
   (** Create logger based on execution mode *)
   let default_logger =

@@ -113,16 +113,33 @@ module State = struct
           if not has_buy then (
             match SharedState.get_price symbol with
             | Some tick ->
+              let top_bid_price_float = Float.of_string (Primitives.Price.to_string tick.bid) in
               let top_ask_price_float = Float.of_string (Primitives.Price.to_string tick.ask) in
+              let actual_spread = top_ask_price_float -. top_bid_price_float in
               let asset_fee = get_maker_fee symbol in
               let profit_threshold = runtime_cfg.profit_threshold_pct /. 100.0 in
+              let min_spread_threshold = top_ask_price_float *. ((2.0 *. asset_fee) +. profit_threshold) in
 
-              let buy_price_float = top_ask_price_float *. (1.0 -. ((2.0 *. asset_fee) +. profit_threshold)) in
-              let buy_price = Primitives.Price.of_string_exn ~scale:instrument.price_precision (Printf.sprintf "%.*f" instrument.price_precision buy_price_float) in
-              let sell_price = tick.ask in
-
-              let order_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
-              let order_cost = buy_price_float *. order_qty_float in
+              (if actual_spread > min_spread_threshold then (
+                (* Large spread - use greedy style: buy at bid, sell at ask *)
+                info_f ~section "Large spread detected for %s (%.6f > %.6f), using greedy-style orders"
+                  symbol actual_spread min_spread_threshold >>= fun () ->
+                let buy_price = tick.bid in
+                let sell_price = tick.ask in
+                let order_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
+                let order_cost = top_bid_price_float *. order_qty_float in
+                Lwt.return (buy_price, sell_price, order_cost)
+              ) else (
+                (* Small spread - use valley logic with fees baked in *)
+                info_f ~section "Small spread for %s (%.6f <= %.6f), using valley logic"
+                  symbol actual_spread min_spread_threshold >>= fun () ->
+                let buy_price_float = top_ask_price_float *. (1.0 -. ((2.0 *. asset_fee) +. profit_threshold)) in
+                let buy_price = Primitives.Price.of_string_exn ~scale:instrument.price_precision (Printf.sprintf "%.*f" instrument.price_precision buy_price_float) in
+                let sell_price = tick.ask in
+                let order_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
+                let order_cost = buy_price_float *. order_qty_float in
+                Lwt.return (buy_price, sell_price, order_cost)
+              )) >>= fun (buy_price, sell_price, order_cost) ->
 
               if SharedState.get_usd_balance () >= order_cost then (
                 (match create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty with
@@ -246,12 +263,22 @@ module State = struct
 
         (match open_buy_orders with
         | [(_order_id, order)] ->
+          let top_bid_price_float = Float.of_string (Primitives.Price.to_string tick.bid) in
           let top_ask_price_float = Float.of_string (Primitives.Price.to_string tick.ask) in
+          let actual_spread = top_ask_price_float -. top_bid_price_float in
           let asset_fee = get_maker_fee tick.symbol in
           let profit_threshold = runtime_cfg.profit_threshold_pct /. 100.0 in
+          let min_spread_threshold = top_ask_price_float *. ((2.0 *. asset_fee) +. profit_threshold) in
 
-          let new_buy_price_float = top_ask_price_float *. (1.0 -. ((2.0 *. asset_fee) +. profit_threshold)) in
-          let new_buy_price = Primitives.Price.of_string_exn ~scale:instrument.price_precision (Printf.sprintf "%.*f" instrument.price_precision new_buy_price_float) in
+          let new_buy_price =
+            if actual_spread > min_spread_threshold then (
+              (* Large spread - adjust to bid (greedy style) *)
+              tick.bid
+            ) else (
+              (* Small spread - use valley logic *)
+              let new_buy_price_float = top_ask_price_float *. (1.0 -. ((2.0 *. asset_fee) +. profit_threshold)) in
+              Primitives.Price.of_string_exn ~scale:instrument.price_precision (Printf.sprintf "%.*f" instrument.price_precision new_buy_price_float)
+            ) in
 
           SharedState.amend_order_with_callback
             ~order ~new_price:new_buy_price ~cmd_buffer ~section
@@ -355,13 +382,22 @@ module State = struct
                     
                     (match SharedState.get_price symbol with
                     | Some tick ->
-                      let current_top_ask_price = tick.ask in
+                      let current_top_bid_price_float = Float.of_string (Primitives.Price.to_string tick.bid) in
+                      let current_top_ask_price_float = Float.of_string (Primitives.Price.to_string tick.ask) in
+                      let current_spread = current_top_ask_price_float -. current_top_bid_price_float in
+                      let min_spread_threshold = current_top_ask_price_float *. ((2.0 *. asset_fee) +. profit_threshold) in
+
                       let sell_price =
-                        if Primitives.Price.gt current_top_ask_price target_sell_price then
-                          current_top_ask_price
-                        else
-                          target_sell_price
-                      in
+                        if current_spread > min_spread_threshold then (
+                          (* Large spread - sell at ask (greedy style) *)
+                          tick.ask
+                        ) else (
+                          (* Small spread - use valley logic *)
+                          if Primitives.Price.gt tick.ask target_sell_price then
+                            tick.ask
+                          else
+                            target_sell_price
+                        ) in
                       (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:qty with
                       | Some sell_cmd ->
                         Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
