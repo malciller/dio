@@ -51,28 +51,42 @@
     {
       "symbol": "USDR/USD",
       "qty": "10.0",
-      "min_usd_balance": "1000.0",
+      "min_usd_balance": "1500.0",
       "max_exposure": "200.0",
+      "strategy": "GMM"
+    },
+    {
+      "symbol": "EURR/USD",
+      "qty": "10.0",
+      "min_usd_balance": "1500.0",
+      "max_exposure": "200.0",
+      "strategy": "GMM"
+    },
+    {
+      "symbol": "EUROP/USD",
+      "qty": "10.0",
+      "min_usd_balance": "1500.0",
+      "max_exposure": "100.0",
       "strategy": "GMM"
     },
     {
       "symbol": "USDT/USD",
       "qty": "100.0",
-      "min_usd_balance": "700.0",
+      "min_usd_balance": "1000.0",
       "max_exposure": "100.0",
       "strategy": "VMM"
     },
     {
       "symbol": "USDC/USD",
       "qty": "100.0",
-      "min_usd_balance": "800.0",
+      "min_usd_balance": "1000.0",
       "max_exposure": "100.0",
       "strategy": "VMM"
     },
     {
       "symbol": "USD1/USD",
       "qty": "50.0",
-      "min_usd_balance": "900.0",
+      "min_usd_balance": "1000.0",
       "max_exposure": "50.0",
       "strategy": "VMM"
     },
@@ -98,37 +112,16 @@
       "strategy": "VMM"
     },
     {
-      "symbol": "USDD/USD",
-      "qty": "50.0",
-      "min_usd_balance": "900.0",
-      "max_exposure": "50.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "USDE/USD",
-      "qty": "50.0",
-      "min_usd_balance": "1100.0",
-      "max_exposure": "50.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "USDQ/USD",
-      "qty": "50.0",
-      "min_usd_balance": "1100.0",
-      "max_exposure": "50.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "TUSD/USD",
-      "qty": "50.0",
-      "min_usd_balance": "1100.0",
-      "max_exposure": "50.0",
-      "strategy": "VMM"
-    },
-    {
       "symbol": "USDS/USD",
       "qty": "50.0",
-      "min_usd_balance": "900.0",
+      "min_usd_balance": "1000.0",
+      "max_exposure": "50.0",
+      "strategy": "VMM"
+    },
+    {
+      "symbol": "USDD/USD",
+      "qty": "50.0",
+      "min_usd_balance": "1000.0",
       "max_exposure": "50.0",
       "strategy": "VMM"
     }
@@ -136,4 +129,3 @@
   "queues_cap": 1000,
   "profit_threshold_pct": 0.02
 }
-

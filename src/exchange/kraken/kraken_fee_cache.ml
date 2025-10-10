@@ -32,8 +32,7 @@ type pair_metadata = {
   canonical_pair: string;
   friendly_aliases: string list;
   fallback_maker: float option;
-  fallback_taker: float option;
-  ordermin: float option;
+  fallback_taker: float option; 
 }
 
 let pair_metadata_by_friendly : (string, pair_metadata) Hashtbl.t = Hashtbl.create 256
@@ -159,14 +158,6 @@ let combine_base_quote_aliases base_variants quote_variants =
         ) acc quote_variants
     ) [] base_variants
 
-let parse_ordermin_entry json =
-  match json with
-  | `Float f -> Some f
-  | `Int i -> Some (float_of_int i)
-  | `Intlit s | `String s ->
-      (try Some (float_of_string (String.trim s)) with _ -> None)
-  | _ -> None
-
 let extract_highest_fee tiers_json =
   let rec parse_tiers acc = function
     | [] -> acc
@@ -243,9 +234,6 @@ let ensure_metadata_fresh () =
             let taker_tiers = member "fees" pair_json in
             let fallback_maker = extract_highest_fee maker_tiers in
             let fallback_taker = extract_highest_fee taker_tiers in
-            let ordermin = member "ordermin" pair_json |> parse_ordermin_entry in
-            debug_f ~section "Loaded metadata for %s: ordermin=%s" canonical_upper
-              (match ordermin with Some v -> Printf.sprintf "%.8f" v | None -> "None") |> Lwt.ignore_result;
             let base_variants = match base with Some b -> asset_code_variants b | None -> [] in
             let quote_variants = match quote with Some q -> asset_code_variants q | None -> [] in
             let aliases =
@@ -261,7 +249,6 @@ let ensure_metadata_fresh () =
               friendly_aliases = all_aliases;
               fallback_maker;
               fallback_taker;
-              ordermin;
             } in
             Hashtbl.replace pair_metadata_by_canonical canonical_upper metadata;
             List.iter (fun alias -> Hashtbl.replace pair_metadata_by_friendly alias metadata) all_aliases
@@ -342,7 +329,6 @@ let ensure_pairs (cfg : Config.engine_config) pairs =
     |> List.filter (fun pair -> String.length pair > 0)
     |> List.sort_uniq String.compare
   in
-  debug_f ~section "ensure_pairs called for: [%s]" (String.concat ", " normalized_pairs) >>= fun () ->
   if normalized_pairs = [] then Lwt.return_unit else
   ensure_metadata_fresh () >>= fun () ->
   Lwt_mutex.with_lock fetch_mutex (fun () ->
@@ -400,18 +386,6 @@ let get_fee_rate pair ~is_maker =
   | None -> None
   | Some info ->
       if is_maker then info.maker_fee else info.taker_fee
-
-let get_ordermin pair =
-  let upper = normalize_pair_symbol pair in
-  debug_f ~section "get_ordermin called for %s (normalized: %s)" pair upper |> Lwt.ignore_result;
-  match Hashtbl.find_opt pair_metadata_by_friendly upper with
-  | Some meta ->
-      debug_f ~section "Found metadata for %s, ordermin=%s" upper
-        (match meta.ordermin with Some v -> Printf.sprintf "%.8f" v | None -> "None") |> Lwt.ignore_result;
-      meta.ordermin
-  | None ->
-      debug_f ~section "No metadata found for %s in pair_metadata_by_friendly" upper |> Lwt.ignore_result;
-      None
 
 let last_updated pair =
   get_fee_info pair |> Option.map (fun info -> info.last_updated)

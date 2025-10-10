@@ -58,8 +58,8 @@ let setup_logging () =
   (** Set base log levels for all sections *)
   Lwt_log.add_rule "*" Error;
   Lwt_log.add_rule "*" Warning;
-  (*Lwt_log.add_rule "*" Info;  
-  Lwt_log.add_rule "*" Debug;  *)
+  Lwt_log.add_rule "*" Info;  
+  (*Lwt_log.add_rule "*" Debug;  *)
 
   (** Create logger based on execution mode *)
   let default_logger =
@@ -315,12 +315,10 @@ let start_engine_logic () : unit Lwt.t =
             start = Kraken_suicide_grid.start
           } in
           let orderbook_strategy : Core.orderbook_strategy = {
-            start = (fun runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer ->
-              Kraken_mm.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer ~strategy_type:Config.GMM)
+            start = Kraken_greedy_mm.start
           } in
           let vmm_strategy : Core.vmm_strategy = {
-            start = (fun runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer ->
-              Kraken_mm.start runtime_cfg core_cfg ~tick_buffer ~cmd_buffer ~exec_buffer ~strategy_type:Config.VMM)
+            start = Kraken_valley_mm.start
           } in
           let arbitrage_strategy : Core.arbitrage_strategy = {
             start = Kraken_arbitrage.start

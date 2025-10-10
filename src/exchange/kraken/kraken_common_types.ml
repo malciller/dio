@@ -117,7 +117,6 @@ type pair_data = {
   price_precision: int; [@key "price_precision"]
   qty_precision: int; [@key "qty_precision"]
   status: string; [@key "status"]
-  ordermin: float option; [@key "ordermin"] [@yojson.optional] [@default None]
   maker_fee: float option; [@key "maker_fee"] [@yojson.optional] [@default None]
   taker_fee: float option; [@key "taker_fee"] [@yojson.optional] [@default None]
   fee_volume_currency: string option; [@key "fee_volume_currency"] [@yojson.optional] [@default None]
@@ -240,9 +239,6 @@ let last_nonce =
 
 (** Mutex to synchronize nonce generation across concurrent requests *)
 let nonce_mutex = Lwt_mutex.create ()
-
-(** Mutex to synchronize order placement across strategies to prevent race conditions *)
-let order_placement_mutex = Lwt_mutex.create ()
 
 (** Generate monotonically increasing nonce for Kraken API authentication *)
 let nonce () =
@@ -568,7 +564,7 @@ module StrategyState = struct
     let price_diff = abs_float (order_price_float -. top_bid_price_float) in
     let price_diff_pct = if order_price_float > 0.0 then price_diff /. order_price_float else 0.0 in
 
-    if price_diff_pct >= 0.00005 then ( (* 0.005% threshold *)
+    if price_diff_pct > 0.0001 then ( (* 0.01% threshold *)
       let now = Unix.gettimeofday () in
       let last_amend = Hashtbl.find_opt last_amend_time order.order_id |> Option.value ~default:0.0 in
       let time_since_last_amend = now -. last_amend in
@@ -602,7 +598,7 @@ module StrategyState = struct
     let price_diff = abs_float (order_price_float -. top_bid_price_float) in
     let price_diff_pct = if order_price_float > 0.0 then price_diff /. order_price_float else 0.0 in
 
-    if price_diff_pct >= 0.00005 then ( (* 0.005% threshold *)
+    if price_diff_pct > 0.0001 then ( (* 0.01% threshold *)
       let now = Unix.gettimeofday () in
       let last_amend = Hashtbl.find_opt last_amend_time order.order_id |> Option.value ~default:0.0 in
       let time_since_last_amend = now -. last_amend in

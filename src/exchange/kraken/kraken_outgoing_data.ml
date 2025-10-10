@@ -15,34 +15,6 @@ module RingbufferTelemetryInterface = struct
   let set_functions = Ringbuffer.TelemetryInterface.set_functions
 end
 
-(** Rate limiting module for Kraken API requests *)
-module RateLimiter = struct
-  let request_times = ref []
-  let max_requests_per_second = 8  (** Conservative limit for Kraken private endpoints *)
-
-  (** Check if we can make a request without violating rate limits *)
-  let can_make_request () =
-    let now = Unix.gettimeofday () in
-    let recent_requests = List.filter (fun t -> now -. t < 1.0) !request_times in
-    request_times := recent_requests;
-    List.length recent_requests < max_requests_per_second
-
-  (** Record a request timestamp *)
-  let record_request () =
-    let now = Unix.gettimeofday () in
-    request_times := now :: !request_times
-
-  (** Wait until we can make a request *)
-  let wait_for_slot () =
-    let rec wait () =
-      if can_make_request () then
-        Lwt.return_unit
-      else
-        Lwt_unix.sleep 0.1 >>= wait
-    in
-    wait ()
-end
-
 (** Convert internal Price type to float for API transmission *)
 let float_of_price price =
   float_of_string (Primitives.Price.to_string price)
@@ -68,9 +40,9 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
   | Add { symbol; side; price; qty; client_id; _ } ->
       Lwt_log_core.debug ~section (Printf.sprintf "Processing REST Add Order for client_id: %s" client_id) >>= fun () ->
       let api_path = "/0/private/AddOrder" in
-      let api_host = "api.kraken.com" in
+      let api_host = "api.kraken.com" in 
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      Kraken_common_types.nonce () >>= fun nonce ->
+      Kraken_common_types.nonce () >>= fun nonce -> 
       (* Format price with symbol-specific precision, fallback to raw float if unavailable *)
       let price_str =
         let raw_price_float = float_of_price price in
@@ -81,10 +53,10 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
             string_of_float raw_price_float
       in
       let qty_str = Primitives.Qty.to_string qty in
-      let order_type_str = "limit" in
-      let side_str = match side with Core.Buy -> "buy" | Core.Sell -> "sell" in
-      let oflags = "post" in
-      let time_in_force_str = "gtc" in
+      let order_type_str = "limit" in 
+      let side_str = match side with Core.Buy -> "buy" | Core.Sell -> "sell" in 
+      let oflags = "post" in 
+      let time_in_force_str = "gtc" in 
       (* Kraken limits client order ID to 18 characters *)
       let truncated_client_id =
         if String.length client_id > 18 then String.sub client_id 0 18
@@ -98,7 +70,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         ("ordertype", [order_type_str]);
         ("price", [price_str]);
         ("volume", [qty_str]);
-        ("cl_ord_id", [truncated_client_id]);
+        ("cl_ord_id", [truncated_client_id]); 
       ] in
       let params = if oflags <> "" then params @ [("oflags", [oflags])] else params in
       let params = params @ [("timeinforce", [time_in_force_str])] in
@@ -108,16 +80,12 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
       let signature = Kraken_common_types.sign ~secret:cfg.kraken_api_secret ~path:api_path ~body:encoded_post_data ~nonce in
       let headers = Cohttp.Header.of_list [
         ("API-Key", cfg.kraken_api_key);
-        ("API-Sign", signature);
+        ("API-Sign", signature); 
         ("Content-Type", "application/x-www-form-urlencoded");
       ] in
-      let body_cohttp = Cohttp_lwt.Body.of_string encoded_post_data in
-
-      (* Apply rate limiting before making the request *)
-      RateLimiter.wait_for_slot () >>= fun () ->
-      RateLimiter.record_request ();
+      let body_cohttp = Cohttp_lwt.Body.of_string encoded_post_data in 
       Lwt.catch (fun () ->
-        Client.post ~headers ~body:body_cohttp url >>= fun (resp, response_body_lwt) ->
+        Client.post ~headers ~body:body_cohttp url >>= fun (resp, response_body_lwt) -> 
         let http_status = Cohttp.Response.status resp in
         Cohttp_lwt.Body.to_string response_body_lwt >>= fun body_str ->
         Lwt_log_core.debug ~section (Printf.sprintf "REST AddOrder response status: %s, body: %s" (Cohttp.Code.string_of_status http_status) body_str) >>= fun () ->
@@ -171,13 +139,13 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         on_event ack
       )
 
-  | Amend { order_id; symbol; new_price; new_qty; _ } ->
+  | Amend { order_id; symbol; new_price; new_qty; _ } -> 
       Lwt_log_core.debug ~section (Printf.sprintf "Processing REST Amend Order for order_id: %s" order_id) >>= fun () ->
       let api_path = "/0/private/AmendOrder" in
       let api_host = "api.kraken.com" in
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      Kraken_common_types.nonce () >>= fun nonce ->
-      let price_prec_opt, qty_prec_opt =
+      Kraken_common_types.nonce () >>= fun nonce -> 
+      let price_prec_opt, qty_prec_opt = 
         match Kraken_incoming_data.get_precisions symbol with
         | Some (pp, qp) -> (Some pp, Some qp)
         | None -> (None, None)
@@ -186,7 +154,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         let raw_price_float = float_of_price new_price in
         match price_prec_opt with
         | Some precision -> Primitives.format_float_precision raw_price_float precision
-        | None ->
+        | None -> 
             Lwt_log_core.warning ~section (Printf.sprintf "No price precision found for %s in amend, sending raw price." symbol) |> Lwt.ignore_result;
             string_of_float raw_price_float
       in
@@ -194,18 +162,18 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         let raw_qty_float = float_of_qty new_qty in
         match qty_prec_opt with
         | Some precision -> Primitives.format_float_precision raw_qty_float precision
-        | None ->
+        | None -> 
             Lwt_log_core.warning ~section (Printf.sprintf "No qty precision found for %s in amend, sending raw qty." symbol) |> Lwt.ignore_result;
             string_of_float raw_qty_float
       in
       let params = [
         ("nonce", [nonce]);
-        ("txid", [order_id]);
+        ("txid", [order_id]); 
         ("order_qty", [qty_str]);
         ("limit_price", [price_str]);
-        ("post_only", ["true"]);
+        ("post_only", ["true"]); 
       ] in
-      let encoded_post_data = Uri.encoded_of_query params in
+      let encoded_post_data = Uri.encoded_of_query params in 
       let payload_section = Lwt_log_core.Section.make "kraken_rest_exec.amend_payload" in
       Lwt_log_core.debug ~section:payload_section encoded_post_data >>= fun () ->
       let signature = Kraken_common_types.sign ~secret:cfg.kraken_api_secret ~path:api_path ~body:encoded_post_data ~nonce in
@@ -215,10 +183,6 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         ("Content-Type", "application/x-www-form-urlencoded");
       ] in
       let body_cohttp = Cohttp_lwt.Body.of_string encoded_post_data in
-
-      (* Apply rate limiting before making the request *)
-      RateLimiter.wait_for_slot () >>= fun () ->
-      RateLimiter.record_request ();
       Lwt.catch (fun () ->
         Client.post ~headers ~body:body_cohttp url >>= fun (resp, response_body_lwt) ->
         let http_status = Cohttp.Response.status resp in
@@ -252,22 +216,22 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
               let ack = Core.Ack { order_id; client_id = "N/A_AMEND_OK"; state = Core.Open; ts } in
               on_event ack >>= fun () ->
               Lwt_log_core.info ~section (Printf.sprintf "REST AmendOrder successful for order_id %s. Amend ID: %s" order_id amend_id)
-          | None ->
+          | None -> 
               Lwt_log_core.error ~section (Printf.sprintf "REST AmendOrder: amend_id not found in successful response for order_id %s. Body: %s" order_id body_str)
       ) (fun ex ->
         let err_msg = Printexc.to_string ex in
         Lwt_log_core.error ~section (Printf.sprintf "Exception during REST AmendOrder for order_id %s: %s" order_id err_msg)
       )
       
-  | Cancel { order_id; dst = _ } ->
+  | Cancel { order_id; dst = _ } -> 
       Lwt_log_core.debug ~section (Printf.sprintf "Processing REST Cancel Order for order_id: %s" order_id) >>= fun () ->
       let api_path = "/0/private/CancelOrder" in
       let api_host = "api.kraken.com" in
       let url = Uri.of_string (Printf.sprintf "https://%s%s" api_host api_path) in
-      Kraken_common_types.nonce () >>= fun nonce ->
+      Kraken_common_types.nonce () >>= fun nonce -> 
       let params = [
         ("nonce", [nonce]);
-        ("txid", [order_id]);
+        ("txid", [order_id]); 
       ] in
       let encoded_post_data = Uri.encoded_of_query params in
       Lwt_log_core.debug ~section (Printf.sprintf "REST CancelOrder POST data: %s" encoded_post_data) >>= fun () ->
@@ -278,10 +242,6 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         ("Content-Type", "application/x-www-form-urlencoded");
       ] in
       let body_cohttp = Cohttp_lwt.Body.of_string encoded_post_data in
-
-      (* Apply rate limiting before making the request *)
-      RateLimiter.wait_for_slot () >>= fun () ->
-      RateLimiter.record_request ();
       Lwt.catch (fun () ->
         Client.post ~headers ~body:body_cohttp url >>= fun (resp, response_body_lwt) ->
         let http_status = Cohttp.Response.status resp in
@@ -293,7 +253,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         if List.length errors > 0 then
           let error_msgs = String.concat "; " (List.map Yojson.Safe.Util.to_string errors) in
           Lwt_log_core.error ~section (Printf.sprintf "REST CancelOrder failed for order_id %s: %s" order_id error_msgs) >>= fun () ->
-          let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_FAIL"; state = Core.Rejected; ts } in
+          let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_FAIL"; state = Core.Rejected; ts } in 
           on_event ack
         else
           match Yojson.Safe.Util.(member "result" json_resp |> member "count" |> to_int_option) with
@@ -301,15 +261,15 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
               Lwt_log_core.info ~section (Printf.sprintf "REST CancelOrder successful for order_id %s. Count: %d" order_id count) >>= fun () ->
               let ack = Core.Ack { order_id; client_id = "N/A_CANCEL"; state = Core.Canceled; ts } in
               on_event ack
-          | Some _ | None ->
+          | Some _ | None -> 
               Lwt_log_core.error ~section (Printf.sprintf "REST CancelOrder: 'count' not positive or not found for order_id %s. Body: %s" order_id body_str) >>= fun () ->
-              let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_NO_COUNT"; state = Core.Rejected; ts } in
+              let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_NO_COUNT"; state = Core.Rejected; ts } in 
               on_event ack
       ) (fun ex ->
         let err_msg = Printexc.to_string ex in
         Lwt_log_core.error ~section (Printf.sprintf "Exception during REST CancelOrder for order_id %s: %s" order_id err_msg) >>= fun () ->
         let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
-        let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_EXN"; state = Core.Rejected; ts } in
+        let ack = Core.Ack { order_id; client_id = "N/A_CANCEL_EXN"; state = Core.Rejected; ts } in 
         on_event ack
       )
 

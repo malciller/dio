@@ -39,34 +39,6 @@ let pending_orders : (string, Kraken_common_types.order) Hashtbl.t = Hashtbl.cre
 
 let get_precisions symbol : (int * int) option = Hashtbl.find_opt instrument_precisions symbol
 let get_instrument symbol : Kraken_common_types.pair_data option = Hashtbl.find_opt instrument_data symbol
-let get_ordermin symbol : float option =
-  match Hashtbl.find_opt instrument_data symbol with
-  | Some pair_data ->
-      begin match pair_data.ordermin with
-      | Some ordermin ->
-          Lwt_log_core.warning ~section (Printf.sprintf "Retrieved ordermin for %s from WebSocket data: %.8f" symbol ordermin) |> Lwt.ignore_result;
-          Some ordermin
-      | None ->
-          (* Check fee cache as fallback *)
-          let fee_cache_ordermin = Kraken_fee_cache.get_ordermin symbol in
-          match fee_cache_ordermin with
-          | Some ordermin ->
-              Lwt_log_core.warning ~section (Printf.sprintf "Retrieved ordermin for %s from fee cache: %.8f" symbol ordermin) |> Lwt.ignore_result;
-              Some ordermin
-          | None ->
-              Lwt_log_core.warning ~section (Printf.sprintf "No ordermin available for %s (checked both WebSocket and fee cache)" symbol) |> Lwt.ignore_result;
-              None
-      end
-  | None ->
-      (* Check fee cache as fallback *)
-      let fee_cache_ordermin = Kraken_fee_cache.get_ordermin symbol in
-      match fee_cache_ordermin with
-      | Some ordermin ->
-          Lwt_log_core.warning ~section (Printf.sprintf "Retrieved ordermin for %s from fee cache (no WebSocket data): %.8f" symbol ordermin) |> Lwt.ignore_result;
-          Some ordermin
-      | None ->
-          Lwt_log_core.warning ~section (Printf.sprintf "No ordermin available for %s (no WebSocket data and not in fee cache)" symbol) |> Lwt.ignore_result;
-          None
 
 
 let get_price_precision symbol : int option =
@@ -233,7 +205,7 @@ let custom_subscribe_message_to_yojson (msg : Kraken_common_types.subscribe_mess
 (** Build WebSocket subscription messages for different channel types. *)
 let make_subscribe_message ?req_id (cfg : Config.engine_config) channel =
   let params = match channel with
-    | `Ticker ->
+    | `Ticker -> 
         Kraken_common_types.Ticker {
           symbol = cfg.symbols;
           snapshot = true;
@@ -264,16 +236,7 @@ let make_subscribe_message ?req_id (cfg : Config.engine_config) channel =
     Kraken_common_types.req_id;
   } in
   let content = custom_subscribe_message_to_yojson msg |> Json.to_string in
-  (* Validate frame content size to prevent potential issues *)
-  let content_length = String.length content in
-  if content_length > 65536 then (
-    Lwt_log_core.warning ~section (Printf.sprintf "Frame content too large (%d bytes), truncating" content_length) |> Lwt.ignore_result;
-    let truncated = String.sub content 0 65536 in
-    Frame.create ~content:truncated ()
-  ) else (
-    Lwt_log_core.debug ~section (Printf.sprintf "Creating subscription frame (%d bytes): %s" content_length content) |> Lwt.ignore_result;
-    Frame.create ~content ()
-  )
+  Frame.create ~content ()
 
 (** Process incoming WebSocket frames from public feeds (ticker, book, instrument, status). *)
 let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
@@ -308,44 +271,31 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                           let bid_price = float_to_price ~scale:price_prec ticker.bid in
                           let ask_price = float_to_price ~scale:price_prec ticker.ask in
                           let last_price = float_to_price ~scale:price_prec ticker.last in
-
-                          (* Validate that we can calculate a reasonable current price *)
-                          let can_calculate_current_price =
-                            if ticker.last > 0.0 then true  (* Use last price *)
-                            else if ticker.bid > 0.0 && ticker.ask > 0.0 && ticker.bid < ticker.ask then true  (* Use midpoint *)
-                            else false
+                          let current_price =
+                            if Primitives.Price.equal last_price (Primitives.Price.zero price_prec) then
+                              Primitives.Price.midpoint bid_price ask_price
+                            else
+                              last_price
                           in
-                          if not can_calculate_current_price then (
-                            Lwt_log_core.warning ~section (Printf.sprintf "Skipping ticker for %s: cannot calculate current_price (bid=%.8f ask=%.8f last=%.8f)"
-                              symbol ticker.bid ticker.ask ticker.last) >>= fun () ->
-                            Lwt.return_unit
-                          ) else (
-                            let current_price =
-                              if Primitives.Price.equal last_price (Primitives.Price.zero price_prec) then
-                                Primitives.Price.midpoint bid_price ask_price
-                              else
-                                last_price
-                            in
-                            state := State.update_price symbol current_price !state;
-                            let event_tick : Event.tick = {
-                              src = "kraken";
-                              symbol;
-                              bid = bid_price;
-                              ask = ask_price;
-                              current_price;
-                              ts;
-                              ask_qty = ticker.ask_qty;
-                              bid_qty = ticker.bid_qty;
-                              change = ticker.change;
-                              change_pct = ticker.change_pct;
-                              high = ticker.high;
-                              last_price = ticker.last;
-                              low = ticker.low;
-                              volume = ticker.volume;
-                              vwap = ticker.vwap;
-                            } in
-                            on_tick event_tick
-                          )
+                          state := State.update_price symbol current_price !state;
+                          let event_tick : Event.tick = {
+                            src = "kraken";
+                            symbol;
+                            bid = bid_price;
+                            ask = ask_price;
+                            current_price;
+                            ts;
+                            ask_qty = ticker.ask_qty;
+                            bid_qty = ticker.bid_qty;
+                            change = ticker.change;
+                            change_pct = ticker.change_pct;
+                            high = ticker.high;
+                            last_price = ticker.last;
+                            low = ticker.low;
+                            volume = ticker.volume;
+                            vwap = ticker.vwap;
+                          } in
+                          on_tick event_tick
                       ) ticker_list
                   | Ok _ ->
                       Lwt_log_core.warning ~section (Printf.sprintf "Unexpected ticker data format: %s" frame.content)
@@ -413,45 +363,38 @@ let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
                       (* Generate tick from current orderbook state *)
                       match Kraken_orderbook.get_best_bid_ask symbol with
                       | Some (bid_price, ask_price) ->
-                          (* Validate that bid and ask prices are reasonable for orderbook ticks *)
-                          if bid_price <= 0.0 || ask_price <= 0.0 || bid_price >= ask_price then (
-                            Lwt_log_core.debug ~section (Printf.sprintf "Skipping invalid orderbook tick for %s: bid=%.8f ask=%.8f"
-                              symbol bid_price ask_price) >>= fun () ->
-                            Lwt.return_unit
-                          ) else (
-                            let price_prec, _ = Option.value (get_precisions symbol) ~default:(8, 8) in
-                            let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
-                            let bid_price_primitive = float_to_price ~scale:price_prec bid_price in
-                            let ask_price_primitive = float_to_price ~scale:price_prec ask_price in
-                            let current_price = Primitives.Price.midpoint bid_price_primitive ask_price_primitive in
-
-                            (* Create tick event *)
-                            let event_tick : Event.tick = {
-                              src = "kraken";
-                              symbol;
-                              bid = bid_price_primitive;
-                              ask = ask_price_primitive;
-                              current_price;
-                              ts;
-                              ask_qty = 0.0;
-                              bid_qty = 0.0;
-                              change = 0.0;
-                              change_pct = 0.0;
-                              high = 0.0;
-                              last_price = 0.0;
-                              low = 0.0;
-                              volume = 0.0;
-                              vwap = 0.0;
-                            } in
-
-                            Lwt_log_core.debug ~section (Printf.sprintf "Generated book tick for %s: bid=%s ask=%s"
-                              symbol
-                              (Primitives.Price.to_string bid_price_primitive)
-                              (Primitives.Price.to_string ask_price_primitive)) >>= fun () ->
-
-                            (* Send tick to strategy *)
-                            on_tick event_tick
-                          )
+                          let price_prec, _ = Option.value (get_precisions symbol) ~default:(8, 8) in
+                          let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
+                          let bid_price_primitive = float_to_price ~scale:price_prec bid_price in
+                          let ask_price_primitive = float_to_price ~scale:price_prec ask_price in
+                          let current_price = Primitives.Price.midpoint bid_price_primitive ask_price_primitive in
+                          
+                          (* Create tick event *)
+                          let event_tick : Event.tick = {
+                            src = "kraken";
+                            symbol;
+                            bid = bid_price_primitive;
+                            ask = ask_price_primitive;
+                            current_price;
+                            ts;
+                            ask_qty = 0.0; 
+                            bid_qty = 0.0;
+                            change = 0.0;  
+                            change_pct = 0.0;
+                            high = 0.0;
+                            last_price = 0.0;
+                            low = 0.0;
+                            volume = 0.0;
+                            vwap = 0.0;
+                          } in
+                          
+                          Lwt_log_core.debug ~section (Printf.sprintf "Generated book tick for %s: bid=%s ask=%s" 
+                            symbol 
+                            (Primitives.Price.to_string bid_price_primitive) 
+                            (Primitives.Price.to_string ask_price_primitive)) >>= fun () ->
+                          
+                          (* Send tick to strategy *)
+                          on_tick event_tick
                       | None ->
                           Lwt_log_core.debug ~section (Printf.sprintf "No best bid/ask available for %s after book update" symbol) >>= fun () ->
                           Lwt.return_unit
