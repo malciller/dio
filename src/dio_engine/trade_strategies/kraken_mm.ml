@@ -640,7 +640,15 @@ let start (runtime_cfg : Config.runtime_cfg) (_core_cfg : Config.engine_config) 
   
   info_f ~section "Starting unified market making strategy: %s" strategy_name >>= fun () ->
 
-  (SharedState.wait_for_snapshot (fun () -> K.Kraken_incoming_data.wait_for_snapshot ())) () >>= fun () ->
+  (* Only wait for executions snapshot if we have auth token for private feeds *)
+  (match _core_cfg.auth_token with
+   | Some _ ->
+       (SharedState.wait_for_snapshot (fun () -> K.Kraken_incoming_data.wait_for_snapshot ())) () >>= fun () ->
+       info_f ~section "Executions snapshot received, proceeding with initialization"
+   | None ->
+       info_f ~section "No auth token configured, skipping executions snapshot wait"
+  ) >>= fun () ->
+
   (SharedState.wait_for_instruments (fun () -> K.Kraken_incoming_data.wait_for_instruments ())) () >>= fun () ->
 
   SharedState.refresh_usd_balance (fun () -> K.Kraken_balances.wait_for_balances ()) >>= fun () ->

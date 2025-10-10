@@ -356,8 +356,24 @@ let subscribe_to_balances conn token =
       ])
     ] |> Yojson.Safe.to_string
   in
-  let frame = Websocket.Frame.create ~content:sub_msg () in
-  Websocket_lwt_unix.write conn frame
+  (* Validate frame content size *)
+  let content_length = String.length sub_msg in
+  if content_length > 65536 then (
+    error_f ~section "Balance subscription message too large (%d bytes)" content_length >>= fun () ->
+    Lwt.fail_with "Frame content too large"
+  ) else (
+    debug_f ~section "Sending balance subscription (%d bytes): %s" content_length sub_msg >>= fun () ->
+    Lwt.catch
+      (fun () ->
+        let frame = Websocket.Frame.create ~content:sub_msg () in
+        Websocket_lwt_unix.write conn frame >>= fun () ->
+        Lwt.return_unit
+      )
+      (fun exn ->
+        error_f ~section "Failed to write balance subscription frame: %s" (Printexc.to_string exn) >>= fun () ->
+        Lwt.fail exn
+      )
+  )
 
 (** Listen for balance messages on WebSocket connection *)
 let rec listen_for_balances conn =

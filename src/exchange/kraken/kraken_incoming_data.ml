@@ -205,7 +205,7 @@ let custom_subscribe_message_to_yojson (msg : Kraken_common_types.subscribe_mess
 (** Build WebSocket subscription messages for different channel types. *)
 let make_subscribe_message ?req_id (cfg : Config.engine_config) channel =
   let params = match channel with
-    | `Ticker -> 
+    | `Ticker ->
         Kraken_common_types.Ticker {
           symbol = cfg.symbols;
           snapshot = true;
@@ -236,7 +236,16 @@ let make_subscribe_message ?req_id (cfg : Config.engine_config) channel =
     Kraken_common_types.req_id;
   } in
   let content = custom_subscribe_message_to_yojson msg |> Json.to_string in
-  Frame.create ~content ()
+  (* Validate frame content size to prevent potential issues *)
+  let content_length = String.length content in
+  if content_length > 65536 then (
+    Lwt_log_core.warning ~section (Printf.sprintf "Frame content too large (%d bytes), truncating" content_length) |> Lwt.ignore_result;
+    let truncated = String.sub content 0 65536 in
+    Frame.create ~content:truncated ()
+  ) else (
+    Lwt_log_core.debug ~section (Printf.sprintf "Creating subscription frame (%d bytes): %s" content_length content) |> Lwt.ignore_result;
+    Frame.create ~content ()
+  )
 
 (** Process incoming WebSocket frames from public feeds (ticker, book, instrument, status). *)
 let handle_public_frame conn (cfg : Config.engine_config) frame ~on_tick =
