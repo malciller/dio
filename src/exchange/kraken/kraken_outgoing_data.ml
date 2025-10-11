@@ -94,7 +94,8 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         let errors = Yojson.Safe.Util.(member "error" json |> to_list) in
         if List.length errors > 0 then
           let error_msgs = String.concat "; " (List.map Yojson.Safe.Util.to_string errors) in
-          Lwt_log_core.error ~section (Printf.sprintf "REST AddOrder failed for client_id %s: %s" truncated_client_id error_msgs) >>= fun () ->
+          let side_str = match side with Core.Buy -> "Buy" | Core.Sell -> "Sell" in
+          Lwt_log_core.error ~section (Printf.sprintf "REST AddOrder failed for %s, Side: %s, client_id %s: %s" symbol side_str truncated_client_id error_msgs) >>= fun () ->
           let ack = Core.Ack { order_id = "ERROR_" ^ truncated_client_id; client_id = truncated_client_id; state = Core.Rejected; ts } in
           (* Record telemetry for failed order *)
           Lwt.async (fun () ->
@@ -192,7 +193,7 @@ let send_order_command (cfg : Config.engine_config) (cmd : Core.order_cmd) ~on_e
         let errors = Yojson.Safe.Util.(member "error" json_resp |> to_list) in
         if List.length errors > 0 then
           let error_msgs = String.concat "; " (List.map Yojson.Safe.Util.to_string errors) in
-          Lwt_log_core.error ~section (Printf.sprintf "REST AmendOrder failed for order_id %s: %s" order_id error_msgs) >>= fun () ->
+          Lwt_log_core.error ~section (Printf.sprintf "REST AmendOrder failed for %s, order_id %s: %s" symbol order_id error_msgs) >>= fun () ->
           let ts = Unix.gettimeofday () *. 1_000_000. |> Int64.of_float in
           (* Check if this is an "Unknown order" error, which means the order was already filled/cancelled *)
           let is_unknown_order =

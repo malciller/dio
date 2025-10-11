@@ -13,6 +13,17 @@ open State
 
 let section = Section.make "kraken_common_types"
 
+(** Global counter for generating unique client IDs *)
+let client_id_counter = ref 0
+
+(** Generate a unique client ID for orders *)
+let generate_unique_client_id side =
+  let side_prefix = match side with Core.Buy -> "b" | Core.Sell -> "s" in
+  let timestamp_mod = Int64.rem (Int64.of_float (Unix.time () *. 1000.)) 100000L in  (* Last 5 digits of milliseconds *)
+  let counter = !client_id_counter in
+  client_id_counter := counter + 1;
+  Printf.sprintf "%s%05Ld%04d" side_prefix timestamp_mod counter
+
 (** Channel subscription parameters for Kraken WebSocket feeds *)
 type channel_params =
   | Ticker of {
@@ -281,6 +292,9 @@ module StrategyState = struct
   (** Open orders tracking *)
   let open_orders : (string, order) Hashtbl.t = Hashtbl.create 16
 
+  (** Pending orders tracking - orders sent to command buffer but not yet acknowledged *)
+  let pending_orders : (string, (string * Core.side)) Hashtbl.t = Hashtbl.create 16
+
   (** USD balance tracking *)
   let usd_balance : float ref = ref 0.0
 
@@ -333,6 +347,20 @@ module StrategyState = struct
     ) open_orders [] in
     List.length buy_orders > 0
 
+  (** Check if symbol has any pending buy orders *)
+  let has_pending_buy_order symbol =
+    Hashtbl.fold (fun _ (sym, side) acc ->
+      acc || (String.equal sym symbol && side = Core.Buy)
+    ) pending_orders false
+
+  (** Add a pending order *)
+  let add_pending_order client_id symbol side =
+    Hashtbl.replace pending_orders client_id (symbol, side)
+
+  (** Remove a pending order when acknowledged *)
+  let remove_pending_order client_id =
+    Hashtbl.remove pending_orders client_id
+
   (** Check if symbol has any open sell orders *)
   let has_open_sell_order symbol =
     let sell_orders = Hashtbl.fold (fun _ (order : order) acc ->
@@ -369,9 +397,7 @@ module StrategyState = struct
         let qty_str = Primitives.Qty.to_string qty in
         let formatted_price = Primitives.Price.of_string_exn ~scale:price_prec price_str in
         let formatted_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
-        let side_prefix = match side with Core.Buy -> "b-" | Core.Sell -> "s-" in
-        let timestamp_str = Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float) in
-        let client_id = side_prefix ^ timestamp_str in
+        let client_id = generate_unique_client_id side in
         let order = Core.Add {
           dst = "kraken";
           client_id;
@@ -463,9 +489,7 @@ module StrategyState = struct
         let qty_str = format_qty qty in
         let formatted_price = Primitives.Price.of_string_exn ~scale:price_prec price_str in
         let formatted_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
-        let side_prefix = match side with Core.Buy -> "b-" | Core.Sell -> "s-" in
-        let timestamp_str = Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float) in
-        let client_id = side_prefix ^ timestamp_str in
+        let client_id = generate_unique_client_id side in
         let order = Core.Add {
           dst = "kraken";
           client_id;

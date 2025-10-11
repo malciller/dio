@@ -75,9 +75,7 @@ module State = struct
         let formatted_price = Primitives.Price.of_string_exn ~scale:price_prec price_str in
         let formatted_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
 
-        let side_prefix = match side with Core.Buy -> "b-" | Core.Sell -> "s-" in
-        let timestamp_str = Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float) in
-        let client_id = side_prefix ^ timestamp_str in
+        let client_id = K.Kraken_common_types.generate_unique_client_id side in
         let order = Core.Add {
           dst = "kraken";
           client_id;

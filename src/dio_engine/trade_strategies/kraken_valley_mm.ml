@@ -83,10 +83,80 @@ module State = struct
     SharedState.create_standard_order
       ~symbol ~side ~price ~qty ~get_precisions_fn:(SharedState.get_precisions K.Kraken_incoming_data.get_precisions)
 
+  (** Check balance and place sell orders when constraints are violated *)
+  let check_and_place_sell_orders symbol cmd_buffer =
+    match K.Kraken_incoming_data.get_instrument symbol with
+    | Some instrument ->
+        let base_currency = instrument.base in
+        let qty_prec = instrument.qty_precision in
+
+        K.Kraken_balances.wait_for_balances () >>= fun (spot_balances, _, liquid_balances, _) ->
+        let spot_bal = Hashtbl.find_opt spot_balances base_currency |> Option.value ~default:0.0 in
+        let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
+        let total_balance = spot_bal +. liquid_bal in
+
+        (* Get balance already in open sell orders *)
+        let balance_in_orders = Hashtbl.fold (fun _ (order: K.Kraken_common_types.order) acc ->
+          if String.equal order.order_symbol symbol && order.side = Some Core.Sell then
+            acc +. order.qty
+          else
+            acc
+        ) SharedState.open_orders 0.0 in
+
+        let available_balance = total_balance -. balance_in_orders in
+
+        if available_balance > 0.00001 then (
+          let clean_qty = floor (available_balance *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
+          let sell_price_opt =
+            match K.Kraken_orderbook.get_best_bid_ask symbol with
+            | Some (_, ask_price_float) ->
+                let price_prec = instrument.price_precision in
+                let sell_price_str = Printf.sprintf "%.*f" price_prec ask_price_float in
+                Some (Primitives.Price.of_string_exn ~scale:price_prec sell_price_str)
+            | None ->
+                (* Use mid price as best available estimate when no orderbook *)
+                match SharedState.get_price symbol with
+                | Some tick ->
+                    let price_prec = instrument.price_precision in
+                    let mid_price_float = Float.of_string (Primitives.Price.to_string tick.current_price) in
+                    let sell_price_str = Printf.sprintf "%.*f" price_prec mid_price_float in
+                    Some (Primitives.Price.of_string_exn ~scale:price_prec sell_price_str)
+                | None -> None
+          in
+          match sell_price_opt with
+          | Some sell_price ->
+              let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
+              let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
+              (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty with
+              | Some sell_cmd ->
+                  Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
+                  let price_used = match K.Kraken_orderbook.get_best_bid_ask symbol with
+                    | Some (_, ask_price) -> ask_price
+                    | None ->
+                        match SharedState.get_price symbol with
+                        | Some tick -> Float.of_string (Primitives.Price.to_string tick.current_price)
+                        | None -> 0.0
+                  in
+                  info_f ~section "Placed sell order for remaining %s balance: %.8f at %.8f (constraint violation)"
+                    symbol clean_qty price_used
+              | None ->
+                  error_f ~section "Failed to create sell order for remaining %s balance" symbol
+              )
+          | None ->
+              warning_f ~section "No price data for %s, cannot place sell order" symbol
+        ) else (
+          debug_f ~section "No remaining available balance for %s to sell" symbol
+        )
+    | None ->
+        warning_f ~section "No instrument data for %s, cannot place sell order" symbol
+
   (** Manage buy/sell orders based on Valley Market Maker strategy *)
   let manage_orders (runtime_cfg : Config.runtime_cfg) symbol cmd_buffer =
     let has_buy = SharedState.has_open_buy_order symbol in
+    let has_pending_buy = SharedState.has_pending_buy_order symbol in
     let asset_cfg_opt = SharedState.get_asset_config runtime_cfg symbol in
+
+    let open Lwt.Infix in
 
     match asset_cfg_opt with
     | Some asset_cfg ->
@@ -95,23 +165,23 @@ module State = struct
         (* Check both constraints: min_usd_balance and max_exposure *)
         let check_min_usd_balance = match asset_cfg.min_usd_balance with
           | Some min_balance ->
-              let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
-              SharedState.get_usd_balance () >= min_balance_float
+            let min_balance_float = float_of_string (Primitives.Fixed.to_string min_balance) in
+            SharedState.get_usd_balance () >= min_balance_float
           | None -> true
         in
-        
+
         let current_inventory = get_current_inventory symbol in
         let check_max_exposure = match asset_cfg.max_exposure with
           | Some max_exposure_fixed ->
-              let max_exposure = float_of_string (Primitives.Fixed.to_string max_exposure_fixed) in
-              current_inventory < max_exposure
+            let max_exposure = float_of_string (Primitives.Fixed.to_string max_exposure_fixed) in
+            current_inventory < max_exposure
           | None -> true
         in
-        
+
         (* If both checks pass and no buy order exists, place orders *)
-        if check_min_usd_balance && check_max_exposure then (
-          if not has_buy then (
-            match SharedState.get_price symbol with
+        if check_min_usd_balance && check_max_exposure then
+          (if not has_buy && not has_pending_buy then
+            (match SharedState.get_price symbol with
             | Some tick ->
               let top_bid_price_float = Float.of_string (Primitives.Price.to_string tick.bid) in
               let top_ask_price_float = Float.of_string (Primitives.Price.to_string tick.ask) in
@@ -120,7 +190,7 @@ module State = struct
               let profit_threshold = runtime_cfg.profit_threshold_pct /. 100.0 in
               let min_spread_threshold = top_ask_price_float *. ((2.0 *. asset_fee) +. profit_threshold) in
 
-              (if actual_spread > min_spread_threshold then (
+              (if actual_spread > min_spread_threshold then
                 (* Large spread - use greedy style: buy at bid, sell at ask *)
                 info_f ~section "Large spread detected for %s (%.6f > %.6f), using greedy-style orders"
                   symbol actual_spread min_spread_threshold >>= fun () ->
@@ -129,7 +199,7 @@ module State = struct
                 let order_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
                 let order_cost = top_bid_price_float *. order_qty_float in
                 Lwt.return (buy_price, sell_price, order_cost)
-              ) else (
+              else
                 (* Small spread - use valley logic with fees baked in *)
                 info_f ~section "Small spread for %s (%.6f <= %.6f), using valley logic"
                   symbol actual_spread min_spread_threshold >>= fun () ->
@@ -139,34 +209,38 @@ module State = struct
                 let order_qty_float = Float.of_string (Primitives.Qty.to_string asset_cfg.qty) in
                 let order_cost = buy_price_float *. order_qty_float in
                 Lwt.return (buy_price, sell_price, order_cost)
-              )) >>= fun (buy_price, sell_price, order_cost) ->
+              ) >>= fun (buy_price, sell_price, order_cost) ->
 
-              if SharedState.get_usd_balance () >= order_cost then (
+              if SharedState.get_usd_balance () >= order_cost then
                 (match create_order ~symbol ~side:Buy ~price:buy_price ~qty:asset_cfg.qty with
                 | Some buy_cmd ->
+                  let client_id = match buy_cmd with
+                  | Core.Add { client_id; _ } -> client_id
+                  | _ -> failwith "Expected Add command" in
+                  SharedState.add_pending_order client_id symbol Core.Buy;
                   Ringbuffer.push cmd_buffer buy_cmd >>= fun () ->
-                  info_f ~section "Placed buy order for %s at %s" symbol (Primitives.Price.to_string buy_price)
+                  info_f ~section "Placed buy order for %s at %s (client_id: %s)" symbol (Primitives.Price.to_string buy_price) client_id
                 | None ->
                   error_f ~section "Failed to create buy order for %s" symbol) >>= fun () ->
-                
+
                 (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:asset_cfg.qty with
                 | Some sell_cmd ->
                   Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
                   info_f ~section "Placed sell order for %s at %s" symbol (Primitives.Price.to_string sell_price)
                 | None ->
                   error_f ~section "Failed to create sell order for %s" symbol)
-              ) else (
+              else
                 warning_f ~section "Insufficient USD balance to place buy order for %s. Required: %.2f, Available: %.2f"
                   symbol order_cost (SharedState.get_usd_balance ())
-              )
             | None ->
               warning_f ~section "No price info for %s, cannot place orders." symbol
-          ) else (
+            )
+          else
             Lwt.return_unit
           )
-        ) else (
+        else
           (* At least one constraint is violated - cancel buy orders and try to sell remaining balance *)
-          if not check_max_exposure then (
+          (if not check_max_exposure then
             (* Max exposure reached - cancel existing buy orders *)
             let open_buy_orders = Hashtbl.fold (fun order_id (order: K.Kraken_common_types.order) acc ->
               if String.equal order.order_symbol symbol && order.side = Some Core.Buy then
@@ -175,7 +249,7 @@ module State = struct
                 acc
             ) SharedState.open_orders [] in
 
-            (if List.length open_buy_orders > 0 then (
+            (if List.length open_buy_orders > 0 then
               info_f ~section "Max exposure reached for %s (%.8f). Cancelling %d buy order(s)."
                 symbol current_inventory (List.length open_buy_orders) >>= fun () ->
               Lwt_list.iter_s (fun (order_id, _) ->
@@ -186,67 +260,48 @@ module State = struct
                 Ringbuffer.push cmd_buffer cancel_cmd >>= fun () ->
                 info_f ~section "Cancelled buy order %s for %s" order_id symbol
               ) open_buy_orders
-            ) else (
+            else
               Lwt.return_unit
-            )) >>= fun () ->
-            info_f ~section "Max exposure reached for %s. Checking for remaining asset balance to sell." symbol
-          ) else (
-            (* Must be min_usd_balance constraint *)
+            ) >>= fun () ->
+            info_f ~section "Max exposure reached for %s. Checking for remaining asset balance to sell." symbol >>= fun () ->
+            Lwt.return_unit
+          else
+            (* Must be min_usd_balance constraint - cancel existing buy orders and sell remaining balance *)
+            let open_buy_orders = Hashtbl.fold (fun order_id (order: K.Kraken_common_types.order) acc ->
+              if String.equal order.order_symbol symbol && order.side = Some Core.Buy then
+                (order_id, order) :: acc
+              else
+                acc
+            ) SharedState.open_orders [] in
+
+            (if List.length open_buy_orders > 0 then
+              info_f ~section "USD balance %.2f is below minimum for %s. Cancelling %d buy order(s)."
+                (SharedState.get_usd_balance ()) symbol (List.length open_buy_orders) >>= fun () ->
+              Lwt_list.iter_s (fun (order_id, _) ->
+                let cancel_cmd = Core.Cancel {
+                  dst = "kraken";
+                  order_id;
+                } in
+                Ringbuffer.push cmd_buffer cancel_cmd >>= fun () ->
+                info_f ~section "Cancelled buy order %s for %s" order_id symbol
+              ) open_buy_orders
+            else
+              Lwt.return_unit
+            ) >>= fun () ->
             info_f ~section "USD balance %.2f is below minimum for %s. Checking for remaining asset balance to sell."
-              (SharedState.get_usd_balance ()) symbol
-          ) >>= fun () ->
-          
-          (* Check for available balance to place sell order *)
-          (match K.Kraken_incoming_data.get_instrument symbol with
-          | Some instrument ->
-              let base_currency = instrument.base in
-              let qty_prec = instrument.qty_precision in
-              
-              K.Kraken_balances.wait_for_balances () >>= fun (spot_balances, _, liquid_balances, _) ->
-              let spot_bal = Hashtbl.find_opt spot_balances base_currency |> Option.value ~default:0.0 in
-              let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
-              let total_balance = spot_bal +. liquid_bal in
-              
-              (* Get balance already in open sell orders *)
-              let balance_in_orders = Hashtbl.fold (fun _ (order: K.Kraken_common_types.order) acc ->
-                if String.equal order.order_symbol symbol && order.side = Some Core.Sell then
-                  acc +. order.qty
-                else
-                  acc
-              ) SharedState.open_orders 0.0 in
-              
-              let available_balance = total_balance -. balance_in_orders in
-              
-              if available_balance > 0.00001 then (
-                let clean_qty = floor (available_balance *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
-                (match SharedState.get_price symbol with
-                | Some tick ->
-                    let sell_price = tick.ask in
-                    let qty_str = Printf.sprintf "%.*f" qty_prec clean_qty in
-                    let sell_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
-                    (match create_order ~symbol ~side:Sell ~price:sell_price ~qty:sell_qty with
-                    | Some sell_cmd ->
-                        Ringbuffer.push cmd_buffer sell_cmd >>= fun () ->
-                        info_f ~section "Placed sell order for remaining %s balance: %.8f (constraint violation)"
-                          symbol clean_qty
-                    | None ->
-                        error_f ~section "Failed to create sell order for remaining %s balance" symbol
-                    )
-                | None ->
-                    warning_f ~section "No price info for %s, cannot place sell order" symbol
-                )
-              ) else (
-                debug_f ~section "No remaining available balance for %s to sell" symbol
-              )
-          | None ->
-              warning_f ~section "No instrument data for %s, cannot place sell order" symbol
+              (SharedState.get_usd_balance ()) symbol >>= fun () ->
+            Lwt.return_unit
           )
-        )
+          >>= fun () ->
+          check_and_place_sell_orders symbol cmd_buffer >>= fun () ->
+          Lwt.return_unit
       | None ->
         warning_f ~section "No instrument data for %s" symbol
       )
     | None ->
       warning_f ~section "No configuration found for %s" symbol
+
+
   (** Adjust buy orders to maintain top-of-book positioning *)
   let check_and_adjust_orders (runtime_cfg : Config.runtime_cfg) cmd_buffer (tick : Event.tick) =
     let asset_cfg_opt = SharedState.get_asset_config runtime_cfg tick.symbol in
@@ -434,6 +489,8 @@ module State = struct
           Lwt.return_unit
         )
     | Ack { order_id; client_id; state; _ } ->
+        (* Remove from pending orders when acknowledged *)
+        SharedState.remove_pending_order client_id;
         (match state with
         | Open ->
           debug_f ~section "Ack for order %s (client_id: %s) - order opened" order_id client_id

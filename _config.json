@@ -2,7 +2,7 @@
   "assets": [
     {
       "symbol": "BTC/USD",
-      "qty": "0.000875",
+      "qty": "0.001125",
       "grid_interval": "0.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
@@ -10,7 +10,7 @@
     {
       "symbol": "PAXG/USD",
       "qty": "0.0029",
-      "grid_interval": "0.625",
+      "grid_interval": "0.63",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
@@ -30,8 +30,8 @@
     },
     {
       "symbol": "ADA/USD",
-      "qty": "15.0",
-      "grid_interval": "0.75",
+      "qty": "19.0",
+      "grid_interval": "2.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },    
@@ -56,42 +56,7 @@
       "strategy": "GMM"
     },
     {
-      "symbol": "USDT/USD",
-      "qty": "100.0",
-      "min_usd_balance": "1000.0",
-      "max_exposure": "100.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "USDC/USD",
-      "qty": "100.0",
-      "min_usd_balance": "1000.0",
-      "max_exposure": "100.0",
-      "strategy": "VMM"
-    },
-    {
       "symbol": "USD1/USD",
-      "qty": "50.0",
-      "min_usd_balance": "1000.0",
-      "max_exposure": "50.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "PYUSD/USD",
-      "qty": "50.0",
-      "min_usd_balance": "1000.0",
-      "max_exposure": "50.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "DAI/USD",
-      "qty": "50.0",
-      "min_usd_balance": "1000.0",
-      "max_exposure": "50.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "RLUSD/USD",
       "qty": "50.0",
       "min_usd_balance": "1000.0",
       "max_exposure": "50.0",

@@ -126,7 +126,7 @@ let setup_logging () =
 
   (** Additional section-specific log level rules can be added here *)
     (*Lwt_log.add_rule "engine.strategy.kraken.VMM" Debug; ;*)
-    (*Lwt_log.add_rule "engine.strategy.kraken.GMM" Debug;*)
+    (*Lwt_log.add_rule "engine.strategy.kraken.VMM" Info;*)
 
   
   ()

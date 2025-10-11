@@ -104,9 +104,7 @@ module State = struct
         let qty_str = Primitives.Qty.to_string qty in
         let formatted_price = Primitives.Price.of_string_exn ~scale:price_prec price_str in
         let formatted_qty = Primitives.Qty.of_string_exn ~scale:qty_prec qty_str in
-        let side_prefix = match side with Core.Buy -> "b-" | Core.Sell -> "s-" in
-        let timestamp_str = Int64.to_string (Unix.time () *. 1_000_000. |> Int64.of_float) in
-        let client_id = side_prefix ^ timestamp_str in
+        let client_id = K.Kraken_common_types.generate_unique_client_id side in
         let order = Core.Add {
           dst = "kraken";
           client_id;
@@ -215,13 +213,21 @@ module State = struct
               | Some instrument ->
                   let base_currency = instrument.base in
                   let qty_prec = instrument.qty_precision in
-                  
+
                   Kraken.Kraken_balances.wait_for_balances () >>= fun (spot_balances, _, liquid_balances, _) ->
                   let spot_bal = Hashtbl.find_opt spot_balances base_currency |> Option.value ~default:0.0 in
                   let liquid_bal = Hashtbl.find_opt liquid_balances base_currency |> Option.value ~default:0.0 in
                   let total_balance = spot_bal +. liquid_bal in
-                  let balance_in_orders = get_balance_in_open_orders symbol in
-                  let available_balance = total_balance -. balance_in_orders in
+
+                  (* Get balance already in open sell orders *)
+                  let balance_in_sell_orders = Hashtbl.fold (fun _ (order: K.Kraken_common_types.order) acc ->
+                    if String.equal order.order_symbol symbol && order.side = Some Core.Sell then
+                      acc +. order.qty
+                    else
+                      acc
+                  ) open_orders 0.0 in
+
+                  let available_balance = total_balance -. balance_in_sell_orders in
 
                   if available_balance > 0.00001 then (
                     let clean_qty = floor (available_balance *. 10.0 ** float_of_int qty_prec) /. (10.0 ** float_of_int qty_prec) in
