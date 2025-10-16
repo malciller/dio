@@ -3,35 +3,35 @@
     {
       "symbol": "BTC/USD",
       "qty": "0.001125",
-      "grid_interval": "0.5",
+      "grid_interval": "0.75",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "PAXG/USD",
       "qty": "0.0029",
-      "grid_interval": "0.63",
+      "grid_interval": "0.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "ETH/USD",
       "qty": "0.003", 
-      "grid_interval": "0.75",
+      "grid_interval": "1.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "SOL/USD",
       "qty": "0.06",
-      "grid_interval": "0.75",
+      "grid_interval": "1.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },
     {
       "symbol": "ADA/USD",
       "qty": "19.0",
-      "grid_interval": "2.5",
+      "grid_interval": "1.5",
       "sell_mult": "0.999",
       "strategy": "Grid"
     },    
@@ -51,30 +51,9 @@
     {
       "symbol": "USDR/USD",
       "qty": "10.0",
-      "min_usd_balance": "1000.0",
+      "min_usd_balance": "1500.0",
       "max_exposure": "200.0",
       "strategy": "GMM"
-    },
-    {
-      "symbol": "USD1/USD",
-      "qty": "50.0",
-      "min_usd_balance": "1000.0",
-      "max_exposure": "50.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "USDS/USD",
-      "qty": "50.0",
-      "min_usd_balance": "1000.0",
-      "max_exposure": "50.0",
-      "strategy": "VMM"
-    },
-    {
-      "symbol": "USDD/USD",
-      "qty": "50.0",
-      "min_usd_balance": "1000.0",
-      "max_exposure": "50.0",
-      "strategy": "VMM"
     }
   ],
   "queues_cap": 1000,
