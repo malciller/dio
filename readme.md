@@ -1,5 +1,7 @@
 # Dio
 
+not actively maintained. updated version @ https://github.com/malciller/dio-domains
+
 [![OCaml](https://img.shields.io/badge/Language-OCaml-blue.svg)](https://ocaml.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
